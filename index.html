@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mindkraft - Life Gamification</title>
+
+    <!-- ── PWA ──────────────────────────────────────────────────────────── -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#1a1a1a">
+    <!-- Android -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <!-- iOS -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Mindkraft">
+    <link rel="apple-touch-icon" href="icon-192.svg">
+
+    <!-- ── Fonts ─────────────────────────────────────────────────────────── -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- ── Styles ────────────────────────────────────────────────────────── -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Loading Screen -->
+    <div id="loading" class="loading">
+        <div class="spinner"></div>
+    </div>
+
+    <!-- Authentication Screen -->
+    <div id="authContainer" class="auth-container" style="display:none;">
+        <div class="auth-panel">
+            <div class="auth-brand">
+                <div class="auth-brand-icon">🧠</div>
+                <div class="auth-brand-name">Mindkraft</div>
+                <div class="auth-brand-tagline">Strengthen your mind. Gamify your life.</div>
+            </div>
+            <div class="auth-card">
+                <div id="authError" class="error-message"></div>
+                <button class="btn-google" id="googleBtn" onclick="handleGoogleSignIn()">
+                    <div class="btn-google-spinner" id="googleSpinner"></div>
+                    <svg width="18" height="18" viewBox="0 0 18 18" id="googleIcon">
+                        <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z"/>
+                        <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332C2.438 15.983 5.482 18 9 18z"/>
+                        <path fill="#FBBC05" d="M3.964 10.707c-.18-.54-.282-1.117-.282-1.707 0-.593.102-1.17.282-1.709V4.958H.957C.347 6.173 0 7.548 0 9c0 1.452.348 2.827.957 4.042l3.007-2.335z"/>
+                        <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0 5.482 0 2.438 2.017.957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/>
+                    </svg>
+                    <span id="googleBtnText">Continue with Google</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main App (HTML body is identical to the original — no changes) -->
+    <div id="appContainer" class="app-container">
+        <!-- Sticky Header -->
+        <div class="sticky-header">
+            <div class="header-content">
+                <div class="header-top">
+                    <div class="level-badge">
+                        <span class="level-label">Level</span>
+                        <div class="level-display"><span id="currentLevel">1</span></div>
+                    </div>
+                    <div class="progress-section">
+                        <div class="progress-meta">
+                            <div>
+                                <span class="header-xp-current"><span id="currentXP">0</span></span>
+                                <span class="header-xp-label">XP</span>
+                            </div>
+                            <div class="header-meta-right">
+                                <span class="header-meta-pct"><span id="progressPercent">0%</span></span>
+                                <span class="header-meta-sep">·</span>
+                                <span class="header-meta-xp-left"><span id="xpToNextDisplay">50</span> XP to next</span>
+                            </div>
+                        </div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" id="progressBar" style="width: 0%;"></div>
+                        </div>
+                    </div>
+                    <div class="user-info">
+                        <button class="btn-logout" onclick="handleLogout()">Sign out</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="nav-tabs">
+                <button class="nav-tab active" data-icon="📋" onclick="switchTab('activities')">Activities</button>
+                <button class="nav-tab" data-icon="🪐" onclick="switchTab('dimensions')">Dimensions</button>
+                <button class="nav-tab" data-icon="🏆" onclick="switchTab('challenges')">Challenges</button>
+                <button class="nav-tab" data-icon="🎁" onclick="switchTab('rewards')">Rewards</button>
+                <button class="nav-tab" data-icon="📊" onclick="switchTab('analytics')">Analytics</button>
+                <button class="nav-tab" data-icon="⚙️" onclick="switchTab('settings')">Settings</button>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card blue"><div class="stat-value" id="xpToday">0</div><div class="stat-label">XP Today</div></div>
+                <div class="stat-card red"><div class="stat-value" id="completedToday">0</div><div class="stat-label">Done Today</div></div>
+                <div class="stat-card green"><div class="stat-value" id="longestStreak">0</div><div class="stat-label">Best Streak</div></div>
+            </div>
+
+            <div id="activitiesTab" class="tab-content active">
+                <div class="section-header">
+                    <h2 class="section-title">Your Activities</h2>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span id="activitySlotCount" style="font-size:12px;color:var(--color-text-secondary);"></span>
+                        <button class="btn-search" onclick="openActivitySearch()" title="Search activities">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                        </button>
+                        <div style="position:relative;">
+                            <button class="btn-filter" id="filterBtn" onclick="toggleFilterPanel()" title="Sort &amp; Filter">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                                <span id="filterActiveDot" style="display:none;width:6px;height:6px;border-radius:50%;background:#6dbf7e;position:absolute;top:4px;right:4px;"></span>
+                            </button>
+                            <div class="filter-panel" id="filterPanel" style="display:none;">
+                                <div class="filter-panel-inner">
+                                    <div class="filter-section">
+                                        <div class="filter-section-label">Sort by</div>
+                                        <select id="sortSelect" class="filter-select-inline" onchange="applyFilters()">
+                                            <option value="default">Default order</option>
+                                            <option value="xp-desc">XP: High → Low</option>
+                                            <option value="xp-asc">XP: Low → High</option>
+                                            <option value="name-asc">Name: A → Z</option>
+                                            <option value="streak-desc">Streak: Longest</option>
+                                        </select>
+                                    </div>
+                                    <div class="filter-section">
+                                        <div class="filter-section-label">Frequency</div>
+                                        <div class="filter-chip-group" id="freqFilterChips">
+                                            <button class="filter-chip active" data-freq="all" onclick="setFreqFilter('all')">All</button>
+                                            <button class="filter-chip" data-freq="daily" onclick="setFreqFilter('daily')">Daily</button>
+                                            <button class="filter-chip" data-freq="weekly" onclick="setFreqFilter('weekly')">Weekly</button>
+                                            <button class="filter-chip" data-freq="custom" onclick="setFreqFilter('custom')">Custom</button>
+                                            <button class="filter-chip" data-freq="occasional" onclick="setFreqFilter('occasional')">Occasional</button>
+                                        </div>
+                                    </div>
+                                    <div class="filter-section">
+                                        <div class="filter-section-label">Dimension</div>
+                                        <select id="dimFilterSelect" class="filter-select-inline" onchange="applyFilters()">
+                                            <option value="all">All Dimensions</option>
+                                        </select>
+                                    </div>
+                                    <button class="filter-reset-btn" onclick="resetFilters()">↺ Reset filters</button>
+                                </div>
+                            </div>
+                        </div>
+                        <button class="btn-add" onclick="openActivityModal()">+ Add</button>
+                    </div>
+                </div>
+                <div id="activitiesList"></div>
+            </div>
+
+            <div id="dimensionsTab" class="tab-content">
+                <div class="section-header">
+                    <h2 class="section-title">Life Dimensions</h2>
+                    <button class="btn-add" onclick="openDimensionModal()">+ Add</button>
+                </div>
+                <div id="dimensionsList"></div>
+            </div>
+
+            <div id="challengesTab" class="tab-content">
+                <div class="section-header">
+                    <h2 class="section-title">Challenges</h2>
+                    <button class="btn-add" onclick="openChallengeModal()">+ Add</button>
+                </div>
+                <div id="challengesList"></div>
+            </div>
+
+            <div id="rewardsTab" class="tab-content">
+                <div class="section-header"><h2 class="section-title">Rewards</h2></div>
+                <div id="rewardsList"></div>
+            </div>
+
+            <div id="analyticsTab" class="tab-content">
+                <div class="analytics-filters">
+                    <div class="filter-group">
+                        <div class="filter-label">Time Period</div>
+                        <div class="filter-pills">
+                            <button class="filter-pill active" onclick="setAnalyticsPeriod(7, this)">7 days</button>
+                            <button class="filter-pill" onclick="setAnalyticsPeriod(30, this)">30 days</button>
+                            <button class="filter-pill" onclick="setAnalyticsPeriod(90, this)">90 days</button>
+                            <button class="filter-pill" onclick="setAnalyticsPeriod(365, this)">1 year</button>
+                        </div>
+                    </div>
+                    <div class="filter-group">
+                        <div class="filter-label">Activity</div>
+                        <select class="filter-select" id="analyticsActivityFilter" onchange="updateAnalytics()">
+                            <option value="all">All Activities</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="analytics-summary" id="analyticsSummary"></div>
+                <div id="analyticsCards"></div>
+            </div>
+
+            <div id="settingsTab" class="tab-content">
+                <div class="settings-card">
+                    <div class="settings-card-header">
+                        <span class="settings-icon">👤</span>
+                        <div><h3 class="settings-card-title">Account</h3><p class="settings-card-sub" id="settingsEmail"></p></div>
+                    </div>
+                    <button class="btn-secondary" onclick="handleLogout()">Sign Out</button>
+                </div>
+                <div class="settings-card">
+                    <div class="settings-card-header">
+                        <span class="settings-icon">⚙️</span>
+                        <div><h3 class="settings-card-title">XP Settings</h3><p class="settings-card-sub">Adjust how XP is calculated</p></div>
+                    </div>
+                    <div id="xpSettingsContent"></div>
+                </div>
+                <div class="settings-card">
+                    <div class="settings-card-header">
+                        <span class="settings-icon">🎨</span>
+                        <div><h3 class="settings-card-title">Theme</h3><p class="settings-card-sub">Personalise your colours</p></div>
+                    </div>
+                    <div class="theme-presets" id="themePresets"></div>
+                    <div class="theme-custom-panel" id="themeCustomPanel">
+                        <div class="theme-custom-section">
+                            <div class="theme-custom-section-title">🎨 Colours</div>
+                            <div class="theme-color-grid" id="themeColorGrid"></div>
+                        </div>
+                        <div class="theme-custom-section">
+                            <div class="theme-custom-section-title">✨ Background Gradient</div>
+                            <div class="theme-gradient-presets" id="gradientPresets"></div>
+                            <div class="theme-gradient-stops">
+                                <div class="theme-gradient-stop">
+                                    <div class="theme-gradient-stop-title">⬆️ Glow A <span style="font-size:10px;opacity:0.6;">(top-left)</span></div>
+                                    <div class="theme-glow-color-row">
+                                        <input type="color" id="glowAColor" value="#4a7c9e" oninput="updateGradientPreview()">
+                                        <label>Colour</label>
+                                    </div>
+                                    <div class="theme-opacity-row">
+                                        <label>Intensity</label>
+                                        <input type="range" id="glowAOpacity" min="0" max="40" value="14" oninput="updateGradientPreview();document.getElementById('glowAVal').textContent=this.value+'%'">
+                                        <span class="theme-opacity-val" id="glowAVal">14%</span>
+                                    </div>
+                                </div>
+                                <div class="theme-gradient-stop">
+                                    <div class="theme-gradient-stop-title">⬇️ Glow B <span style="font-size:10px;opacity:0.6;">(bottom-right)</span></div>
+                                    <div class="theme-glow-color-row">
+                                        <input type="color" id="glowBColor" value="#8e3b5f" oninput="updateGradientPreview()">
+                                        <label>Colour</label>
+                                    </div>
+                                    <div class="theme-opacity-row">
+                                        <label>Intensity</label>
+                                        <input type="range" id="glowBOpacity" min="0" max="40" value="10" oninput="updateGradientPreview();document.getElementById('glowBVal').textContent=this.value+'%'">
+                                        <span class="theme-opacity-val" id="glowBVal">10%</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <input type="color" id="themeAccentPicker" value="#4472a0" style="display:none;" oninput="previewThemeColor('accent',this.value)">
+                    <input type="color" id="themeProgressPicker" value="#537db8" style="display:none;" oninput="previewThemeColor('progress',this.value)">
+                    <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;">
+                        <button class="btn-settings-save" onclick="saveTheme()">Apply Theme</button>
+                        <button class="btn-secondary" id="resetCustomThemeBtn" style="display:none;" onclick="resetCustomTheme()">↺ Reset</button>
+                    </div>
+                </div>
+                <div class="settings-card">
+                    <div class="settings-card-header">
+                        <span class="settings-icon">💾</span>
+                        <div><h3 class="settings-card-title">Data</h3><p class="settings-card-sub">Import, export, or reset your data</p></div>
+                    </div>
+                    <div class="data-actions">
+                        <button class="btn-data btn-data-export" onclick="exportData()">
+                            <span class="btn-data-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>
+                            <span class="btn-data-label">Export Data<span>Download a JSON backup</span></span>
+                        </button>
+                        <button class="btn-data btn-data-import" onclick="document.getElementById('importFileInput').click()">
+                            <span class="btn-data-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
+                            <span class="btn-data-label">Import Data<span>Restore from JSON backup</span></span>
+                        </button>
+                        <button class="btn-data btn-data-restore" id="restoreBackupBtn" onclick="restoreAutoBackup()" style="opacity:0.5;" disabled>
+                            <span class="btn-data-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.95"/></svg></span>
+                            <span class="btn-data-label">Restore Backup<span id="restoreBackupMeta">No backup yet</span></span>
+                        </button>
+                        <button class="btn-data btn-data-reset" onclick="confirmResetData()">
+                            <span class="btn-data-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg></span>
+                            <span class="btn-data-label">Reset All Data<span>Permanently delete everything</span></span>
+                        </button>
+                    </div>
+                    <input type="file" id="importFileInput" accept=".json" style="display:none;" onchange="importData(event)">
+                </div>
+                <div class="settings-card" id="guideCard"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals -->
+    <div id="activitySearchOverlay" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeActivitySearch()">
+        <div class="modal" style="max-width:480px;">
+            <div class="modal-header" style="padding-bottom:12px;">
+                <h3 class="modal-title">Search Activities</h3>
+                <input type="text" id="activitySearchInput" placeholder="Type to search…"
+                    style="width:100%;margin-top:12px;padding:10px 14px;background:var(--color-bg-secondary);border:1px solid var(--color-border);border-radius:10px;color:var(--color-text-primary);font-size:14px;font-family:inherit;"
+                    oninput="runActivitySearch(this.value)" autofocus>
+            </div>
+            <div class="modal-body" style="max-height:360px;overflow-y:auto;padding-top:8px;">
+                <div id="activitySearchResults"></div>
+            </div>
+            <div class="modal-footer"><button class="btn-secondary" onclick="closeActivitySearch()">Close</button></div>
+        </div>
+    </div>
+
+    <div id="dimensionModal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header"><h3 class="modal-title" id="dimensionModalTitle">Create Dimension</h3></div>
+            <form id="dimensionForm" onsubmit="saveDimension(event)">
+                <div class="modal-body">
+                    <div class="form-group"><label>Dimension Name *</label><input type="text" id="dimensionName" placeholder="e.g., Health, Career, Relationships" required></div>
+                    <div class="form-group"><label>Icon (emoji)</label><input type="text" id="dimensionIcon" placeholder="🎯" maxlength="4"></div>
+                    <div class="form-group"><label>Color</label><input type="color" id="dimensionColor" value="#4a7c9e"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn-secondary" onclick="closeDimensionModal()">Cancel</button>
+                    <button type="submit" class="btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="activityModal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header"><h3 class="modal-title" id="activityModalTitle">Create Activity</h3></div>
+            <form id="activityForm" onsubmit="saveActivity(event)">
+                <div class="modal-body">
+                    <div class="form-group"><label>Activity Name *</label><input type="text" id="activityName" placeholder="e.g., Morning Run, Read 30 min" required></div>
+                    <div class="form-row" id="activityDimPathGroup">
+                        <div class="form-group"><label>Dimension</label><select id="activityDimension"><option value="">No Dimension</option></select></div>
+                        <div class="form-group"><label>Path</label><select id="activityPath"><option value="">No Path</option></select></div>
+                    </div>
+                    <div class="form-group"><label>Base XP *</label><input type="number" id="activityXP" placeholder="10" min="1" max="10000" required></div>
+                    <div class="form-group"><label>Icon (emoji)</label><input type="text" id="activityIcon" placeholder="🎯" maxlength="4"></div>
+                    <div class="form-group">
+                        <label>Frequency</label>
+                        <select id="activityFrequency" onchange="onFrequencyChange()">
+                            <option value="daily">Daily</option>
+                            <option value="weekly">Weekly</option>
+                            <option value="custom">Custom interval</option>
+                            <option value="occasional">Occasional / one-off</option>
+                        </select>
+                    </div>
+                    <div id="customFreqGroup" style="display:none;padding:14px;background:var(--color-bg-secondary);border-radius:10px;border:1px solid var(--color-border);flex-direction:column;gap:0;">
+                        <div class="form-group" style="margin-bottom:0;"><label>Repeat type</label><select id="activityCustomType" onchange="onCustomTypeChange()"><option value="cycle">Every X days</option><option value="weekdays">Specific days of week</option></select></div>
+                        <div style="height:10px;background:rgba(45,45,45,1);"></div>
+                        <div class="form-group"><label>Times to complete per cycle</label><input type="number" id="activityCustomTimes" placeholder="1" min="1" max="99" value="1"></div>
+                        <div style="height:10px;background:rgba(45,45,45,1);"></div>
+                        <div class="form-group" id="cycleSubGroup"><label>Repeat every how many days?</label><input type="number" id="activityCustomDays" placeholder="3" min="1" max="365" value="3"></div>
+                        <div style="height:10px;background:rgba(45,45,45,1);"></div>
+                        <div class="form-group" id="weekdaySubGroup" style="display:none;">
+                            <label>Active days of the week</label>
+                            <div style="height:10px;background:rgba(45,45,45,1);"></div>
+                            <div class="day-picker" id="dayPickerBtns">
+                                <button type="button" class="day-btn" data-day="0">Su</button>
+                                <button type="button" class="day-btn" data-day="1">Mo</button>
+                                <button type="button" class="day-btn" data-day="2">Tu</button>
+                                <button type="button" class="day-btn" data-day="3">We</button>
+                                <button type="button" class="day-btn" data-day="4">Th</button>
+                                <button type="button" class="day-btn" data-day="5">Fr</button>
+                                <button type="button" class="day-btn" data-day="6">Sa</button>
+                            </div>
+                            <p class="form-hint">Activity is only available on highlighted days</p>
+                        </div>
+                    </div>
+                    <div id="occasionalDeleteGroup" style="display:none;">
+                        <label class="toggle-row">
+                            <span class="toggle-label"><span class="toggle-title">Delete after completion</span><span class="toggle-sub">One-time task — disappears once done</span></span>
+                            <div class="toggle-switch"><input type="checkbox" id="activityDeleteOnComplete"><span class="toggle-knob"></span></div>
+                        </label>
+                    </div>
+                    <div id="allowMultipleGroup" style="display:none;">
+                        <label class="toggle-row">
+                            <span class="toggle-label"><span class="toggle-title">Allow multiple times a day</span><span class="toggle-sub">Each completion earns XP — streak only advances once per cycle</span></span>
+                            <div class="toggle-switch"><input type="checkbox" id="activityAllowMultiple"><span class="toggle-knob"></span></div>
+                        </label>
+                    </div>
+                    <label class="toggle-row">
+                        <span class="toggle-label"><span class="toggle-title">Enable Negative XP</span><span class="toggle-sub">For bad habits or accountability tracking</span></span>
+                        <div class="toggle-switch"><input type="checkbox" id="activityNegativeEnabled" onchange="toggleNegativeXpSection()"><span class="toggle-knob"></span></div>
+                    </label>
+                    <div id="negativeXpSection" style="display:none;" class="form-section-inset">
+                        <p style="font-size:11px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--color-text-secondary);margin-bottom:2px;">When does XP get deducted?</p>
+                        <div class="radio-group">
+                            <label class="radio-option"><input type="radio" name="negativeXpMode" id="negModePerform" value="perform" checked><div class="radio-option-content"><span class="radio-option-title">When performed</span><span class="radio-option-desc">Logging it costs XP — discourages the habit</span></div></label>
+                            <label class="radio-option"><input type="radio" name="negativeXpMode" id="negModeSkip" value="skip"><div class="radio-option-content"><span class="radio-option-title">When skipped</span><span class="radio-option-desc">Doing it earns XP; missing a day deducts XP</span></div></label>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn-secondary" onclick="closeActivityModal()">Cancel</button>
+                    <button type="submit" class="btn-primary">Save Activity</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="rewardModal" class="modal-overlay">
+        <div class="modal modal-wide">
+            <div class="modal-header"><h3 class="modal-title" id="rewardModalTitle">Set Reward for Level <span id="rewardModalLevel"></span></h3></div>
+            <form id="rewardForm" onsubmit="saveReward(event)">
+                <div class="modal-body">
+                    <div class="form-group"><label>Reward Title *</label><input type="text" id="rewardTitle" placeholder="e.g., Weekend Getaway, New Sneakers…" required></div>
+                    <div class="form-group"><label>Description</label><textarea id="rewardDescription" placeholder="Describe what this reward means to you…" style="min-height:90px;"></textarea></div>
+                    <div class="form-group"><label>Link <span style="color:var(--color-text-secondary);font-weight:400;font-size:12px;">(optional)</span></label><input type="url" id="rewardLink" placeholder="https://…"></div>
+                    <div class="form-group"><label>Icon / Emoji <span style="color:var(--color-text-secondary);font-weight:400;font-size:12px;">(optional)</span></label><input type="text" id="rewardIcon" placeholder="" maxlength="4" style="font-size:22px;width:80px;text-align:center;"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn-secondary" onclick="closeRewardModal()">Cancel</button>
+                    <button type="submit" class="btn-primary">Save Reward</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="rewardUnlockOverlay" style="display:none;" class="reward-unlock-overlay" onclick="dismissRewardOverlay()">
+        <div class="reward-unlock-card" onclick="event.stopPropagation()">
+            <span class="reward-unlock-icon" id="rewardUnlockIcon">🎁</span>
+            <div class="reward-unlock-level" id="rewardUnlockLevel">LEVEL UP!</div>
+            <div class="reward-unlock-title" id="rewardUnlockTitle">You earned a reward!</div>
+            <div class="reward-unlock-desc" id="rewardUnlockDesc"></div>
+            <button class="btn-reward-claim" onclick="dismissRewardOverlay()">🎉 Claim Reward</button>
+        </div>
+    </div>
+
+    <div id="dimRewardUnlockOverlay" style="display:none;" class="reward-unlock-overlay" onclick="dismissDimRewardOverlay()">
+        <div class="reward-unlock-card" onclick="event.stopPropagation()">
+            <span class="reward-unlock-icon" id="dimRewardUnlockIcon">🗺️</span>
+            <div class="reward-unlock-level" id="dimRewardUnlockLevel" style="color:var(--color-accent-olive);">DIMENSION LEVEL UP!</div>
+            <div class="reward-unlock-title" id="dimRewardUnlockTitle">Dimension reward unlocked!</div>
+            <div class="reward-unlock-desc" id="dimRewardUnlockDesc"></div>
+            <button class="btn-reward-claim" onclick="dismissDimRewardOverlay()">🎉 Claim Reward</button>
+        </div>
+    </div>
+
+    <div id="pathModal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header"><h3 class="modal-title" id="pathModalTitle">Create Path</h3></div>
+            <form id="pathForm" onsubmit="savePath(event)">
+                <div class="modal-body">
+                    <div class="form-group"><label>Path Name *</label><input type="text" id="pathName" placeholder="e.g., Exercise, Reading, Meditation" required></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn-secondary" onclick="closePathModal()">Cancel</button>
+                    <button type="submit" class="btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="challengeModal" class="modal-overlay">
+        <div class="modal modal-wide">
+            <div class="modal-header"><h3 class="modal-title" id="challengeModalTitle">Create Challenge</h3></div>
+            <form id="challengeForm" onsubmit="saveChallenge(event)">
+                <div class="modal-body">
+                    <div class="form-group"><label>Challenge Name *</label><input type="text" id="challengeName" placeholder="e.g., 30-Day Fitness Challenge" required></div>
+                    <div class="form-group"><label>Description</label><textarea id="challengeDescription" placeholder="Describe your challenge goal"></textarea></div>
+                    <div class="form-row">
+                        <div class="form-group"><label>Start Date *</label><input type="date" id="challengeStartDate" required></div>
+                        <div class="form-group"><label>End Date *</label><input type="date" id="challengeEndDate" required></div>
+                    </div>
+                    <div class="form-group"><label>Activity Type</label><select id="challengeActivityType" onchange="onChallengeTypeChange()"><option value="any">Any Activity</option><option value="specific">Specific Activities</option></select></div>
+                    <div class="form-group" id="challengeActivitySelectGroup" style="display:none;">
+                        <label>Select Activities &amp; Set Targets</label>
+                        <p style="font-size:11px;color:var(--color-text-secondary);margin-top:-2px;">Set how many times each activity must be completed</p>
+                        <div id="challengeActivityChecklist" style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.09);border-radius:8px;padding:6px;max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:2px;margin-top:4px;"></div>
+                        <p id="challengeActivityChecklistEmpty" style="color:var(--color-text-secondary);font-size:12px;margin-top:6px;display:none;">No activities found. Create activities first.</p>
+                        <div id="challengeXPPreview" style="margin-top:10px;padding:10px 12px;background:rgba(90,159,212,0.08);border:1px solid rgba(90,159,212,0.2);border-radius:8px;font-size:13px;display:none;">
+                            <span style="color:var(--color-text-secondary);">Completion bonus:</span>
+                            <strong id="challengeXPPreviewValue" style="color:var(--color-progress);margin-left:6px;">+0 XP</strong>
+                            <span style="color:var(--color-text-secondary);font-size:11px;margin-left:6px;">(20% of total activity base XP)</span>
+                        </div>
+                        <div style="margin-top:10px;display:flex;align-items:center;gap:10px;">
+                            <input type="checkbox" id="challengeEnforceActivities" style="width:16px;height:16px;accent-color:var(--color-progress);cursor:pointer;">
+                            <label for="challengeEnforceActivities" style="font-size:13px;color:var(--color-text-secondary);cursor:pointer;">Enforce completion — require all activity targets to be met before challenge can be completed</label>
+                        </div>
+                    </div>
+                    <div class="form-row" id="challengeGlobalTargetRow">
+                        <div class="form-group"><label>Bonus XP *</label><input type="number" id="challengeXP" placeholder="500" min="1" required></div>
+                    </div>
+                    <button type="button" class="metric-toggle-btn" id="metricToggleBtn" onclick="toggleMetricSection()">
+                        <span class="mtb-icon">🎯</span>
+                        <span class="mtb-label">Track a real-world goal <span style="color:var(--color-text-secondary);font-size:12px;font-weight:400;">(optional)</span></span>
+                        <span class="mtb-check" id="metricToggleCheck"></span>
+                    </button>
+                    <div class="ch-metric-panel" id="metricPanel" style="display:none;">
+                        <div class="form-row">
+                            <div class="form-group"><label>Goal quantity *</label><input type="number" id="challengeMetricQty" placeholder="e.g. 50" min="0.01" step="any"></div>
+                            <div class="form-group"><label>Unit *</label><input type="text" id="challengeMetricUnit" placeholder="e.g. km, pages, hours"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn-secondary" onclick="closeChallengeModal()">Cancel</button>
+                    <button type="submit" class="btn-primary">Save Challenge</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ── App JS ─────────────────────────────────────────────────────────── -->
+    <script type="module" src="app.js"></script>
+
+    <!-- ── Service Worker Registration ───────────────────────────────────── -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function() {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(function(reg) {
+                        console.log('[SW] Registered, scope:', reg.scope);
+                    })
+                    .catch(function(err) {
+                        console.warn('[SW] Registration failed:', err);
+                    });
+            });
+        }
+    </script>
+</body>
+</html>
