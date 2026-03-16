@@ -4931,7 +4931,7 @@
 
         // ── Daily Reminder Notifications ──────────────────────────────────────
         // VAPID public key — paste your generated key here after running vapid-keygen.html
-        var VAPID_PUBLIC_KEY = 'BAceGWs6xfm31JCGcNPsP8a7unWEMlhPQoe7lI0X3SOEpSgXeI0kNN9em7ta0BMQZ2aFK9-q8nZXz07BVYBWZDc';
+        var VAPID_PUBLIC_KEY = 'BCsaPZ-4JC3l8b_bSvbQO4PZpq_x3cj6lkEJ_y-F9mnp24tB469h-D1UIhlV5k_-4h2l3Nv1L4__GZIdutiSmuw';
 
         // Convert VAPID base64 URL key to Uint8Array (required by PushManager)
         function urlBase64ToUint8Array(base64String) {
