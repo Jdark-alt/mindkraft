@@ -1,0 +1,11 @@
+name: Generate VAPID Keys
+
+on:
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate VAPID keys
+        run: npx web-push generate-vapid-keys
