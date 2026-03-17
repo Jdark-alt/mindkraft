@@ -17,7 +17,7 @@ webpush.setVapidDetails(
 function buildTimeWindow() {
     var times = new Set();
     var now   = Date.now();
-    for (var i = 0; i <= 4; i++) {
+    for (var i = 0; i <= 59; i++) {
         var t = new Date(now - i * 60 * 1000);
         var hh = String(t.getUTCHours()).padStart(2, '0');
         var mm = String(t.getUTCMinutes()).padStart(2, '0');
