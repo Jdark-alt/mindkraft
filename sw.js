@@ -7,7 +7,7 @@
 // Bump CACHE_VERSION whenever you deploy a meaningful update.
 // This causes the old cache to be deleted and the new one installed.
 
-const CACHE_VERSION = 'v3';
+const CACHE_VERSION = 'v4';
 const CACHE_NAME = 'mindkraft-shell-' + CACHE_VERSION;
 
 // Files that make up the app shell — must all load for the app to work
@@ -103,6 +103,38 @@ self.addEventListener('fetch', function(event) {
             }
             // Not in cache — fetch from network
             return fetch(event.request);
+        })
+    );
+});
+
+// ── Push Notifications ────────────────────────────────────────────────────
+// Fired by GitHub Actions via Web Push when the user has a reminder set.
+// Works even when the browser tab is closed (browser must still be running).
+self.addEventListener('push', function(event) {
+    var data = {};
+    try { data = event.data ? event.data.json() : {}; } catch(e) {}
+
+    var title   = data.title || 'Mindkraft ⚔️';
+    var options = {
+        body:      data.body  || "Don't forget to check off today's tasks!",
+        icon:      './icon-192.svg',
+        badge:     './icon-192.svg',
+        tag:       'mindkraft-daily-reminder', // replaces previous notification instead of stacking
+        renotify:  false,
+        vibrate:   [200, 100, 200]
+    };
+    event.waitUntil(self.registration.showNotification(title, options));
+});
+
+// Tapping the notification opens / focuses the app
+self.addEventListener('notificationclick', function(event) {
+    event.notification.close();
+    event.waitUntil(
+        clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(list) {
+            for (var i = 0; i < list.length; i++) {
+                if ('focus' in list[i]) return list[i].focus();
+            }
+            if (clients.openWindow) return clients.openWindow('./');
         })
     );
 });

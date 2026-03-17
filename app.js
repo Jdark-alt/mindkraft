@@ -52,6 +52,7 @@
                     if (settingsEmailEl) settingsEmailEl.textContent = user.email;
                     loadSettings();
                     processStreakPauses();
+                    scheduleReminder();
                     updateDashboard();
                     // Init the restore backup button visibility (async — non-blocking)
                     updateRestoreBackupBtn().catch(e => {});
@@ -1883,11 +1884,27 @@
             } else if (activity.frequency === 'occasional') {
                 return lastCompleted.toDateString() === today.toDateString();
             } else if (activity.frequency === 'weekly') {
-                return daysDiff < 7;
+                // Reset every Sunday (calendar week boundary) — compare midnight-to-midnight
+                const todayMidnight = new Date(); todayMidnight.setHours(0,0,0,0);
+                const dow = todayMidnight.getDay(); // 0=Sun
+                const weekStart = new Date(todayMidnight); weekStart.setDate(todayMidnight.getDate() - dow);
+                // Normalise lastCompleted to local midnight to avoid UTC timezone shifts
+                const lcMidnight = new Date(lastCompleted); lcMidnight.setHours(0,0,0,0);
+                return lcMidnight >= weekStart;
             } else if (activity.frequency === 'biweekly') {
-                return daysDiff < 14;
+                // Every other Sunday, anchored to Jan 5 2025
+                const biAnchor = new Date('2025-01-05T00:00:00');
+                const todayMidnight2 = new Date(); todayMidnight2.setHours(0,0,0,0);
+                const weeksSinceAnchor = Math.floor((todayMidnight2 - biAnchor) / (7 * 86400000));
+                const cycleStart = new Date(biAnchor.getTime() + (weeksSinceAnchor - (weeksSinceAnchor % 2)) * 7 * 86400000);
+                const lcMidnight2 = new Date(lastCompleted); lcMidnight2.setHours(0,0,0,0);
+                return lcMidnight2 >= cycleStart;
             } else if (activity.frequency === 'monthly') {
-                return daysDiff < 30;
+                // Resets on the 1st of each calendar month
+                const today2 = new Date();
+                const monthStart = new Date(today2.getFullYear(), today2.getMonth(), 1);
+                const lcMidnight3 = new Date(lastCompleted); lcMidnight3.setHours(0,0,0,0);
+                return lcMidnight3 >= monthStart;
             }
             return false;
         }
@@ -2392,8 +2409,18 @@
             const endLevel = Math.min(99, currentLevel + VISIBLE_FUTURE); // cap so L100 is always appended separately
 
             let html = '';
+
+            // ── "Add reward for any level" input row ──────────────────────
+            html += '<div class="reward-any-level-row">'
+                + '<label>🎯 Set reward for any level:</label>'
+                + '<input type="number" id="rewardAnyLevelInput" min="2" max="100" placeholder="2–100" style="width:90px;">'
+                + '<button class="btn-reward-add" onclick="openRewardForAnyLevel()">➕ Add / Edit</button>'
+                + '</div>';
+
             const levelsToShow = new Set();
             for (let lvl = Math.max(2, startLevel); lvl <= endLevel; lvl++) levelsToShow.add(lvl);
+            // Always include any level that already has a reward, even if far in the future
+            Object.keys(rewards).map(Number).forEach(function(lvl) { if (lvl >= 2 && lvl < 100) levelsToShow.add(lvl); });
             levelsToShow.add(100); // always show level 100
             for (const lvl of [...levelsToShow].sort((a,b) => a-b)) {
                 const reward = rewards[lvl];
@@ -2408,14 +2435,12 @@
                        ${reward.description ? `<div class="reward-desc">${escapeHtml(reward.description)}</div>` : ''}
                        <div class="reward-card-actions">
                            ${reward.link && isUnlocked ? `<a href="${escapeHtml(reward.link)}" target="_blank" rel="noopener" class="btn-reward-claim">🎁 Claim Reward</a>` : ''}
-                           ${!isCurrent ? `<button class="btn-reward-edit" onclick="openRewardModal(${lvl})">✏️ Edit</button>` : ''}
-                           ${!isCurrent ? `<button class="btn-reward-delete" onclick="deleteReward(${lvl})" title="Delete reward">✕</button>` : ''}
+                           <button class="btn-reward-edit" onclick="openRewardModal(${lvl})">✏️ Edit</button>
+                           <button class="btn-reward-delete" onclick="deleteReward(${lvl})" title="Delete reward">✕</button>
                        </div>`
                     : lvl === 100
                     ? `<div class="reward-title" style="filter: blur(6px); user-select:none; pointer-events:none;">🌟 &nbsp;A secret message awaits you at Level 100!</div>
                        <div class="reward-desc" style="margin-top:6px;color:var(--color-text-secondary);font-size:12px;font-style:italic;">Reach Level 100 to reveal your reward.</div>`
-                    : isCurrent
-                    ? `<div class="reward-title" style="color: var(--color-text-secondary); font-style: italic; font-weight: 400;">Rewards can be set for future levels</div>`
                     : `<div class="reward-title" style="color: var(--color-text-secondary); font-style: italic; font-weight: 400;">No reward set yet</div>
                        <div class="reward-card-actions">
                            <button class="btn-reward-add" onclick="openRewardModal(${lvl})">➕ Add reward</button>
@@ -2424,7 +2449,7 @@
                 html += `
                     <div class="reward-node ${nodeClass}">
                         <div class="reward-node-dot"></div>
-                        <div class="reward-card">
+                        <div class="reward-card${reward ? ' reward-set' : ''}">
                             <div class="reward-card-header">
                                 <span class="reward-level-label">Level ${lvl}</span>
                                 <span class="reward-status-badge ${statusBadgeClass}">${statusLabel}</span>
@@ -2436,11 +2461,35 @@
             container.innerHTML = html;
         }
 
+        window.openRewardForAnyLevel = function() {
+            var input = document.getElementById('rewardAnyLevelInput');
+            if (!input) return;
+            var lvl = parseInt(input.value);
+            if (isNaN(lvl) || lvl < 2 || lvl > 100) {
+                showToast('Please enter a level between 2 and 100', 'red');
+                return;
+            }
+            openRewardModal(lvl);
+        };
+
+        window.openDimRewardForAnyLevel = function() {
+            var input = document.getElementById('dimRewardAnyLevelInput');
+            var sel = document.getElementById('dimRewardSelect');
+            if (!input || !sel) return;
+            var dimId = sel.value;
+            if (!dimId) { showToast('Select a dimension first', 'red'); return; }
+            var lvl = parseInt(input.value);
+            if (isNaN(lvl) || lvl < 2 || lvl > 200) {
+                showToast('Please enter a level between 2 and 200', 'red');
+                return;
+            }
+            openDimRewardModal(dimId, lvl);
+        };
+
         let editingRewardLevel = null;
 
         window.openRewardModal = function(level) {
             const currentLevel = window.userData.level || 1;
-            if (level === currentLevel) return; // can't set reward for current level
             editingRewardLevel = level;
             _editingDimRewardDimId = null;
             _editingDimRewardLevel = null;
@@ -2664,7 +2713,13 @@
             var levelsToShow = [];
             for (var lvl = Math.max(2, startLevel); lvl <= endLevel; lvl++) levelsToShow.push(lvl);
 
-            var html = '';
+            // ── "Add reward for any dim level" input row ──────────────────
+            var html = '<div class="reward-any-level-row">'
+                + '<label>🎯 Set reward for any dim level:</label>'
+                + '<input type="number" id="dimRewardAnyLevelInput" min="2" max="200" placeholder="2–200" style="width:90px;">'
+                + '<button class="btn-reward-add" onclick="openDimRewardForAnyLevel()">➕ Add / Edit</button>'
+                + '</div>';
+
             levelsToShow.forEach(function(lvl) {
                 var reward = rewards[lvl];
                 var isUnlocked = lvl < currentLevel;
@@ -2678,20 +2733,20 @@
                     var iconPart = reward.icon ? escapeHtml(reward.icon) + ' &nbsp;' : '';
                     var descPart = reward.description ? '<div class="reward-desc">' + escapeHtml(reward.description) + '</div>' : '';
                     var linkPart = (reward.link && isUnlocked) ? '<a href="' + escapeHtml(reward.link) + '" target="_blank" rel="noopener" class="btn-reward-claim">\ud83c\udf81 Claim Reward</a>' : '';
-                    var editPart = !isCurrent ? '<button class="btn-reward-edit" onclick="openDimRewardModal(\'' + escapeHtml(dimId) + '\',' + lvl + ')">\u270f\ufe0f Edit</button>' : '';
+                    var editPart = '<button class="btn-reward-edit" onclick="openDimRewardModal(\'' + escapeHtml(dimId) + '\',' + lvl + ')">\u270f\ufe0f Edit</button>'
+                        + '<button class="btn-reward-delete" onclick="deleteDimReward(\'' + escapeHtml(dimId) + '\',' + lvl + ')" title="Delete reward">\u2715</button>';
                     rewardContent = '<div class="reward-title">' + iconPart + escapeHtml(reward.title) + '</div>'
                         + descPart
                         + '<div class="reward-card-actions">' + linkPart + editPart + '</div>';
-                } else if (isCurrent) {
-                    rewardContent = '<div class="reward-title" style="color:var(--color-text-secondary);font-style:italic;font-weight:400;">Rewards can be set for future levels</div>';
                 } else {
+                    // Both isCurrent and future future levels get an Add button
                     rewardContent = '<div class="reward-title" style="color:var(--color-text-secondary);font-style:italic;font-weight:400;">No reward set yet</div>'
                         + '<div class="reward-card-actions"><button class="btn-reward-add" onclick="openDimRewardModal(\'' + escapeHtml(dimId) + '\',' + lvl + ')">\u2795 Add reward</button></div>';
                 }
 
                 html += '<div class="reward-node ' + nodeClass + '">'
                     + '<div class="reward-node-dot"></div>'
-                    + '<div class="reward-card">'
+                    + '<div class="reward-card' + (reward ? ' reward-set' : '') + '">'
                     + '<div class="reward-card-header">'
                     + '<span class="reward-level-label">Dim Level ' + lvl + '</span>'
                     + '<span class="reward-status-badge ' + statusBadgeClass + '">' + statusLabel + '</span>'
@@ -2723,6 +2778,17 @@
 
         // ── Patch saveReward to support both global and dim modes ─────────
         // (original saveReward is replaced below)
+
+        window.deleteDimReward = async function(dimId, level) {
+            if (!confirm('Delete the reward for Dim Level ' + level + '?')) return;
+            var dim = (window.userData.dimensions || []).find(function(d) { return d.id === dimId; });
+            if (dim && dim.dimRewards) {
+                delete dim.dimRewards[level];
+                await saveUserData();
+                renderDimRewards();
+                showToast('Reward deleted', 'red');
+            }
+        };
 
         // ── Dimension Progress in Analytics ───────────────────────────────
         window.renderDimProgress = function renderDimProgress() {
@@ -3247,16 +3313,18 @@
             const allActs   = getAllActivitiesFlat();
             const scopeFiltered = filterByScope(allActs, window.analyticsState);
 
-            // Populate the calendar activity dropdown
+            // Populate the calendar activity dropdown — preserve current selection
             const calSel = document.getElementById('calendarActivityFilter');
+            const preservedVal = calSel ? calSel.value : '';
             if (calSel) {
-                const currentVal = calSel.value;
                 calSel.innerHTML = '<option value="">All Activities</option>' +
-                    scopeFiltered.map(a => `<option value="${a.id}" ${a.id === currentVal ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('');
+                    scopeFiltered.map(a => `<option value="${a.id}" ${a.id === preservedVal ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('');
+                // Restore selection (innerHTML resets it in some browsers)
+                calSel.value = preservedVal;
             }
 
             // Filter by selected calendar activity
-            const selectedCalId = calSel ? calSel.value : '';
+            const selectedCalId = preservedVal;  // use captured value — innerHTML rebuild can reset .value in some browsers
             const filtered = selectedCalId
                 ? scopeFiltered.filter(a => a.id === selectedCalId)
                 : scopeFiltered;
@@ -3306,14 +3374,11 @@
                 const isToday = dateStr === todayStr;
                 const intensity = count > 0 ? 0.2 + (count / maxCount) * 0.75 : 0;
                 const bg = count > 0 ? `rgba(74,124,158,${intensity.toFixed(2)})` : '';
-                const tooltip = count > 0
-                    ? `data-tip="${escapeHtml(entries.map(e=>e.name).join(', '))} (${count} act.)"` : '';
                 html += `<div class="calendar-day ${count>0?'has-data':''} ${isToday?'today':''}"
                     style="${bg?'background:'+bg+';':''}"
-                    ${tooltip}
-                    onmousemove="${count>0?`showCalTip(event,'${dateStr}',${count})`:''}"
-                    onmouseleave="${count>0?'hideCalTip()':''}">
+                    ${count>0 ? `onclick="toggleCalTip(this,'${dateStr}',${count})"` : ''}>
                     <span style="font-size:10px;color:${count>0?'#fff':'var(--color-text-secondary)'};">${d}</span>
+                    ${count>0 ? `<div class="cal-day-tip" data-date="${dateStr}"></div>` : ''}
                 </div>`;
             }
             html += '</div>';
@@ -3321,19 +3386,77 @@
             window._calDayMap = dayMap;
         }
 
-        window.showCalTip = function(e, dateStr, count) {
-            const tip = document.getElementById('calendarTooltip');
+        window.toggleCalTip = function(cell, dateStr, count) {
+            // Close any open tip first
+            document.querySelectorAll('.calendar-day.tip-open').forEach(function(el) {
+                if (el !== cell) el.classList.remove('tip-open');
+            });
+            const isOpen = cell.classList.toggle('tip-open');
+            if (!isOpen) return;
+            // Populate tip content
+            const tipEl = cell.querySelector('.cal-day-tip');
+            if (!tipEl) return;
             const entries = (window._calDayMap || {})[dateStr] || [];
-            const names = [...new Set(entries.map(e=>e.name))];
-            tip.innerHTML = `<strong>${dateStr}</strong><br>${names.map(n=>'• '+escapeHtml(n)).join('<br>')}`;
-            tip.style.display = 'block';
-            tip.style.left = (e.clientX + 12) + 'px';
-            tip.style.top  = (e.clientY - 10) + 'px';
+            const names = [...new Set(entries.map(e => e.name))];
+            tipEl.innerHTML = '<strong>' + dateStr + '</strong>' +
+                names.map(n => '<div class="cal-tip-item">• ' + escapeHtml(n) + '</div>').join('');
+
+            // Reset any inline positioning from a prior open
+            tipEl.style.left = '';
+            tipEl.style.right = '';
+            tipEl.style.top = '';
+            tipEl.style.bottom = '';
+            tipEl.style.transform = '';
+
+            // After paint, check if the tip overflows the viewport and adjust
+            requestAnimationFrame(function() {
+                var tipRect  = tipEl.getBoundingClientRect();
+                var cellRect = cell.getBoundingClientRect();
+                var vw = window.innerWidth;
+                var vh = window.innerHeight;
+
+                // ── Vertical: prefer above, fall back to below ──
+                if (tipRect.top < 8) {
+                    // Not enough room above — open below the cell instead
+                    tipEl.style.bottom = 'auto';
+                    tipEl.style.top    = 'calc(100% + 8px)';
+                } else {
+                    tipEl.style.top    = '';
+                    tipEl.style.bottom = 'calc(100% + 8px)';
+                }
+
+                // ── Horizontal: centre, then clamp to viewport ──
+                // Start centred
+                tipEl.style.left      = '50%';
+                tipEl.style.transform = 'translateX(-50%)';
+                tipEl.style.right     = '';
+
+                // Re-measure after setting centre position
+                requestAnimationFrame(function() {
+                    var r2 = tipEl.getBoundingClientRect();
+                    if (r2.right > vw - 8) {
+                        // Overflows right → pin to right edge of cell
+                        tipEl.style.left      = 'auto';
+                        tipEl.style.right     = '0';
+                        tipEl.style.transform = 'none';
+                    } else if (r2.left < 8) {
+                        // Overflows left → pin to left edge of cell
+                        tipEl.style.left      = '0';
+                        tipEl.style.right     = 'auto';
+                        tipEl.style.transform = 'none';
+                    }
+                });
+            });
         };
 
-        window.hideCalTip = function() {
-            document.getElementById('calendarTooltip').style.display = 'none';
-        };
+        // Close calendar tip when clicking outside
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('.calendar-day')) {
+                document.querySelectorAll('.calendar-day.tip-open').forEach(function(el) {
+                    el.classList.remove('tip-open');
+                });
+            }
+        });
 
         // ── Time of Day ──────────────────────────────────────────────────
 
@@ -3647,6 +3770,10 @@
                 tab.classList.remove('active');
                 if (tab.getAttribute('onclick') === `switchTab('${tabName}')`) {
                     tab.classList.add('active');
+                    tab.classList.remove('nav-tab-pop');
+                    void tab.offsetWidth; // force reflow to restart animation
+                    tab.classList.add('nav-tab-pop');
+                    tab.addEventListener('animationend', () => tab.classList.remove('nav-tab-pop'), { once: true });
                 }
             });
             
@@ -4048,14 +4175,14 @@
         ];
 
         const GRADIENT_PRESETS = [
-            { name:'Aurora',    a:'#00c4cc', ao:18, b:'#7b2ff7', bo:14 },
-            { name:'Ember',     a:'#e84545', ao:16, b:'#ff8c00', bo:12 },
-            { name:'Ocean',     a:'#0077b6', ao:20, b:'#00b4d8', bo:10 },
-            { name:'Sakura',    a:'#e0529b', ao:14, b:'#f7a1c4', bo:12 },
-            { name:'Verdant',   a:'#2d6a4f', ao:18, b:'#95d5b2', bo:12 },
-            { name:'Dusk',      a:'#6a0572', ao:16, b:'#e29578', bo:10 },
-            { name:'Ice',       a:'#a8dadc', ao:14, b:'#457b9d', bo:12 },
-            { name:'None',      a:'#000000', ao:0,  b:'#000000', bo:0  },
+            { name:'Aurora',  a:'#00c4cc', ao:18, m:'#3a1a7a', mo:10, b:'#7b2ff7', bo:14, angle:135 },
+            { name:'Ember',   a:'#e84545', ao:16, m:'#8c3a00', mo:8,  b:'#ff8c00', bo:12, angle:160 },
+            { name:'Ocean',   a:'#0077b6', ao:20, m:'#023e5a', mo:10, b:'#00b4d8', bo:10, angle:145 },
+            { name:'Sakura',  a:'#e0529b', ao:14, m:'#8a1a4a', mo:8,  b:'#f7a1c4', bo:12, angle:130 },
+            { name:'Verdant', a:'#2d6a4f', ao:18, m:'#1a4a2a', mo:8,  b:'#95d5b2', bo:12, angle:150 },
+            { name:'Dusk',    a:'#6a0572', ao:16, m:'#3a1a00', mo:8,  b:'#e29578', bo:10, angle:140 },
+            { name:'Ice',     a:'#a8dadc', ao:14, m:'#1a3a5a', mo:8,  b:'#457b9d', bo:12, angle:125 },
+            { name:'None',    a:'#000000', ao:0,  m:'#000000', mo:0,  b:'#000000', bo:0,  angle:135 },
         ];
 
         function hexToRgb(h) {
@@ -4065,23 +4192,77 @@
             return [(n>>16)&255, (n>>8)&255, n&255];
         }
 
+        // Copy a hex value from an input to clipboard
+        window.copyHex = function(inputId) {
+            var el = document.getElementById(inputId);
+            if (!el) return;
+            var val = el.value;
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(val).then(function() {
+                    showToast('Copied ' + val, 'olive');
+                }).catch(function() {});
+            } else {
+                // Fallback for older browsers
+                el.select();
+                try { document.execCommand('copy'); showToast('Copied ' + val, 'olive'); } catch(e) {}
+            }
+        };
+
+        // Text hex input → colour picker + live CSS (colour section)
+        window.onColorHexTextInput = function(id, cssVar) {
+            var txt = document.getElementById('ctxt_' + id);
+            if (!txt) return;
+            var val = txt.value.trim();
+            if (!/^#[0-9a-fA-F]{6}$/.test(val)) return; // wait for full valid hex
+            var picker = document.getElementById('cp_' + id);
+            if (picker) picker.value = val;
+            var hex = document.getElementById('chex_' + id);
+            if (hex) hex.textContent = val;
+            document.documentElement.style.setProperty(cssVar, val);
+            if (!window._pendingTheme) window._pendingTheme = {};
+            window._pendingTheme['custom_' + id] = val;
+        };
+
+        // Glow colour picker → hex text input
+        window.onGlowColorInput = function(stop) {
+            var picker = document.getElementById('glow' + stop + 'Color');
+            var hex    = document.getElementById('glow' + stop + 'Hex');
+            if (picker && hex) hex.value = picker.value;
+            updateGradientPreview();
+        };
+
+        // Glow hex text input → colour picker
+        window.onGlowHexInput = function(stop) {
+            var hex    = document.getElementById('glow' + stop + 'Hex');
+            var picker = document.getElementById('glow' + stop + 'Color');
+            if (!hex || !picker) return;
+            var val = hex.value.trim();
+            if (!/^#[0-9a-fA-F]{6}$/.test(val)) return;
+            picker.value = val;
+            updateGradientPreview();
+        };
+
         function buildColorGrid() {
             var grid = document.getElementById('themeColorGrid');
             if (!grid) return;
             var saved = (window.userData.settings && window.userData.settings.theme) || {};
             var html = '';
             CUSTOM_COLOR_VARS.forEach(function(v) {
-                // Priority: saved custom value → current live CSS variable → hardcoded default
                 var live = getComputedStyle(document.documentElement).getPropertyValue(v.variable).trim();
                 var val = saved['custom_' + v.id] || live || v.default;
-                // Normalize rgb/rgba to hex for color input (color inputs require hex)
                 val = normalizeToHex(val) || v.default;
                 html += '<div class="theme-color-row">'
                     + '<span class="theme-color-label">' + v.label + '</span>'
                     + '<div class="theme-color-input-wrap" onclick="document.getElementById(\'cp_' + v.id + '\').click()">'
                     + '<input type="color" id="cp_' + v.id + '" value="' + val + '" data-var="' + v.variable + '" data-id="' + v.id + '" oninput="onCustomColorInput(this)">'
                     + '<span class="theme-color-hex" id="chex_' + v.id + '">' + val + '</span>'
-                    + '</div></div>';
+                    + '</div>'
+                    + '<div class="theme-color-hex-row">'
+                    + '<input type="text" class="theme-color-hex-input" id="ctxt_' + v.id + '" value="' + val + '" maxlength="7" placeholder="#rrggbb"'
+                    + ' oninput="onColorHexTextInput(\'' + v.id + '\',\'' + v.variable + '\')">'
+                    + '<button class="theme-color-hex-copy" onclick="copyHex(\'ctxt_' + v.id + '\')" title="Copy">⧉</button>'
+                    + '</div>'
+                    + '</div>';
             });
             grid.innerHTML = html;
         }
@@ -4103,8 +4284,11 @@
             if (!el) return;
             var html = '';
             GRADIENT_PRESETS.forEach(function(p) {
-                var rgb = hexToRgb(p.a);
-                var dot = 'background:rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + (p.ao/100) + ');';
+                var aRgb = hexToRgb(p.a);
+                var bRgb = hexToRgb(p.b);
+                var dot = 'background:linear-gradient(135deg,'
+                    + 'rgba(' + aRgb[0] + ',' + aRgb[1] + ',' + aRgb[2] + ',' + (p.ao/100) + ') 0%,'
+                    + 'rgba(' + bRgb[0] + ',' + bRgb[1] + ',' + bRgb[2] + ',' + (p.bo/100) + ') 100%);';
                 html += '<button class="theme-preset-pill" onclick="applyGradientPreset(\'' + p.name + '\')">'
                     + '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;' + dot + '"></span>'
                     + p.name + '</button>';
@@ -4113,37 +4297,88 @@
         }
 
         window.applyGradientPreset = function(name) {
-            var p = GRADIENT_PRESETS.find(function(x){return x.name===name;});
+            var p = GRADIENT_PRESETS.find(function(x){ return x.name === name; });
             if (!p) return;
-            document.getElementById('glowAColor').value = p.a;
-            document.getElementById('glowAOpacity').value = p.ao;
-            document.getElementById('glowAVal').textContent = p.ao + '%';
-            document.getElementById('glowBColor').value = p.b;
-            document.getElementById('glowBOpacity').value = p.bo;
-            document.getElementById('glowBVal').textContent = p.bo + '%';
+            // Glow A
+            var elAC = document.getElementById('glowAColor');
+            var elAO = document.getElementById('glowAOpacity');
+            var elAH = document.getElementById('glowAHex');
+            if (elAC) elAC.value = p.a;
+            if (elAH) elAH.value = p.a;
+            if (elAO) { elAO.value = p.ao; document.getElementById('glowAVal').textContent = p.ao + '%'; }
+            // Glow M
+            var elMC = document.getElementById('glowMColor');
+            var elMO = document.getElementById('glowMOpacity');
+            var elMH = document.getElementById('glowMHex');
+            if (elMC) elMC.value = p.m;
+            if (elMH) elMH.value = p.m;
+            if (elMO) { elMO.value = p.mo; document.getElementById('glowMVal').textContent = p.mo + '%'; }
+            // Glow B
+            var elBC = document.getElementById('glowBColor');
+            var elBO = document.getElementById('glowBOpacity');
+            var elBH = document.getElementById('glowBHex');
+            if (elBC) elBC.value = p.b;
+            if (elBH) elBH.value = p.b;
+            if (elBO) { elBO.value = p.bo; document.getElementById('glowBVal').textContent = p.bo + '%'; }
+            // Angle
+            var elAngle = document.getElementById('glowAngle');
+            if (elAngle) { elAngle.value = p.angle || 135; document.getElementById('glowAngleVal').textContent = (p.angle || 135) + '°'; }
             updateGradientPreview();
         };
 
+        // ── Helper: read a glow stop value safely ───────────────────────────
+        function _glowVal(id, fallback) {
+            var el = document.getElementById(id);
+            return el ? el.value : fallback;
+        }
+        function _glowInt(id, fallback) {
+            var el = document.getElementById(id);
+            return el ? parseInt(el.value) : fallback;
+        }
+
         window.updateGradientPreview = function() {
-            var aC = document.getElementById('glowAColor') ? document.getElementById('glowAColor').value : '#4a7c9e';
-            var aO = document.getElementById('glowAOpacity') ? (parseInt(document.getElementById('glowAOpacity').value) / 100) : 0.14;
-            var bC = document.getElementById('glowBColor') ? document.getElementById('glowBColor').value : '#8e3b5f';
-            var bO = document.getElementById('glowBOpacity') ? (parseInt(document.getElementById('glowBOpacity').value) / 100) : 0.10;
-            var aRgb = hexToRgb(aC); var bRgb = hexToRgb(bC);
+            var aC = _glowVal('glowAColor', '#4a7c9e');
+            var aO = _glowInt('glowAOpacity', 14) / 100;
+            var mC = _glowVal('glowMColor', '#3a3a5c');
+            var mO = _glowInt('glowMOpacity', 8) / 100;
+            var bC = _glowVal('glowBColor', '#8e3b5f');
+            var bO = _glowInt('glowBOpacity', 10) / 100;
+            var angle = _glowInt('glowAngle', 135);
+
+            var aRgb = hexToRgb(aC), mRgb = hexToRgb(mC), bRgb = hexToRgb(bC);
             var glowA = 'rgba(' + aRgb[0] + ',' + aRgb[1] + ',' + aRgb[2] + ',' + aO + ')';
+            var glowM = 'rgba(' + mRgb[0] + ',' + mRgb[1] + ',' + mRgb[2] + ',' + mO + ')';
             var glowB = 'rgba(' + bRgb[0] + ',' + bRgb[1] + ',' + bRgb[2] + ',' + bO + ')';
-            var grad = 'radial-gradient(ellipse 100% 55% at 10% 0%, ' + glowA + ' 0%, transparent 60%),'
-                + 'radial-gradient(ellipse 70% 60% at 92% 105%, ' + glowB + ' 0%, transparent 60%),'
-                + 'radial-gradient(ellipse 50% 40% at 50% 50%, ' + glowA + ' 0%, transparent 80%)';
-            var bgPrimary = getComputedStyle(document.documentElement).getPropertyValue('--color-bg-primary').trim() || '#1a1a1a';
-            var preview = document.getElementById('gradientPreview');
-            if (preview) preview.style.background = bgPrimary + ' ' + grad;
-            // Live apply to body
+
+            // Translate angle to radial gradient positions (0°=top, 90°=right, 180°=bottom, 270°=left)
+            var rad = (angle - 90) * Math.PI / 180;
+            // Position A: opposite of angle direction (start)
+            var axPct = Math.round(50 - Math.cos(rad) * 45);
+            var ayPct = Math.round(50 - Math.sin(rad) * 45);
+            // Position B: in the angle direction (end)
+            var bxPct = Math.round(50 + Math.cos(rad) * 45);
+            var byPct = Math.round(50 + Math.sin(rad) * 45);
+
             document.documentElement.style.setProperty('--color-bg-glow-a', glowA);
+            document.documentElement.style.setProperty('--color-bg-glow-m', glowM);
             document.documentElement.style.setProperty('--color-bg-glow-b', glowB);
+
+            // Translate angle → two radial-gradient focal positions (A=start, B=end)
+            var rad2 = (angle - 90) * Math.PI / 180;
+            var axPct = Math.round(50 - Math.cos(rad2) * 42);
+            var ayPct = Math.round(50 - Math.sin(rad2) * 42);
+            var bxPct = Math.round(50 + Math.cos(rad2) * 42);
+            var byPct = Math.round(50 + Math.sin(rad2) * 42);
+            document.documentElement.style.setProperty('--glow-a-x', axPct + '%');
+            document.documentElement.style.setProperty('--glow-a-y', ayPct + '%');
+            document.documentElement.style.setProperty('--glow-b-x', bxPct + '%');
+            document.documentElement.style.setProperty('--glow-b-y', byPct + '%');
+
             if (!window._pendingTheme) window._pendingTheme = {};
-            window._pendingTheme.glowA = { color: aC, opacity: parseFloat(aO) };
-            window._pendingTheme.glowB = { color: bC, opacity: parseFloat(bO) };
+            window._pendingTheme.glowA = { color: aC, opacity: aO };
+            window._pendingTheme.glowM = { color: mC, opacity: mO };
+            window._pendingTheme.glowB = { color: bC, opacity: bO };
+            window._pendingTheme.glowAngle = angle;
         };
 
         window.onCustomColorInput = function(input) {
@@ -4151,8 +4386,11 @@
             var variable = input.getAttribute('data-var');
             var id = input.getAttribute('data-id');
             document.documentElement.style.setProperty(variable, val);
-            var hex = document.getElementById('chex_' + id);
-            if (hex) hex.textContent = val;
+            // Sync both hex display and text input
+            var hexSpan = document.getElementById('chex_' + id);
+            if (hexSpan) hexSpan.textContent = val;
+            var hexTxt = document.getElementById('ctxt_' + id);
+            if (hexTxt) hexTxt.value = val;
             if (!window._pendingTheme) window._pendingTheme = {};
             window._pendingTheme['custom_' + id] = val;
             // Keep legacy accent/progress in sync for rest of app
@@ -4162,6 +4400,56 @@
                 updateGradientPreview();
             }
         };
+
+        // ── Helper: apply all glow CSS vars from saved theme object ─────────
+        function _applyGlowsFromSaved(saved) {
+            if (saved.glowA) {
+                var a = saved.glowA; var aRgb = hexToRgb(a.color);
+                document.documentElement.style.setProperty('--color-bg-glow-a', 'rgba(' + aRgb[0] + ',' + aRgb[1] + ',' + aRgb[2] + ',' + a.opacity + ')');
+            }
+            if (saved.glowM) {
+                var m = saved.glowM; var mRgb = hexToRgb(m.color);
+                document.documentElement.style.setProperty('--color-bg-glow-m', 'rgba(' + mRgb[0] + ',' + mRgb[1] + ',' + mRgb[2] + ',' + m.opacity + ')');
+            }
+            if (saved.glowB) {
+                var b = saved.glowB; var bRgb = hexToRgb(b.color);
+                document.documentElement.style.setProperty('--color-bg-glow-b', 'rgba(' + bRgb[0] + ',' + bRgb[1] + ',' + bRgb[2] + ',' + b.opacity + ')');
+            }
+            // Restore gradient focal positions from saved angle
+            if (saved.glowAngle != null) {
+                var angle = saved.glowAngle;
+                var rad2 = (angle - 90) * Math.PI / 180;
+                var axPct = Math.round(50 - Math.cos(rad2) * 42);
+                var ayPct = Math.round(50 - Math.sin(rad2) * 42);
+                var bxPct = Math.round(50 + Math.cos(rad2) * 42);
+                var byPct = Math.round(50 + Math.sin(rad2) * 42);
+                document.documentElement.style.setProperty('--glow-a-x', axPct + '%');
+                document.documentElement.style.setProperty('--glow-a-y', ayPct + '%');
+                document.documentElement.style.setProperty('--glow-b-x', bxPct + '%');
+                document.documentElement.style.setProperty('--glow-b-y', byPct + '%');
+            }
+        }
+
+        // ── Helper: restore gradient slider UIs from saved theme ─────────────
+        function _restoreGlowSliders(saved) {
+            function setSingle(stop, key) {
+                var g = saved[key];
+                if (!g) return;
+                var elC = document.getElementById('glow' + stop + 'Color');
+                var elH = document.getElementById('glow' + stop + 'Hex');
+                var elO = document.getElementById('glow' + stop + 'Opacity');
+                var elV = document.getElementById('glow' + stop + 'Val');
+                if (elC) elC.value = g.color;
+                if (elH) elH.value = g.color;
+                if (elO) { var pct = Math.round(g.opacity * 100); elO.value = pct; if (elV) elV.textContent = pct + '%'; }
+            }
+            setSingle('A', 'glowA');
+            setSingle('M', 'glowM');
+            setSingle('B', 'glowB');
+            var angle = saved.glowAngle != null ? saved.glowAngle : 135;
+            var elAngle = document.getElementById('glowAngle');
+            if (elAngle) { elAngle.value = angle; document.getElementById('glowAngleVal').textContent = angle + '°'; }
+        }
 
         function loadTheme() {
             var saved = (window.userData.settings && window.userData.settings.theme) ? window.userData.settings.theme : {};
@@ -4181,7 +4469,6 @@
                     + '<span class="theme-swatch-name">' + t.name + '</span>'
                     + '</div>';
             });
-            // Custom swatch
             var customActive = activeId === 'custom';
             swatchHtml += '<div class="theme-swatch ' + (customActive ? 'active' : '') + '" id="customSwatch" onclick="activateCustomTheme(this)">'
                 + '<div class="theme-swatch-colors">'
@@ -4195,57 +4482,38 @@
             if (saved.accent)   document.getElementById('themeAccentPicker').value   = saved.accent;
             if (saved.progress) document.getElementById('themeProgressPicker').value = saved.progress;
 
-            // Apply stored colours to CSS
+            // Apply all stored custom colour vars first (before glow, to avoid overwrite)
+            CUSTOM_COLOR_VARS.forEach(function(v) {
+                var val = saved['custom_' + v.id];
+                if (val) document.documentElement.style.setProperty(v.variable, val);
+            });
+            // Also apply legacy top-level colour fields
             if (saved.bg)        document.documentElement.style.setProperty('--color-bg-primary',    saved.bg);
             if (saved.card)      document.documentElement.style.setProperty('--color-bg-card',        saved.card);
             if (saved.secondary) document.documentElement.style.setProperty('--color-bg-secondary',   saved.secondary);
             if (saved.accent)    document.documentElement.style.setProperty('--color-accent-blue',    saved.accent);
             if (saved.progress)  document.documentElement.style.setProperty('--color-progress',       saved.progress);
 
-            // Apply custom colour vars if present
-            CUSTOM_COLOR_VARS.forEach(function(v) {
-                var val = saved['custom_' + v.id];
-                if (val) document.documentElement.style.setProperty(v.variable, val);
-            });
-
-            // Apply stored gradient glows
-            if (saved.glowA) {
-                var a = saved.glowA; var aRgb = hexToRgb(a.color);
-                document.documentElement.style.setProperty('--color-bg-glow-a', 'rgba(' + aRgb[0] + ',' + aRgb[1] + ',' + aRgb[2] + ',' + a.opacity + ')');
-            }
-            if (saved.glowB) {
-                var b = saved.glowB; var bRgb = hexToRgb(b.color);
-                document.documentElement.style.setProperty('--color-bg-glow-b', 'rgba(' + bRgb[0] + ',' + bRgb[1] + ',' + bRgb[2] + ',' + b.opacity + ')');
+            // Apply glows — use custom glow data if present, else fall back to accent-derived glow
+            var hasCustomGlows = !!(saved.glowA || saved.glowM || saved.glowB);
+            if (hasCustomGlows) {
+                _applyGlowsFromSaved(saved);
+            } else {
+                applyBgGlow(saved.accent || '#4472a0', saved.progress || '#537db8');
             }
 
-            applyBgGlow(saved.accent || '#4472a0', saved.progress || '#537db8');
-
-            // Show custom panel if custom was selected
+            // Show custom panel if it was active
             if (customActive) {
                 var panel = document.getElementById('themeCustomPanel');
                 if (panel) panel.classList.add('visible');
                 var resetBtn = document.getElementById('resetCustomThemeBtn');
                 if (resetBtn) resetBtn.style.display = 'inline-flex';
+                var slotBtn = document.getElementById('saveCustomSlotBtn');
+                if (slotBtn) slotBtn.style.display = 'inline-flex';
                 buildColorGrid();
                 buildGradientPresets();
-                // Restore gradient sliders
-                if (saved.glowA) {
-                    if (document.getElementById('glowAColor')) document.getElementById('glowAColor').value = saved.glowA.color;
-                    if (document.getElementById('glowAOpacity')) {
-                        var aoPct = Math.round(saved.glowA.opacity * 100);
-                        document.getElementById('glowAOpacity').value = aoPct;
-                        document.getElementById('glowAVal').textContent = aoPct + '%';
-                    }
-                }
-                if (saved.glowB) {
-                    if (document.getElementById('glowBColor')) document.getElementById('glowBColor').value = saved.glowB.color;
-                    if (document.getElementById('glowBOpacity')) {
-                        var boPct = Math.round(saved.glowB.opacity * 100);
-                        document.getElementById('glowBOpacity').value = boPct;
-                        document.getElementById('glowBVal').textContent = boPct + '%';
-                    }
-                }
-                updateGradientPreview();
+                _restoreGlowSliders(saved);
+                renderSavedThemeSlots();
             }
         }
 
@@ -4256,9 +4524,14 @@
             if (panel) panel.classList.add('visible');
             var resetBtn = document.getElementById('resetCustomThemeBtn');
             if (resetBtn) resetBtn.style.display = 'inline-flex';
+            var slotBtn = document.getElementById('saveCustomSlotBtn');
+            if (slotBtn) slotBtn.style.display = 'inline-flex';
             buildColorGrid();
             buildGradientPresets();
-            updateGradientPreview();
+            // Restore sliders from current saved state (so they reflect what's on screen)
+            var saved = (window.userData.settings && window.userData.settings.theme) || {};
+            _restoreGlowSliders(saved);
+            renderSavedThemeSlots();
             if (!window._pendingTheme) window._pendingTheme = {};
             window._pendingTheme.presetId = 'custom';
         };
@@ -4274,12 +4547,13 @@
             applyBgGlow(t.accent, t.progress);
             document.getElementById('themeAccentPicker').value   = t.accent;
             document.getElementById('themeProgressPicker').value = t.progress;
-            // Hide custom panel
+            // Hide custom panel + slot button
             var panel = document.getElementById('themeCustomPanel');
             if (panel) panel.classList.remove('visible');
             var resetBtn = document.getElementById('resetCustomThemeBtn');
             if (resetBtn) resetBtn.style.display = 'none';
-            // Update swatch active state
+            var slotBtn = document.getElementById('saveCustomSlotBtn');
+            if (slotBtn) slotBtn.style.display = 'none';
             document.querySelectorAll('.theme-swatch').forEach(function(s){ s.classList.remove('active'); });
             if (el) el.classList.add('active');
             window._pendingTheme = { presetId: id, bg: t.bg, card: t.card,
@@ -4299,18 +4573,26 @@
         window.saveTheme = async function() {
             if (!window.userData.settings) window.userData.settings = {};
             var pending = window._pendingTheme || {};
-            // Snapshot all custom colour pickers if in custom mode
             if (pending.presetId === 'custom') {
+                // Snapshot all custom colour pickers
                 CUSTOM_COLOR_VARS.forEach(function(v) {
                     var el = document.getElementById('cp_' + v.id);
                     if (el) pending['custom_' + v.id] = el.value;
                 });
-                // Sync legacy accent/progress from custom pickers
-                if (document.getElementById('cp_accent'))   pending.accent   = document.getElementById('cp_accent').value;
-                if (document.getElementById('cp_progress')) pending.progress = document.getElementById('cp_progress').value;
-                if (document.getElementById('cp_bg'))       pending.bg       = document.getElementById('cp_bg').value;
-                if (document.getElementById('cp_card'))     pending.card     = document.getElementById('cp_card').value;
-                if (document.getElementById('cp_secondary'))pending.secondary= document.getElementById('cp_secondary').value;
+                // Sync legacy top-level fields from pickers
+                if (document.getElementById('cp_accent'))    pending.accent    = document.getElementById('cp_accent').value;
+                if (document.getElementById('cp_progress'))  pending.progress  = document.getElementById('cp_progress').value;
+                if (document.getElementById('cp_bg'))        pending.bg        = document.getElementById('cp_bg').value;
+                if (document.getElementById('cp_card'))      pending.card      = document.getElementById('cp_card').value;
+                if (document.getElementById('cp_secondary')) pending.secondary = document.getElementById('cp_secondary').value;
+                // Snapshot glow controls
+                var aC = _glowVal('glowAColor','#4a7c9e'), aO = _glowInt('glowAOpacity',14)/100;
+                var mC = _glowVal('glowMColor','#3a3a5c'), mO = _glowInt('glowMOpacity',8)/100;
+                var bC = _glowVal('glowBColor','#8e3b5f'), bO = _glowInt('glowBOpacity',10)/100;
+                pending.glowA = { color: aC, opacity: aO };
+                pending.glowM = { color: mC, opacity: mO };
+                pending.glowB = { color: bC, opacity: bO };
+                pending.glowAngle = _glowInt('glowAngle', 135);
             } else {
                 pending.accent   = document.getElementById('themeAccentPicker').value;
                 pending.progress = document.getElementById('themeProgressPicker').value;
@@ -4321,58 +4603,122 @@
         };
 
         window.resetCustomTheme = function() {
-            // Revert to current saved theme (before any unsaved edits)
-            var saved = (window.userData.settings && window.userData.settings.theme) ? window.userData.settings.theme : {};
-            // If saved is custom, restore its values; otherwise fall back to default preset
-            var fallback = THEMES.find(function(t){ return t.id === 'default'; });
-            // Re-apply each colour variable from saved data or default
+            var saved = (window.userData.settings && window.userData.settings.theme) || {};
+            // Restore every CSS variable from saved state (or hardcoded defaults)
             CUSTOM_COLOR_VARS.forEach(function(v) {
                 var val = saved['custom_' + v.id] || v.default;
                 document.documentElement.style.setProperty(v.variable, val);
             });
-            if (saved.accent)   document.documentElement.style.setProperty('--color-accent-blue',  saved.accent);
-            if (saved.progress) document.documentElement.style.setProperty('--color-progress',     saved.progress);
-            if (saved.bg)       document.documentElement.style.setProperty('--color-bg-primary',   saved.bg);
-            if (saved.card)     document.documentElement.style.setProperty('--color-bg-card',      saved.card);
-            if (saved.secondary)document.documentElement.style.setProperty('--color-bg-secondary', saved.secondary);
-            if (saved.glowA) {
-                var aRgb = hexToRgb(saved.glowA.color);
-                document.documentElement.style.setProperty('--color-bg-glow-a', 'rgba(' + aRgb[0] + ',' + aRgb[1] + ',' + aRgb[2] + ',' + saved.glowA.opacity + ')');
+            if (saved.accent)    document.documentElement.style.setProperty('--color-accent-blue',   saved.accent);
+            if (saved.progress)  document.documentElement.style.setProperty('--color-progress',      saved.progress);
+            if (saved.bg)        document.documentElement.style.setProperty('--color-bg-primary',    saved.bg);
+            if (saved.card)      document.documentElement.style.setProperty('--color-bg-card',       saved.card);
+            if (saved.secondary) document.documentElement.style.setProperty('--color-bg-secondary',  saved.secondary);
+            // Restore glows — don't call applyBgGlow here, that would overwrite custom glow data
+            var hasCustomGlows = !!(saved.glowA || saved.glowM || saved.glowB);
+            if (hasCustomGlows) {
+                _applyGlowsFromSaved(saved);
+            } else {
+                applyBgGlow(saved.accent || '#4472a0', saved.progress || '#537db8');
             }
-            if (saved.glowB) {
-                var bRgb = hexToRgb(saved.glowB.color);
-                document.documentElement.style.setProperty('--color-bg-glow-b', 'rgba(' + bRgb[0] + ',' + bRgb[1] + ',' + bRgb[2] + ',' + saved.glowB.opacity + ')');
-            }
-            // Reset _pendingTheme to match saved
             window._pendingTheme = JSON.parse(JSON.stringify(saved));
-            // Rebuild color grid with restored values
             buildColorGrid();
-            if (saved.glowA && document.getElementById('glowAColor')) {
-                document.getElementById('glowAColor').value = saved.glowA.color;
-                var aoPct = Math.round(saved.glowA.opacity * 100);
-                document.getElementById('glowAOpacity').value = aoPct;
-                document.getElementById('glowAVal').textContent = aoPct + '%';
-            }
-            if (saved.glowB && document.getElementById('glowBColor')) {
-                document.getElementById('glowBColor').value = saved.glowB.color;
-                var boPct = Math.round(saved.glowB.opacity * 100);
-                document.getElementById('glowBOpacity').value = boPct;
-                document.getElementById('glowBVal').textContent = boPct + '%';
-            }
-            updateGradientPreview();
+            buildGradientPresets();
+            _restoreGlowSliders(saved);
             showToast('↺ Reverted to saved theme', 'blue');
         };
 
-        // Apply subtle radial gradient glow to body based on theme accent colors
+        // Apply radial glow to body (preset mode only — does NOT overwrite custom glows)
         function applyBgGlow(accentHex, progressHex) {
             try {
                 var ar = hexToRgb(accentHex   || '#4472a0');
                 var pr = hexToRgb(progressHex || '#537db8');
-                var glowA = 'rgba(' + ar[0] + ',' + ar[1] + ',' + ar[2] + ',0.14)';
-                var glowB = 'rgba(' + pr[0] + ',' + pr[1] + ',' + pr[2] + ',0.10)';
-                document.documentElement.style.setProperty('--color-bg-glow-a', glowA);
-                document.documentElement.style.setProperty('--color-bg-glow-b', glowB);
+                document.documentElement.style.setProperty('--color-bg-glow-a', 'rgba(' + ar[0] + ',' + ar[1] + ',' + ar[2] + ',0.14)');
+                document.documentElement.style.setProperty('--color-bg-glow-m', 'rgba(' + ar[0] + ',' + ar[1] + ',' + ar[2] + ',0.06)');
+                document.documentElement.style.setProperty('--color-bg-glow-b', 'rgba(' + pr[0] + ',' + pr[1] + ',' + pr[2] + ',0.10)');
             } catch(e) {}
+        }
+
+        // ── Saved Custom Theme Slots (3 slots stored in userData.settings.savedThemes) ──
+
+        window.saveCustomSlot = function() {
+            if (!window.userData.settings) window.userData.settings = {};
+            var slots = window.userData.settings.savedThemes || [];
+            if (slots.length >= 3) {
+                showToast('Max 3 templates — delete one first', 'red');
+                return;
+            }
+            var pending = JSON.parse(JSON.stringify(window._pendingTheme || {}));
+            // Snapshot all pickers into pending before saving
+            CUSTOM_COLOR_VARS.forEach(function(v) {
+                var el = document.getElementById('cp_' + v.id);
+                if (el) pending['custom_' + v.id] = el.value;
+            });
+            pending.glowA = { color: _glowVal('glowAColor','#4a7c9e'), opacity: _glowInt('glowAOpacity',14)/100 };
+            pending.glowM = { color: _glowVal('glowMColor','#3a3a5c'), opacity: _glowInt('glowMOpacity',8)/100 };
+            pending.glowB = { color: _glowVal('glowBColor','#8e3b5f'), opacity: _glowInt('glowBOpacity',10)/100 };
+            pending.glowAngle = _glowInt('glowAngle', 135);
+            // Give it a name from the bg colour
+            pending._savedName = 'Theme ' + (slots.length + 1);
+            pending.presetId = 'custom';
+            slots.push(pending);
+            window.userData.settings.savedThemes = slots;
+            saveUserData();
+            renderSavedThemeSlots();
+            showToast('💾 Template saved!', 'olive');
+        };
+
+        window.deleteSavedThemeSlot = function(idx) {
+            var slots = (window.userData.settings && window.userData.settings.savedThemes) || [];
+            slots.splice(idx, 1);
+            window.userData.settings.savedThemes = slots;
+            saveUserData();
+            renderSavedThemeSlots();
+            showToast('Template deleted', 'red');
+        };
+
+        window.loadSavedThemeSlot = function(idx) {
+            var slots = (window.userData.settings && window.userData.settings.savedThemes) || [];
+            var slot = slots[idx];
+            if (!slot) return;
+            // Apply all colour vars
+            CUSTOM_COLOR_VARS.forEach(function(v) {
+                var val = slot['custom_' + v.id];
+                if (val) document.documentElement.style.setProperty(v.variable, val);
+            });
+            if (slot.bg)        document.documentElement.style.setProperty('--color-bg-primary',   slot.bg);
+            if (slot.card)      document.documentElement.style.setProperty('--color-bg-card',      slot.card);
+            if (slot.secondary) document.documentElement.style.setProperty('--color-bg-secondary', slot.secondary);
+            if (slot.accent)    document.documentElement.style.setProperty('--color-accent-blue',  slot.accent);
+            if (slot.progress)  document.documentElement.style.setProperty('--color-progress',     slot.progress);
+            _applyGlowsFromSaved(slot);
+            window._pendingTheme = JSON.parse(JSON.stringify(slot));
+            window._pendingTheme.presetId = 'custom';
+            buildColorGrid();
+            buildGradientPresets();
+            _restoreGlowSliders(slot);
+            showToast('Template loaded — hit Apply to save', 'blue');
+        };
+
+        function renderSavedThemeSlots() {
+            var el = document.getElementById('themeSavedSlots');
+            if (!el) return;
+            var slots = (window.userData.settings && window.userData.settings.savedThemes) || [];
+            var html = '';
+            for (var i = 0; i < 3; i++) {
+                var slot = slots[i];
+                if (slot) {
+                    var swatchColor = (slot.custom_accent || slot.accent || '#4a7c9e');
+                    html += '<div class="theme-saved-slot" onclick="loadSavedThemeSlot(' + i + ')">'
+                        + '<div class="slot-swatch" style="background:' + swatchColor + ';"></div>'
+                        + '<span>' + (slot._savedName || ('Theme ' + (i+1))) + '</span>'
+                        + '<button class="theme-saved-slot-del" onclick="event.stopPropagation();deleteSavedThemeSlot(' + i + ')" title="Delete">✕</button>'
+                        + '</div>';
+                } else {
+                    html += '<div class="theme-saved-slot empty">Slot ' + (i+1) + ' empty</div>';
+                }
+            }
+            el.innerHTML = html;
         }
 
         // Hex color brightness adjustment helper
@@ -4897,3 +5243,175 @@
                 snooze();
             });
         })();
+
+        // ── Daily Reminder Notifications ──────────────────────────────────────
+        // VAPID public key — paste your generated key here after running vapid-keygen.html
+        var VAPID_PUBLIC_KEY = 'BCsaPZ-4JC3l8b_bSvbQO4PZpq_x3cj6lkEJ_y-F9mnp24tB469h-D1UIhlV5k_-4h2l3Nv1L4__GZIdutiSmuw';
+
+        // Convert VAPID base64 URL key to Uint8Array (required by PushManager)
+        function urlBase64ToUint8Array(base64String) {
+            var padding = '='.repeat((4 - base64String.length % 4) % 4);
+            var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+            var rawData = atob(base64);
+            var arr = new Uint8Array(rawData.length);
+            for (var i = 0; i < rawData.length; i++) arr[i] = rawData.charCodeAt(i);
+            return arr;
+        }
+
+        // Subscribe user to Web Push and save subscription + reminder time to Firestore
+        async function subscribeToPush(localTime) {
+            if (!('serviceWorker' in navigator) || !('PushManager' in window)) return false;
+            if (VAPID_PUBLIC_KEY === 'PASTE_YOUR_VAPID_PUBLIC_KEY_HERE') {
+                console.warn('VAPID public key not configured — push notifications disabled');
+                return false;
+            }
+            try {
+                var reg = await navigator.serviceWorker.ready;
+                var sub = await reg.pushManager.getSubscription();
+                if (!sub) {
+                    sub = await reg.pushManager.subscribe({
+                        userVisibleOnly: true,
+                        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+                    });
+                }
+                var subJson = sub.toJSON();
+                // Store UTC offset so the server can convert local time → UTC for scheduling
+                window.userData.pushSubscription = {
+                    endpoint: subJson.endpoint,
+                    keys: subJson.keys,
+                    reminderTime: localTime,
+                    tzOffset: new Date().getTimezoneOffset() // minutes behind UTC
+                };
+                await saveUserData();
+                return true;
+            } catch (err) {
+                console.error('Push subscription failed:', err);
+                return false;
+            }
+        }
+
+        // Unsubscribe from Web Push and remove from Firestore
+        async function unsubscribeFromPush() {
+            try {
+                if ('serviceWorker' in navigator) {
+                    var reg = await navigator.serviceWorker.ready;
+                    var sub = await reg.pushManager.getSubscription();
+                    if (sub) await sub.unsubscribe();
+                }
+                if (window.userData && window.userData.pushSubscription) {
+                    delete window.userData.pushSubscription;
+                    await saveUserData();
+                }
+            } catch (err) {
+                console.error('Unsubscribe failed:', err);
+            }
+        }
+
+        // Fallback: in-tab interval check (fires if browser is open, no push infrastructure needed)
+        let _reminderInterval = null;
+        function scheduleReminder() {
+            var time = localStorage.getItem('reminderTime');
+            if (!time || Notification.permission !== 'granted') return;
+            if (_reminderInterval) clearInterval(_reminderInterval);
+            function checkAndNotify() {
+                var now = new Date();
+                var parts = time.split(':');
+                var h = parseInt(parts[0], 10);
+                var m = parseInt(parts[1], 10);
+                if (now.getHours() === h && now.getMinutes() === m) {
+                    var todayKey = now.toISOString().slice(0, 10);
+                    var lastSent = localStorage.getItem('reminderLastSent');
+                    if (lastSent !== todayKey) {
+                        new Notification('Mindkraft ⚔️', {
+                            body: "Don't forget to check off today's tasks!",
+                            icon: './icon-192.svg'
+                        });
+                        localStorage.setItem('reminderLastSent', todayKey);
+                    }
+                }
+            }
+            checkAndNotify();
+            _reminderInterval = setInterval(checkAndNotify, 60000);
+        }
+
+        window.saveReminder = async function() {
+            if (!('Notification' in window)) {
+                showToast('Notifications not supported in this browser', 'red');
+                return;
+            }
+            // Request permission if not yet decided
+            if (Notification.permission === 'default') {
+                var perm = await Notification.requestPermission();
+                var statusEl = document.getElementById('reminderPermStatus');
+                if (statusEl) statusEl.textContent = perm === 'granted'
+                    ? '✅ Permission granted'
+                    : '❌ Permission denied — please allow notifications in your browser settings.';
+                if (perm !== 'granted') return;
+            }
+            if (Notification.permission === 'denied') {
+                showToast('Notifications blocked — please allow them in browser settings', 'red');
+                return;
+            }
+            var time = document.getElementById('reminderTime').value;
+            if (!time) { showToast('Please pick a time first', 'red'); return; }
+
+            localStorage.setItem('reminderTime', time);
+
+            // Try push first (works even when browser is closed/in background)
+            var pushOk = await subscribeToPush(time);
+
+            // Always run the in-tab fallback too (belt and suspenders)
+            scheduleReminder();
+
+            var statusEl = document.getElementById('reminderPermStatus');
+            if (pushOk) {
+                if (statusEl) statusEl.textContent = '✅ Push reminder set for ' + time + ' — works even when browser is closed.';
+                showToast('Push reminder set for ' + time + ' ✅', 'green');
+            } else {
+                if (statusEl) statusEl.textContent = '⚠️ In-tab reminder set for ' + time + '. Push not available — needs VAPID key configured.';
+                showToast('Reminder set for ' + time + ' (browser must be open) ✅', 'green');
+            }
+        };
+
+        window.clearReminder = async function() {
+            localStorage.removeItem('reminderTime');
+            localStorage.removeItem('reminderLastSent');
+            if (_reminderInterval) { clearInterval(_reminderInterval); _reminderInterval = null; }
+            await unsubscribeFromPush();
+            var el = document.getElementById('reminderTime');
+            if (el) el.value = '';
+            var statusEl = document.getElementById('reminderPermStatus');
+            if (statusEl) statusEl.textContent = '';
+            showToast('Reminder cleared', 'red');
+        };
+
+        window.toggleReminder = function() {
+            var body = document.getElementById('reminderBody');
+            var btn  = document.getElementById('reminderToggleBtn');
+            if (!body) return;
+            var isOpen = body.classList.toggle('open');
+            if (btn) btn.classList.toggle('open', isOpen);
+            if (isOpen) {
+                // Populate saved time
+                var saved = localStorage.getItem('reminderTime');
+                var timeEl = document.getElementById('reminderTime');
+                if (timeEl && saved) timeEl.value = saved;
+                // Show status
+                var statusEl = document.getElementById('reminderPermStatus');
+                if (!statusEl) return;
+                var hasPush = window.userData && window.userData.pushSubscription;
+                if (!('Notification' in window)) {
+                    statusEl.textContent = '⚠️ Notifications not supported in this browser.';
+                } else if (Notification.permission === 'denied') {
+                    statusEl.textContent = '❌ Notifications blocked. Allow them in your browser/OS settings.';
+                } else if (hasPush && saved) {
+                    statusEl.textContent = '✅ Push reminder active at ' + saved + ' — fires even when browser is closed.';
+                } else if (saved) {
+                    statusEl.textContent = '⚠️ In-tab reminder active at ' + saved + '. Re-save after adding VAPID key for push support.';
+                } else {
+                    statusEl.textContent = Notification.permission === 'granted'
+                        ? '✅ Notifications allowed. Pick a time and save.'
+                        : "You'll be asked to allow notifications when you save.";
+                }
+            }
+        };

@@ -363,7 +363,6 @@
                         </select>
                     </div>
                     <div id="calendarGrid"></div>
-                    <div id="calendarTooltip" class="calendar-tooltip" style="display:none;"></div>
                 </div>
 
                 <!-- Dimension Progress -->
@@ -534,6 +533,34 @@
                     <div id="streakPauseList"></div>
                 </div>
 
+                  <!-- Daily Reminder -->
+                <div class="settings-card settings-card-compact">
+                    <button class="guide-toggle-btn" id="reminderToggleBtn" onclick="toggleReminder()">
+                        <span class="settings-icon">
+                            <svg class="settings-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+                                <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+                            </svg>
+                        </span>
+                        <div style="flex:1;min-width:0;">
+                            <div class="settings-card-title">Daily Reminder</div>
+                            <div class="settings-card-sub">Notify me to check off today's tasks</div>
+                        </div>
+                        <span class="guide-chevron">▼</span>
+                    </button>
+                    <div class="guide-section-body" id="reminderBody">
+                        <p id="reminderPermStatus" style="font-size:13px;color:var(--color-text-secondary);margin-bottom:12px;min-height:18px;"></p>
+                        <div class="reminder-time-row">
+                            <label class="reminder-time-label">Remind me at:</label>
+                            <input type="time" id="reminderTime" class="reminder-time-input" />
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+                            <button class="btn-settings-save" onclick="saveReminder()">Save Reminder</button>
+                            <button class="btn-settings-save" style="background:var(--color-accent-red);border-color:var(--color-accent-red);" onclick="clearReminder()">Clear</button>
+                        </div>
+                    </div>
+                </div>
+
                   <!-- Theme Customizer -->
                 <div class="settings-card">
                     <div class="settings-card-header">
@@ -548,36 +575,77 @@
                     <!-- Custom theme panel (shown when Custom swatch active) -->
                     <div class="theme-custom-panel" id="themeCustomPanel">
 
+                        <!-- Saved custom templates -->
+                        <div class="theme-custom-section">
+                            <div class="theme-custom-section-title">💾 My Saved Themes</div>
+                            <div class="theme-saved-slots" id="themeSavedSlots"></div>
+                        </div>
+
+                        <!-- Colours -->
                         <div class="theme-custom-section">
                             <div class="theme-custom-section-title">🎨 Colours</div>
                             <div class="theme-color-grid" id="themeColorGrid"></div>
                         </div>
 
+                        <!-- Background Gradient — 3 glows + angle -->
                         <div class="theme-custom-section">
                             <div class="theme-custom-section-title">✨ Background Gradient</div>
                             <div class="theme-gradient-presets" id="gradientPresets"></div>
+
+                            <!-- Angle slider -->
+                            <div class="theme-angle-row">
+                                <label class="theme-angle-label">Direction</label>
+                                <input type="range" id="glowAngle" min="0" max="360" value="135"
+                                    oninput="updateGradientPreview();document.getElementById('glowAngleVal').textContent=this.value+'°'">
+                                <span class="theme-opacity-val" id="glowAngleVal">135°</span>
+                            </div>
+
                             <div class="theme-gradient-stops">
+                                <!-- Glow A — Top -->
                                 <div class="theme-gradient-stop">
-                                    <div class="theme-gradient-stop-title">⬆️ Glow A <span style="font-size:10px;opacity:0.6;">(top-left)</span></div>
-                                    <div class="theme-glow-color-row">
-                                        <input type="color" id="glowAColor" value="#4a7c9e" oninput="updateGradientPreview()">
-                                        <label>Colour</label>
+                                    <div class="theme-gradient-stop-title">⬆️ Top</div>
+                                    <div class="theme-glow-hex-row">
+                                        <input type="color" id="glowAColor" value="#4a7c9e" oninput="onGlowColorInput('A')">
+                                        <input type="text" id="glowAHex" class="theme-hex-input" value="#4a7c9e" maxlength="7"
+                                            oninput="onGlowHexInput('A')" placeholder="#rrggbb">
+                                        <button class="theme-hex-copy" onclick="copyHex('glowAHex')" title="Copy hex">⧉</button>
                                     </div>
                                     <div class="theme-opacity-row">
                                         <label>Intensity</label>
-                                        <input type="range" id="glowAOpacity" min="0" max="40" value="14" oninput="updateGradientPreview();document.getElementById('glowAVal').textContent=this.value+'%'">
+                                        <input type="range" id="glowAOpacity" min="0" max="40" value="14"
+                                            oninput="updateGradientPreview();document.getElementById('glowAVal').textContent=this.value+'%'">
                                         <span class="theme-opacity-val" id="glowAVal">14%</span>
                                     </div>
                                 </div>
+                                <!-- Glow M — Middle -->
                                 <div class="theme-gradient-stop">
-                                    <div class="theme-gradient-stop-title">⬇️ Glow B <span style="font-size:10px;opacity:0.6;">(bottom-right)</span></div>
-                                    <div class="theme-glow-color-row">
-                                        <input type="color" id="glowBColor" value="#8e3b5f" oninput="updateGradientPreview()">
-                                        <label>Colour</label>
+                                    <div class="theme-gradient-stop-title">⬛ Middle</div>
+                                    <div class="theme-glow-hex-row">
+                                        <input type="color" id="glowMColor" value="#3a3a5c" oninput="onGlowColorInput('M')">
+                                        <input type="text" id="glowMHex" class="theme-hex-input" value="#3a3a5c" maxlength="7"
+                                            oninput="onGlowHexInput('M')" placeholder="#rrggbb">
+                                        <button class="theme-hex-copy" onclick="copyHex('glowMHex')" title="Copy hex">⧉</button>
                                     </div>
                                     <div class="theme-opacity-row">
                                         <label>Intensity</label>
-                                        <input type="range" id="glowBOpacity" min="0" max="40" value="10" oninput="updateGradientPreview();document.getElementById('glowBVal').textContent=this.value+'%'">
+                                        <input type="range" id="glowMOpacity" min="0" max="40" value="8"
+                                            oninput="updateGradientPreview();document.getElementById('glowMVal').textContent=this.value+'%'">
+                                        <span class="theme-opacity-val" id="glowMVal">8%</span>
+                                    </div>
+                                </div>
+                                <!-- Glow B — Bottom -->
+                                <div class="theme-gradient-stop">
+                                    <div class="theme-gradient-stop-title">⬇️ Bottom</div>
+                                    <div class="theme-glow-hex-row">
+                                        <input type="color" id="glowBColor" value="#8e3b5f" oninput="onGlowColorInput('B')">
+                                        <input type="text" id="glowBHex" class="theme-hex-input" value="#8e3b5f" maxlength="7"
+                                            oninput="onGlowHexInput('B')" placeholder="#rrggbb">
+                                        <button class="theme-hex-copy" onclick="copyHex('glowBHex')" title="Copy hex">⧉</button>
+                                    </div>
+                                    <div class="theme-opacity-row">
+                                        <label>Intensity</label>
+                                        <input type="range" id="glowBOpacity" min="0" max="40" value="10"
+                                            oninput="updateGradientPreview();document.getElementById('glowBVal').textContent=this.value+'%'">
                                         <span class="theme-opacity-val" id="glowBVal">10%</span>
                                     </div>
                                 </div>
@@ -588,9 +656,10 @@
 
                     <input type="color" id="themeAccentPicker" value="#4472a0" style="display:none;" oninput="previewThemeColor('accent',this.value)">
                     <input type="color" id="themeProgressPicker" value="#537db8" style="display:none;" oninput="previewThemeColor('progress',this.value)">
-                    <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;">
+                    <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;align-items:center;">
                         <button class="btn-settings-save" onclick="saveTheme()">Apply Theme</button>
                         <button class="btn-secondary" id="resetCustomThemeBtn" style="display:none;" onclick="resetCustomTheme()">↺ Reset</button>
+                        <button class="btn-secondary" id="saveCustomSlotBtn" style="display:none;" onclick="saveCustomSlot()">💾 Save as template</button>
                     </div>
                 </div>
 

@@ -1,0 +1,10 @@
+{
+  "name": "mindkraft-reminders",
+  "version": "1.0.0",
+  "description": "GitHub Actions script to send Mindkraft daily reminder push notifications",
+  "private": true,
+  "dependencies": {
+    "firebase-admin": "^12.0.0",
+    "web-push": "^3.6.7"
+  }
+}

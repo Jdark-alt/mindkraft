@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VAPID Key Generator — Mindkraft Setup</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 60px auto; padding: 0 20px; background: #1a1a1a; color: #eee; line-height: 1.7; }
+  h1   { font-size: 22px; color: #5a9fd4; margin-bottom: 6px; }
+  p    { color: #aaa; font-size: 14px; margin-top: 4px; }
+  .card { background: #2a2a2a; border: 1px solid #3a3a3a; border-radius: 12px; padding: 24px; margin-top: 24px; }
+  label { display: block; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #888; margin-bottom: 6px; }
+  .key-box { background: #1a1a1a; border: 1px solid #4a7c9e; border-radius: 8px; padding: 12px 14px; font-family: monospace; font-size: 13px; word-break: break-all; color: #5a9fd4; margin-bottom: 8px; min-height: 44px; }
+  button { background: #4a7c9e; color: #fff; border: none; border-radius: 8px; padding: 12px 22px; font-size: 15px; font-weight: 600; cursor: pointer; margin-top: 8px; }
+  button:hover { background: #5a9fd4; }
+  .copy-btn { background: #3a3a3a; font-size: 12px; padding: 6px 14px; margin-top: 0; margin-left: 8px; }
+  .copy-btn:hover { background: #4a4a4a; }
+  .step { background: #222; border-left: 3px solid #4a7c9e; border-radius: 0 8px 8px 0; padding: 14px 18px; margin-top: 20px; font-size: 14px; }
+  .step strong { color: #5a9fd4; }
+  code { background: #111; padding: 2px 6px; border-radius: 4px; font-family: monospace; color: #f0c060; font-size: 13px; }
+  .warning { background: rgba(255,180,0,0.08); border: 1px solid rgba(255,180,0,0.25); border-radius: 8px; padding: 12px 16px; font-size: 13px; color: #f0c060; margin-top: 16px; }
+</style>
+</head>
+<body>
+
+<h1>🔑 VAPID Key Generator</h1>
+<p>One-time setup for Mindkraft push notifications. Run this once, save the keys as GitHub Secrets, then delete this file.</p>
+
+<div class="card">
+  <button onclick="generateKeys()">Generate VAPID Keys</button>
+
+  <div id="output" style="display:none; margin-top:24px;">
+    <div style="margin-bottom:20px;">
+      <label>Public Key <span style="color:#6b7c3f;font-weight:400;text-transform:none;">(goes in app.js AND GitHub Secret)</span></label>
+      <div class="key-box" id="pubKey"></div>
+      <button class="copy-btn" onclick="copy('pubKey', this)">Copy</button>
+    </div>
+    <div>
+      <label>Private Key <span style="color:#8e3b5f;font-weight:400;text-transform:none;">(GitHub Secret only — never put in code)</span></label>
+      <div class="key-box" id="privKey"></div>
+      <button class="copy-btn" onclick="copy('privKey', this)">Copy</button>
+    </div>
+    <div class="warning">
+      ⚠️ Save both keys somewhere safe right now. You cannot retrieve them again after closing this page. If you lose them, just regenerate and re-save your reminder in the app.
+    </div>
+  </div>
+</div>
+
+<div class="step">
+  <strong>Step 1 — Generate keys</strong><br>
+  Click the button above. Copy both keys.
+</div>
+
+<div class="step">
+  <strong>Step 2 — Add GitHub Secrets</strong><br>
+  Go to your GitHub repo → <strong>Settings → Secrets and variables → Actions → New repository secret</strong>.<br>
+  Add these 4 secrets:
+  <ul style="margin-top:10px;">
+    <li><code>VAPID_PUBLIC_KEY</code> — the public key above</li>
+    <li><code>VAPID_PRIVATE_KEY</code> — the private key above</li>
+    <li><code>VAPID_CONTACT_EMAIL</code> — your email address (e.g. <code>you@gmail.com</code>)</li>
+    <li><code>FIREBASE_SERVICE_ACCOUNT</code> — your Firebase service account JSON (see Step 3)</li>
+  </ul>
+</div>
+
+<div class="step">
+  <strong>Step 3 — Firebase Service Account</strong><br>
+  Go to <a href="https://console.firebase.google.com" target="_blank" style="color:#5a9fd4;">Firebase Console</a> → your project → <strong>Project Settings → Service accounts → Generate new private key</strong>.<br>
+  Download the JSON file. Open it, select all text, and paste the entire content as the <code>FIREBASE_SERVICE_ACCOUNT</code> secret.
+</div>
+
+<div class="step">
+  <strong>Step 4 — Paste public key into app.js</strong><br>
+  In <code>app.js</code>, find this line near the bottom:<br><br>
+  <code>var VAPID_PUBLIC_KEY = 'PASTE_YOUR_VAPID_PUBLIC_KEY_HERE';</code><br><br>
+  Replace the placeholder with your actual public key (in quotes).
+</div>
+
+<div class="step">
+  <strong>Step 5 — Push all files and test</strong><br>
+  Commit and push: <code>index.html</code>, <code>app.js</code>, <code>sw.js</code>, <code>scripts/package.json</code>, <code>scripts/send-reminders.js</code>, and <code>.github/workflows/send-reminders.yml</code>.<br><br>
+  Then go to <strong>Actions tab → Send Daily Reminders → Run workflow</strong> to do a manual test run. Check the logs to confirm it ran without errors.
+</div>
+
+<div class="step">
+  <strong>Step 6 — Delete this file</strong><br>
+  Remove <code>vapid-keygen.html</code> from your repo. It's served publicly on GitHub Pages and there's no reason to keep it online.
+</div>
+
+<script>
+async function generateKeys() {
+  // Generate a P-256 key pair using SubtleCrypto — same algorithm web-push uses
+  var keyPair = await crypto.subtle.generateKey(
+    { name: 'ECDH', namedCurve: 'P-256' },
+    true,
+    ['deriveKey', 'deriveBits']
+  );
+
+  // Export both keys as raw / PKCS8 and base64url-encode them
+  var pubRaw  = await crypto.subtle.exportKey('raw', keyPair.publicKey);
+  var privPkcs = await crypto.subtle.exportKey('pkcs8', keyPair.privateKey);
+
+  // web-push uses base64url encoding (URL-safe, no padding)
+  function toBase64url(buf) {
+    var bytes = new Uint8Array(buf);
+    var binary = '';
+    for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  // The private key in web-push format is just the raw 32-byte scalar,
+  // which sits at bytes 36–67 inside the PKCS8 DER structure for P-256.
+  var privRaw = privPkcs.slice(36, 68);
+
+  document.getElementById('pubKey').textContent  = toBase64url(pubRaw);
+  document.getElementById('privKey').textContent = toBase64url(privRaw);
+  document.getElementById('output').style.display = 'block';
+}
+
+function copy(id, btn) {
+  var text = document.getElementById(id).textContent;
+  navigator.clipboard.writeText(text).then(function() {
+    btn.textContent = 'Copied ✓';
+    setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
+  });
+}
+</script>
+</body>
+</html>

@@ -1,7 +1,12 @@
         :root {
             --color-bg-primary: #1a1a1a;
             --color-bg-glow-a: rgba(74,124,158,0.14);
+            --color-bg-glow-m: rgba(58,58,92,0.08);
             --color-bg-glow-b: rgba(142,59,95,0.10);
+            --glow-a-x: 18%;
+            --glow-a-y: 18%;
+            --glow-b-x: 82%;
+            --glow-b-y: 82%;
             --color-bg-secondary: #2a2a2a;
             --color-bg-card: #2d2d2d;
             --color-text-primary: #ffffff;
@@ -24,9 +29,9 @@
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             background-color: var(--color-bg-primary);
             background-image:
-                radial-gradient(ellipse 100% 55% at 10% 0%,   var(--color-bg-glow-a) 0%, transparent 60%),
-                radial-gradient(ellipse 70%  60% at 92% 105%, var(--color-bg-glow-b) 0%, transparent 60%),
-                radial-gradient(ellipse 50%  40% at 50% 50%,  var(--color-bg-glow-a) 0%, transparent 80%);
+                radial-gradient(ellipse 100% 55% at var(--glow-a-x) var(--glow-a-y), var(--color-bg-glow-a) 0%, transparent 60%),
+                radial-gradient(ellipse 60%  50% at 50% 50%,                          var(--color-bg-glow-m) 0%, transparent 65%),
+                radial-gradient(ellipse 70%  60% at var(--glow-b-x) var(--glow-b-y), var(--color-bg-glow-b) 0%, transparent 60%);
             background-attachment: fixed;
             color: var(--color-text-primary);
             line-height: 1.6;
@@ -292,7 +297,7 @@
 
         .nav-tab {
             flex: 1;
-            padding: 9px 6px;
+            padding: 7px 6px;
             background: transparent;
             border: none;
             color: var(--color-text-secondary);
@@ -308,7 +313,7 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 4px;
+            gap: 3px;
         }
 
         .nav-tab.active {
@@ -341,24 +346,25 @@
 
             .nav-tab {
                 flex: 1;
-                padding: 8px 2px;
+                padding: 4px 2px;
                 font-size: 10px;
                 border-radius: 6px;
                 display: flex;
                 flex-direction: column;
                 align-items: center;
-                gap: 3px;
+                gap: 2px;
                 font-weight: 500;
             }
 
             .nav-icon {
-                width: 22px;
-                height: 22px;
+                width: 26px;
+                height: 26px;
             }
 
             .nav-tab.active {
                 background: rgba(74,124,158,0.18);
                 color: var(--color-progress);
+                box-shadow: 0 0 10px rgba(90,159,212,0.25), inset 0 0 0 1px rgba(90,159,212,0.3);
             }
 
             /* Push main content up so bottom nav doesn't cover it */
@@ -1978,6 +1984,41 @@
             opacity: 0.5;
         }
 
+        .reward-any-level-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+            background: rgba(74,124,158,0.06);
+            border: 1px dashed rgba(74,124,158,0.35);
+            border-radius: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .reward-any-level-row label {
+            font-size: 13px;
+            color: var(--color-text-secondary);
+            white-space: nowrap;
+        }
+        .reward-any-level-row input[type="number"] {
+            width: 90px;
+            padding: 6px 10px;
+            background: var(--color-bg-secondary);
+            border: 1px solid var(--color-border);
+            border-radius: 7px;
+            color: var(--color-text-primary);
+            font-size: 14px;
+            font-family: inherit;
+            outline: none;
+        }
+        .reward-any-level-row input[type="number"]:focus {
+            border-color: var(--color-accent-blue);
+        }
+        .reward-any-level-row .btn-reward-add {
+            padding: 6px 14px;
+            font-size: 13px;
+        }
+
         .reward-node {
             position: relative;
             margin-bottom: 20px;
@@ -2064,6 +2105,21 @@
         }
 
         .reward-node.future .reward-card::before { background: var(--color-border); }
+
+        /* Cards that have a reward set — glowing border */
+        @keyframes rewardGlow {
+            0%, 100% { box-shadow: 0 0 8px rgba(90,159,212,0.25), 0 0 2px rgba(90,159,212,0.15), inset 0 0 0 1px rgba(90,159,212,0.3); }
+            50%       { box-shadow: 0 0 18px rgba(90,159,212,0.45), 0 0 6px rgba(90,159,212,0.25), inset 0 0 0 1px rgba(90,159,212,0.5); }
+        }
+        .reward-card.reward-set {
+            border-color: rgba(90,159,212,0.55) !important;
+            animation: rewardGlow 2.8s ease-in-out infinite;
+        }
+        .reward-node.unlocked .reward-card.reward-set {
+            border-color: rgba(107,180,90,0.55) !important;
+            animation: none;
+            box-shadow: 0 0 12px rgba(107,180,90,0.25), inset 0 0 0 1px rgba(107,180,90,0.3);
+        }
 
         .reward-card-header {
             display: flex;
@@ -2492,6 +2548,10 @@
             z-index: 2;
         }
 
+        .calendar-day.tip-open {
+            z-index: 100;
+        }
+
         .calendar-day.today {
             border: 1px solid var(--color-accent-blue);
         }
@@ -2500,19 +2560,40 @@
             background: transparent;
         }
 
-        .calendar-tooltip {
-            position: fixed;
+        /* Inline popover tip — attached to each calendar day cell */
+        .cal-day-tip {
+            display: none;
+            position: absolute;
+            bottom: calc(100% + 8px);
+            left: 50%;
+            transform: translateX(-50%);
             background: var(--color-bg-card);
             border: 1px solid var(--color-border);
-            border-radius: 8px;
-            padding: 10px 14px;
+            border-radius: 9px;
+            padding: 9px 13px;
             font-size: 12px;
-            z-index: 2000;
+            color: var(--color-text-primary);
+            white-space: nowrap;
+            box-shadow: 0 6px 24px rgba(0,0,0,0.45);
+            z-index: 200;
+            line-height: 1.5;
             pointer-events: none;
-            max-width: 200px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
-            line-height: 1.6;
+            min-width: 130px;
+            max-width: 220px;
+            white-space: normal;
+            word-break: break-word;
         }
+        .calendar-day.tip-open .cal-day-tip {
+            display: block;
+        }
+        .cal-tip-item {
+            font-size: 12px;
+            color: var(--color-text-secondary);
+            margin-top: 3px;
+        }
+
+        /* Keep old .calendar-tooltip class in case anything else references it */
+        .calendar-tooltip { display: none; }
 
         /* Time of day chart */
         .tod-row {
@@ -2595,6 +2676,44 @@
             border-radius: 14px;
             padding: 22px 24px;
             margin-bottom: 16px;
+        }
+
+        /* Compact variant — tighter padding for single-line header cards */
+        .settings-card-compact {
+            padding: 16px 20px;
+        }
+
+        /* Reminder time row */
+        .reminder-time-row {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            flex-wrap: wrap;
+            margin-top: 4px;
+        }
+        .reminder-time-label {
+            font-size: 13px;
+            color: var(--color-text-secondary);
+            white-space: nowrap;
+        }
+        .reminder-time-input {
+            background: var(--color-bg-secondary);
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            color: var(--color-text-primary);
+            font-family: inherit;
+            font-size: 15px;
+            font-weight: 600;
+            padding: 8px 14px;
+            outline: none;
+            min-width: 130px;
+            cursor: pointer;
+            appearance: none;
+            -webkit-appearance: none;
+        }
+        .reminder-time-input:focus {
+            border-color: var(--color-accent-blue);
+            box-shadow: 0 0 0 2px rgba(74,124,158,0.2);
         }
 
         .settings-card-header {
@@ -2730,11 +2849,8 @@
         }
         .theme-color-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+            grid-template-columns: 1fr;
             gap: 10px;
-        }
-        @media (max-width: 400px) {
-            .theme-color-grid { grid-template-columns: repeat(2, 1fr); }
         }
         .theme-color-row {
             display: flex;
@@ -2777,11 +2893,11 @@
         /* Gradient builder */
         .theme-gradient-stops {
             display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 10px;
             margin-bottom: 10px;
         }
-        @media (max-width: 480px) {
+        @media (max-width: 600px) {
             .theme-gradient-stops { grid-template-columns: 1fr; }
         }
         .theme-gradient-stop {
@@ -2789,6 +2905,7 @@
             border: 1px solid var(--color-border);
             border-radius: 8px;
             padding: 10px;
+            min-width: 0;
         }
         .theme-gradient-stop-title {
             font-size: 11px;
@@ -2799,6 +2916,101 @@
             align-items: center;
             gap: 6px;
         }
+
+        /* Hex input row inside each glow stop */
+        .theme-glow-hex-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 8px;
+        }
+        .theme-glow-hex-row input[type="color"] {
+            width: 32px;
+            height: 28px;
+            border: 1px solid var(--color-border);
+            background: none;
+            padding: 2px;
+            cursor: pointer;
+            border-radius: 6px;
+            flex-shrink: 0;
+        }
+        .theme-hex-input {
+            flex: 1;
+            min-width: 0;
+            background: var(--color-bg-card);
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            color: var(--color-text-primary);
+            font-family: monospace;
+            font-size: 11px;
+            padding: 4px 6px;
+            outline: none;
+            width: 70px;
+        }
+        .theme-hex-input:focus { border-color: var(--color-accent-blue); }
+        .theme-hex-copy {
+            background: var(--color-bg-card);
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            color: var(--color-text-secondary);
+            font-size: 13px;
+            padding: 3px 6px;
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: all 0.15s;
+        }
+        .theme-hex-copy:hover { border-color: var(--color-accent-blue); color: var(--color-text-primary); }
+
+        /* Colour picker hex row inside buildColorGrid */
+        .theme-color-hex-row {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            margin-top: 3px;
+        }
+        .theme-color-hex-input {
+            flex: 1;
+            min-width: 0;
+            background: var(--color-bg-secondary);
+            border: 1px solid var(--color-border);
+            border-radius: 5px;
+            color: var(--color-text-primary);
+            font-family: monospace;
+            font-size: 11px;
+            padding: 3px 5px;
+            outline: none;
+        }
+        .theme-color-hex-input:focus { border-color: var(--color-accent-blue); }
+        .theme-color-hex-copy {
+            background: transparent;
+            border: 1px solid var(--color-border);
+            border-radius: 5px;
+            color: var(--color-text-secondary);
+            font-size: 12px;
+            padding: 2px 5px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .theme-color-hex-copy:hover { color: var(--color-text-primary); border-color: var(--color-accent-blue); }
+
+        /* Angle row */
+        .theme-angle-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .theme-angle-label {
+            font-size: 11px;
+            color: var(--color-text-secondary);
+            white-space: nowrap;
+            min-width: 56px;
+        }
+        .theme-angle-row input[type="range"] {
+            flex: 1;
+            accent-color: var(--color-accent-blue);
+        }
+
         .theme-glow-color-row {
             display: flex;
             align-items: center;
@@ -2832,7 +3044,7 @@
             font-size: 11px;
             font-family: monospace;
             color: var(--color-text-secondary);
-            width: 30px;
+            width: 34px;
             text-align: right;
         }
         .theme-preset-pill {
@@ -2859,6 +3071,51 @@
             flex-wrap: wrap;
             gap: 4px;
         }
+
+        /* Saved custom theme slots */
+        .theme-saved-slots {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 4px;
+        }
+        .theme-saved-slot {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: var(--color-bg-secondary);
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            padding: 6px 10px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .theme-saved-slot:hover { border-color: var(--color-accent-blue); }
+        .theme-saved-slot.empty {
+            opacity: 0.45;
+            cursor: default;
+            border-style: dashed;
+        }
+        .theme-saved-slot .slot-swatch {
+            width: 14px;
+            height: 14px;
+            border-radius: 4px;
+            border: 1px solid rgba(255,255,255,0.15);
+            flex-shrink: 0;
+        }
+        .theme-saved-slot-del {
+            background: none;
+            border: none;
+            color: var(--color-text-secondary);
+            font-size: 13px;
+            cursor: pointer;
+            padding: 0 2px;
+            margin-left: 2px;
+            opacity: 0.6;
+            line-height: 1;
+        }
+        .theme-saved-slot-del:hover { opacity: 1; color: var(--color-accent-red); }
 
         /* ── Streak Pause ─────────────────────────────────────────────────── */
 
@@ -3350,12 +3607,25 @@
         /* ── Nav tab SVG icons — visible at all sizes ───────────────────── */
         .nav-icon {
             display: block;
-            width: 20px;
-            height: 20px;
+            width: 22px;
+            height: 22px;
             flex-shrink: 0;
-            transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+            transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.25s ease;
         }
-        .nav-tab.active .nav-icon { transform: scale(1.12); }
+        .nav-tab.active .nav-icon {
+            transform: scale(1.12);
+            filter: drop-shadow(0 0 5px rgba(90,159,212,0.65)) drop-shadow(0 0 2px rgba(90,159,212,0.4));
+        }
+
+        @keyframes navTabPop {
+            0%   { transform: scale(1); filter: drop-shadow(0 0 0px rgba(90,159,212,0)); }
+            35%  { transform: scale(1.28); filter: drop-shadow(0 0 6px rgba(90,159,212,0.7)); }
+            65%  { transform: scale(0.94); filter: drop-shadow(0 0 3px rgba(90,159,212,0.3)); }
+            100% { transform: scale(1.12); filter: drop-shadow(0 0 0px rgba(90,159,212,0)); }
+        }
+        .nav-tab-pop .nav-icon {
+            animation: navTabPop 0.32s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+        }
 
         /* ── Settings card SVG icons ─────────────────────────────────────── */
         .settings-svg-icon {
