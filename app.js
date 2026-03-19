@@ -3340,7 +3340,6 @@
         // ── Calendar ─────────────────────────────────────────────────────
 
         window.calendarNav = function(dir) {
-            // Always persist current selection before re-rendering — even when value is ''
             var calSel = document.getElementById('calendarActivityFilter');
             if (calSel) window._calendarSelId = calSel.value;
             window.calendarOffset += dir;
@@ -3358,22 +3357,21 @@
                 window._calendarSelId = '';
             }
 
-            // Rebuild dropdown with selection baked into HTML (avoids unreliable calSel.value assignment)
+            // Rebuild dropdown preserving selection
             var calSel = document.getElementById('calendarActivityFilter');
             if (calSel) {
-                calSel.innerHTML = '<option value=""' + (savedId === '' ? ' selected' : '') + '>All Activities</option>'
+                calSel.innerHTML = '<option value=""' + (savedId === '' ? ' selected' : '') + '>— All Activities —</option>'
                     + scopeFiltered.map(function(a) {
                         return '<option value="' + a.id + '"' + (a.id === savedId ? ' selected' : '') + '>'
                             + escapeHtml(a.name) + '</option>';
                     }).join('');
             }
 
-            // Filter activities for the grid
             var filtered = savedId
                 ? scopeFiltered.filter(function(a) { return a.id === savedId; })
                 : scopeFiltered;
 
-            // Build day -> entries map from all-time history (calendar ignores the period filter)
+            // Build day → entries map from all-time history (calendar ignores period filter)
             var dayMap = {};
             filtered.forEach(function(act) {
                 if (act.completionHistory && act.completionHistory.length) {
@@ -3398,98 +3396,125 @@
                 target.toLocaleString('default', { month: 'long', year: 'numeric' });
 
             var daysInMonth = new Date(year, month + 1, 0).getDate();
-            var firstDow    = new Date(year, month, 1).getDay(); // 0 = Sun
+            var firstDow    = new Date(year, month, 1).getDay();
             var todayStr    = now.toISOString().split('T')[0];
             var vals        = Object.values(dayMap).map(function(v) { return v.length; });
             var maxCount    = vals.length > 0 ? Math.max.apply(null, vals) : 1;
-            if (maxCount < 1) maxCount = 1;
 
-            var html = '<div class="calendar-month-grid">';
-            ['Su','Mo','Tu','We','Th','Fr','Sa'].forEach(function(d) {
-                html += '<div class="calendar-dow">' + d + '</div>';
+            // Day-of-week headers
+            var html = '<div class="cal-grid">';
+            ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].forEach(function(d) {
+                html += '<div class="cal-dow">' + d + '</div>';
             });
-            for (var i = 0; i < firstDow; i++) html += '<div class="calendar-day empty"></div>';
 
+            // Leading empty cells
+            for (var i = 0; i < firstDow; i++) html += '<div class="cal-cell cal-empty"></div>';
+
+            // Day cells with 4-level heat map
             for (var d = 1; d <= daysInMonth; d++) {
-                var mm       = String(month + 1).padStart(2, '0');
-                var dd       = String(d).padStart(2, '0');
-                var dateStr  = year + '-' + mm + '-' + dd;
-                var entries  = dayMap[dateStr] || [];
-                var count    = entries.length;
-                var isToday  = dateStr === todayStr;
-                var opacity  = count > 0 ? (0.2 + (count / maxCount) * 0.75).toFixed(2) : '0';
-                var bg       = count > 0 ? 'background:rgba(74,124,158,' + opacity + ');' : '';
-                var numColor = count > 0 ? '#fff' : 'var(--color-text-secondary)';
-                var clickAttr = count > 0
-                    ? ' onclick="toggleCalTip(this,\'' + dateStr + '\',' + count + ')"'
-                    : '';
+                var mm      = String(month + 1).padStart(2, '0');
+                var dd      = String(d).padStart(2, '0');
+                var ds      = year + '-' + mm + '-' + dd;
+                var entries = dayMap[ds] || [];
+                var count   = entries.length;
+                var isToday = ds === todayStr;
 
-                html += '<div class="calendar-day' + (count > 0 ? ' has-data' : '') + (isToday ? ' today' : '') + '"'
-                    +   ' style="' + bg + '"' + clickAttr + '>'
-                    +   '<span style="font-size:10px;color:' + numColor + ';">' + d + '</span>'
-                    +   (count > 0 ? '<div class="cal-day-tip" data-date="' + dateStr + '"></div>' : '')
+                var level = 0;
+                if (count > 0) {
+                    var ratio = count / maxCount;
+                    if      (ratio <= 0.25) level = 1;
+                    else if (ratio <= 0.5)  level = 2;
+                    else if (ratio <= 0.75) level = 3;
+                    else                    level = 4;
+                }
+
+                html += '<div class="cal-cell'
+                    + (count > 0 ? ' cal-has-data cal-level-' + level : '')
+                    + (isToday  ? ' cal-today' : '')
+                    + '"'
+                    + (count > 0 ? ' onclick="toggleCalTip(this,\'' + ds + '\')"' : '')
+                    + '>'
+                    + '<span class="cal-day-num">' + d + '</span>'
+                    + (count > 0 ? '<div class="cal-tooltip"></div>' : '')
                     + '</div>';
             }
             html += '</div>';
+
+            // Heatmap legend
+            html += '<div class="cal-legend">'
+                + '<span class="cal-legend-text">Less</span>'
+                + '<div class="cal-legend-cell"></div>'
+                + '<div class="cal-legend-cell cal-level-1"></div>'
+                + '<div class="cal-legend-cell cal-level-2"></div>'
+                + '<div class="cal-legend-cell cal-level-3"></div>'
+                + '<div class="cal-legend-cell cal-level-4"></div>'
+                + '<span class="cal-legend-text">More</span>'
+                + '</div>';
+
             document.getElementById('calendarGrid').innerHTML = html;
             window._calDayMap = dayMap;
         }
 
-        window.toggleCalTip = function(cell, dateStr, count) {
-            // Close any open tip first
-            document.querySelectorAll('.calendar-day.tip-open').forEach(function(el) {
+        window.toggleCalTip = function(cell, dateStr) {
+            // Close any other open tips
+            document.querySelectorAll('.cal-cell.tip-open').forEach(function(el) {
                 if (el !== cell) el.classList.remove('tip-open');
             });
-            const isOpen = cell.classList.toggle('tip-open');
+            var isOpen = cell.classList.toggle('tip-open');
             if (!isOpen) return;
-            // Populate tip content
-            const tipEl = cell.querySelector('.cal-day-tip');
-            if (!tipEl) return;
-            const entries = (window._calDayMap || {})[dateStr] || [];
-            const names = [...new Set(entries.map(e => e.name))];
-            tipEl.innerHTML = '<strong>' + dateStr + '</strong>' +
-                names.map(n => '<div class="cal-tip-item">• ' + escapeHtml(n) + '</div>').join('');
 
-            // Reset any inline positioning from a prior open
+            var tipEl = cell.querySelector('.cal-tooltip');
+            if (!tipEl) return;
+
+            var entries  = (window._calDayMap || {})[dateStr] || [];
+            var seen = {}, names = [];
+            entries.forEach(function(e) { if (!seen[e.name]) { seen[e.name] = true; names.push(e.name); } });
+            var totalXP  = entries.reduce(function(s, e) { return s + (e.xp || 0); }, 0);
+
+            var d         = new Date(dateStr + 'T12:00:00');
+            var dayName   = d.toLocaleDateString(undefined, { weekday: 'short' });
+            var dateLabel = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+
+            tipEl.innerHTML =
+                '<div class="cal-tip-header">'
+                    + '<strong class="cal-tip-date">' + dayName + ', ' + dateLabel + '</strong>'
+                    + '<span class="cal-tip-xp">+' + totalXP + ' XP</span>'
+                + '</div>'
+                + '<div class="cal-tip-acts">'
+                    + names.map(function(n) { return '<div class="cal-tip-row">• ' + escapeHtml(n) + '</div>'; }).join('')
+                + '</div>';
+
+            // Reset positioning
             tipEl.style.left = '';
             tipEl.style.right = '';
             tipEl.style.top = '';
             tipEl.style.bottom = '';
             tipEl.style.transform = '';
 
-            // After paint, check if the tip overflows the viewport and adjust
             requestAnimationFrame(function() {
-                var tipRect  = tipEl.getBoundingClientRect();
-                var cellRect = cell.getBoundingClientRect();
+                var tipRect = tipEl.getBoundingClientRect();
                 var vw = window.innerWidth;
-                var vh = window.innerHeight;
 
-                // ── Vertical: prefer above, fall back to below ──
+                // Prefer above; fall back below
                 if (tipRect.top < 8) {
-                    // Not enough room above — open below the cell instead
                     tipEl.style.bottom = 'auto';
-                    tipEl.style.top    = 'calc(100% + 8px)';
+                    tipEl.style.top    = 'calc(100% + 6px)';
                 } else {
                     tipEl.style.top    = '';
-                    tipEl.style.bottom = 'calc(100% + 8px)';
+                    tipEl.style.bottom = 'calc(100% + 6px)';
                 }
-
-                // ── Horizontal: centre, then clamp to viewport ──
-                // Start centred
+                // Centre, then clamp horizontally
                 tipEl.style.left      = '50%';
                 tipEl.style.transform = 'translateX(-50%)';
                 tipEl.style.right     = '';
 
-                // Re-measure after setting centre position
                 requestAnimationFrame(function() {
                     var r2 = tipEl.getBoundingClientRect();
                     if (r2.right > vw - 8) {
-                        // Overflows right → pin to right edge of cell
                         tipEl.style.left      = 'auto';
                         tipEl.style.right     = '0';
                         tipEl.style.transform = 'none';
                     } else if (r2.left < 8) {
-                        // Overflows left → pin to left edge of cell
                         tipEl.style.left      = '0';
                         tipEl.style.right     = 'auto';
                         tipEl.style.transform = 'none';
@@ -3498,14 +3523,43 @@
             });
         };
 
-        // Close calendar tip when clicking outside
+        // Close calendar tip when clicking outside a calendar cell
         document.addEventListener('click', function(e) {
-            if (!e.target.closest('.calendar-day')) {
-                document.querySelectorAll('.calendar-day.tip-open').forEach(function(el) {
+            if (!e.target.closest('.cal-cell')) {
+                document.querySelectorAll('.cal-cell.tip-open').forEach(function(el) {
                     el.classList.remove('tip-open');
                 });
             }
         });
+
+        // ── Collapsible Analytics Cards ───────────────────────────────────
+
+        window.toggleStreakBoard = function() {
+            var body    = document.getElementById('streakBoardBody');
+            var chevron = document.getElementById('streakBoardChevron');
+            if (!body) return;
+            var nowHidden = body.style.display === 'none';
+            body.style.display = nowHidden ? '' : 'none';
+            if (chevron) chevron.style.transform = nowHidden ? 'rotate(180deg)' : '';
+        };
+
+        window.toggleFrequencyChart = function() {
+            var body    = document.getElementById('frequencyChartBody');
+            var chevron = document.getElementById('frequencyChartChevron');
+            if (!body) return;
+            var nowHidden = body.style.display === 'none';
+            body.style.display = nowHidden ? '' : 'none';
+            if (chevron) chevron.style.transform = nowHidden ? 'rotate(180deg)' : '';
+        };
+
+        window.toggleCombosPanel = function() {
+            var body    = document.getElementById('combosPanelBody');
+            var chevron = document.getElementById('combosPanelChevron');
+            if (!body) return;
+            var nowHidden = body.style.display === 'none';
+            body.style.display = nowHidden ? '' : 'none';
+            if (chevron) chevron.style.transform = nowHidden ? 'rotate(180deg)' : '';
+        };
 
         // ── Time of Day ──────────────────────────────────────────────────
 
@@ -3572,14 +3626,14 @@
         };
 
         function renderActivityHistory(reset) {
-            const body = document.getElementById('activityHistoryBody');
+            var body = document.getElementById('activityHistoryBody');
             if (!body || !body.classList.contains('open')) return;
 
             // Build flat log across all activities
-            const allActs = getAllActivitiesFlat();
-            const rawLog  = [];
-            allActs.forEach(act => {
-                (act.completionHistory || []).forEach(e => {
+            var allActs = getAllActivitiesFlat();
+            var rawLog  = [];
+            allActs.forEach(function(act) {
+                (act.completionHistory || []).forEach(function(e) {
                     rawLog.push({
                         date:      new Date(e.date),
                         xp:        e.xp || 0,
@@ -3592,24 +3646,24 @@
             });
 
             // Newest first
-            rawLog.sort((a, b) => b.date - a.date);
+            rawLog.sort(function(a, b) { return b.date - a.date; });
 
             // Apply tab filter
-            const filter   = window._historyFilter || 'all';
-            const filtered = rawLog.filter(e => {
+            var filter   = window._historyFilter || 'all';
+            var filtered = rawLog.filter(function(e) {
                 if (filter === 'positive') return e.xp > 0 && !e.isPenalty;
                 if (filter === 'negative') return e.xp < 0;
                 if (filter === 'penalty')  return e.isPenalty;
                 return true;
             });
 
-            const page    = window._historyPage || 1;
-            const limit   = page * HISTORY_PAGE_SIZE;
-            const visible = filtered.slice(0, limit);
-            const hasMore = filtered.length > limit;
+            var page    = window._historyPage || 1;
+            var limit   = page * HISTORY_PAGE_SIZE;
+            var visible = filtered.slice(0, limit);
+            var hasMore = filtered.length > limit;
 
-            const listEl = document.getElementById('activityHistoryList');
-            const moreEl = document.getElementById('activityHistoryMore');
+            var listEl = document.getElementById('activityHistoryList');
+            var moreEl = document.getElementById('activityHistoryMore');
             if (!listEl) return;
 
             if (visible.length === 0) {
@@ -3618,44 +3672,55 @@
                 return;
             }
 
-            // Pre-compute daily XP totals for the visible (filtered) entries
-            const dailyTotals = {};
-            visible.forEach(e => {
-                const k = e.date.toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric', year:'numeric' });
-                dailyTotals[k] = (dailyTotals[k] || 0) + (e.xp || 0);
+            // Group by ISO date key (YYYY-MM-DD) for reliable grouping
+            var groups = [];
+            var currentGroup = null;
+            var currentKey   = '';
+            visible.forEach(function(e) {
+                var key = e.date.toISOString().split('T')[0];
+                if (key !== currentKey) {
+                    currentKey   = key;
+                    currentGroup = { key: key, date: e.date, entries: [], totalXP: 0 };
+                    groups.push(currentGroup);
+                }
+                currentGroup.entries.push(e);
+                currentGroup.totalXP += (e.xp || 0);
             });
 
-            // Render grouped by calendar date
-            let lastDateStr = '';
-            let html = '';
-            visible.forEach(e => {
-                const dateStr = e.date.toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric', year:'numeric' });
+            var html = '';
+            groups.forEach(function(group, gi) {
+                var weekday  = group.date.toLocaleDateString(undefined, { weekday: 'long' });
+                var monthDay = group.date.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
+                var total    = group.totalXP;
+                var sign     = total > 0 ? '+' : (total < 0 ? '' : '+');
+                var badgeCls = total >= 0 ? 'pos' : 'neg';
 
-                if (dateStr !== lastDateStr) {
-                    const dayTotal   = dailyTotals[dateStr] || 0;
-                    const totalSign  = dayTotal > 0 ? '+' : '';
-                    const totalClass = dayTotal >= 0 ? 'pos' : 'neg';
-                    html += '<div class="ah-date-row">'
-                        + '<span class="ah-date-label">' + dateStr + '</span>'
-                        + '<span class="ah-day-total ' + totalClass + '">' + totalSign + dayTotal + ' XP</span>'
+                html += '<div class="ah-group">';
+                html += '<div class="ah-date-header' + (gi === 0 ? ' ah-first' : '') + '">'
+                    +       '<div class="ah-date-left">'
+                    +           '<span class="ah-date-weekday">' + weekday + '</span>'
+                    +           '<span class="ah-date-monthday">' + monthDay + '</span>'
+                    +       '</div>'
+                    +       '<span class="ah-date-badge ' + badgeCls + '">' + sign + total + ' XP</span>'
+                    + '</div>';
+
+                html += '<div class="ah-entries">';
+                group.entries.forEach(function(e) {
+                    var timeStr = e.date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+                    var isPos   = e.xp >= 0;
+                    var xpLabel = (isPos ? '+' : '') + e.xp + ' XP';
+                    var xpClass = isPos ? 'pos' : 'neg';
+                    var tag     = e.isPenalty
+                        ? '<span class="ah-tag ah-tag-penalty">⚡ auto</span>'
+                        : (!isPos ? '<span class="ah-tag ah-tag-negative">−habit</span>' : '');
+                    html += '<div class="ah-row">'
+                        +       '<span class="ah-xp ' + xpClass + '">' + xpLabel + '</span>'
+                        +       '<span class="ah-name" title="' + escapeHtml(e.actName) + '">' + escapeHtml(e.actName) + '</span>'
+                        +       tag
+                        +       '<span class="ah-meta">' + timeStr + '</span>'
                         + '</div>';
-                    lastDateStr = dateStr;
-                }
-
-                const timeStr = e.date.toLocaleTimeString(undefined, { hour:'2-digit', minute:'2-digit' });
-                const isPos   = e.xp >= 0;
-                const xpLabel = (isPos ? '+' : '') + e.xp + ' XP';
-                const xpClass = isPos ? 'pos' : 'neg';
-                const tag     = e.isPenalty
-                    ? `<span class="ah-tag ah-tag-penalty">⚡ auto-penalty</span>`
-                    : (!isPos ? `<span class="ah-tag ah-tag-negative">−habit</span>` : '');
-                html += `
-                <div class="ah-row">
-                    <span class="ah-xp ${xpClass}">${xpLabel}</span>
-                    <span class="ah-name" title="${escapeHtml(e.actName)}">${escapeHtml(e.actName)}</span>
-                    ${tag}
-                    <span class="ah-meta">${timeStr}</span>
-                </div>`;
+                });
+                html += '</div></div>';
             });
 
             listEl.innerHTML = html;
