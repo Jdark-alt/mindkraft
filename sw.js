@@ -7,7 +7,7 @@
 // Bump CACHE_VERSION whenever you deploy a meaningful update.
 // This causes the old cache to be deleted and the new one installed.
 
-const CACHE_VERSION = 'v5';
+const CACHE_VERSION = 'v6';
 const CACHE_NAME = 'mindkraft-shell-' + CACHE_VERSION;
 
 // Files that make up the app shell — must all load for the app to work
