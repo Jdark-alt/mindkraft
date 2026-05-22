@@ -1,0 +1,2134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mindkraft - Life Gamification</title>
+
+    <!-- PWA -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#1a1a1a">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Mindkraft">
+    <link rel="apple-touch-icon" href="icon-192.svg">
+    <link rel="icon" type="image/svg+xml" href="icon-192.svg">
+    <link rel="shortcut icon" href="icon-192.svg">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Loading Screen -->
+    <div id="loading" class="loading">
+        <div class="spinner"></div>
+    </div>
+
+    <!-- Authentication / Landing Screen -->
+    <div id="authContainer" class="auth-container" style="display:none;">
+
+        <!-- Install Hero (hidden when already in standalone mode) -->
+        <div class="lp-hero" id="lpInstallSection">
+            <div class="lp-logo-ring">
+                <div class="lp-logo-pulse"></div>
+                <div class="lp-logo-emoji">🧠</div>
+            </div>
+            <div class="lp-brand-name">Mindkraft</div>
+            <div class="lp-tagline">Gamify your life.</div>
+
+            <div class="lp-pills">
+                <span class="lp-pill">⚡ XP &amp; Levels</span>
+                <span class="lp-pill">🔥 Streaks</span>
+                <span class="lp-pill">🏆 Challenges</span>
+            </div>
+
+            <!-- Platform-specific install card — populated by JS -->
+            <div class="lp-install-card" id="lpInstallCard"></div>
+
+            <div class="lp-divider"><span>or</span></div>
+        </div>
+
+        <!-- Login Section (always shown) -->
+        <div class="lp-login" id="lpLoginSection">
+            <div class="lp-login-label" id="lpLoginLabel">Use on Web</div>
+            <div id="authError" class="error-message"></div>
+            <button class="btn-google" id="googleBtn" onclick="handleGoogleSignIn()">
+                <div class="btn-google-spinner" id="googleSpinner"></div>
+                <svg width="18" height="18" viewBox="0 0 18 18" id="googleIcon">
+                    <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z"/>
+                    <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332C2.438 15.983 5.482 18 9 18z"/>
+                    <path fill="#FBBC05" d="M3.964 10.707c-.18-.54-.282-1.117-.282-1.707 0-.593.102-1.17.282-1.709V4.958H.957C.347 6.173 0 7.548 0 9c0 1.452.348 2.827.957 4.042l3.007-2.335z"/>
+                    <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0 5.482 0 2.438 2.017.957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/>
+                </svg>
+                <span id="googleBtnText">Continue with Google</span>
+            </button>
+            <p class="lp-legal">By continuing, you agree to Mindkraft's Terms &amp; Privacy</p>
+        </div>
+    </div>
+
+    <!-- Onboarding Overlay (post-login, new users only) -->
+    <div id="onboardingOverlay" class="ob-overlay" style="display:none;" aria-modal="true" role="dialog">
+
+        <!-- Slide container -->
+        <div class="ob-slides" id="obSlides">
+
+            <!-- Slide 1: Earn XP -->
+            <div class="ob-slide" id="obSlide0">
+                <div class="ob-visual ob-visual-0">
+                    <div class="ob-visual-emoji">⚡</div>
+                    <div class="ob-xp-bar-demo">
+                        <div class="ob-xp-fill" id="obXpFill"></div>
+                    </div>
+                    <div class="ob-level-badge-demo">Lv <span id="obLvNum">1</span></div>
+                </div>
+                <h2 class="ob-title">Turn habits into XP</h2>
+                <p class="ob-body">Complete real activities — a walk, a deep work session, a good night's sleep — and earn XP. Every day you show up, you grow.</p>
+            </div>
+
+            <!-- Slide 2: Structure -->
+            <div class="ob-slide" id="obSlide1" style="display:none;">
+                <div class="ob-visual ob-visual-1">
+                    <div class="ob-tree">
+                        <div class="ob-tree-row ob-tree-dim">💪 Health</div>
+                        <div class="ob-tree-row ob-tree-path">└ Exercise</div>
+                        <div class="ob-tree-row ob-tree-act">└ Morning Run</div>
+                        <div class="ob-tree-row ob-tree-dim" style="margin-top:8px;">🧠 Mind</div>
+                        <div class="ob-tree-row ob-tree-path">└ Focus</div>
+                        <div class="ob-tree-row ob-tree-act">└ Deep Work Session</div>
+                    </div>
+                </div>
+                <h2 class="ob-title">Organized for clarity</h2>
+                <p class="ob-body"><strong>Dimensions</strong> are the big areas of your life. Each contains <strong>Paths</strong> (practices), which hold your <strong>Activities</strong> (trackable habits).</p>
+            </div>
+
+            <!-- Slide 3: Streaks & Challenges -->
+            <div class="ob-slide" id="obSlide2" style="display:none;">
+                <div class="ob-visual ob-visual-2">
+                    <div class="ob-streak-demo">
+                        <div class="ob-streak-flame">🔥</div>
+                        <div class="ob-streak-count">7</div>
+                        <div class="ob-streak-label">day streak</div>
+                    </div>
+                    <div class="ob-shields-demo">
+                        <span class="ob-shield">🛡️</span>
+                        <span class="ob-shield">🛡️</span>
+                        <span class="ob-shield ob-shield-dim">🛡️</span>
+                    </div>
+                </div>
+                <h2 class="ob-title">Build streaks. Win challenges.</h2>
+                <p class="ob-body">Consistency is your superpower. Earn streak shields to protect your progress on off-days. Take on challenges and level up every dimension of your life.</p>
+            </div>
+
+        </div>
+
+        <!-- Progress dots -->
+        <div class="ob-dots" id="obDots">
+            <button class="ob-dot ob-dot-active" onclick="obGoTo(0)" aria-label="Slide 1"></button>
+            <button class="ob-dot" onclick="obGoTo(1)" aria-label="Slide 2"></button>
+            <button class="ob-dot" onclick="obGoTo(2)" aria-label="Slide 3"></button>
+        </div>
+
+        <!-- Slide navigation -->
+        <div class="ob-nav" id="obNav">
+            <button class="ob-btn-ghost" id="obBackBtn" onclick="obBack()" style="visibility:hidden;">← Back</button>
+            <button class="ob-btn-next" id="obNextBtn" onclick="obNext()">Next →</button>
+        </div>
+
+        <!-- Choice screen -->
+        <div class="ob-choice-screen" id="obChoiceScreen" style="display:none;">
+            <div class="ob-choice-header">
+                <div class="ob-choice-icon-main">🚀</div>
+                <h2 class="ob-title" style="margin-top:12px;">How do you want to start?</h2>
+                <p class="ob-body" style="margin-top:8px;">Don't worry — you can customize everything later.</p>
+            </div>
+            <div class="ob-choices">
+                <button class="ob-choice-btn ob-choice-primary" onclick="obQuickStart()">
+                    <div class="ob-choice-btn-icon">⚡</div>
+                    <div class="ob-choice-btn-text">
+                        <div class="ob-choice-btn-title">Quick Start</div>
+                        <div class="ob-choice-btn-desc">Pick a focus area and a few starter activities. Ready in 30 seconds.</div>
+                    </div>
+                    <div class="ob-choice-arrow">→</div>
+                </button>
+                <button class="ob-choice-btn ob-choice-secondary" onclick="obBuildOwn()">
+                    <div class="ob-choice-btn-icon">🛠️</div>
+                    <div class="ob-choice-btn-text">
+                        <div class="ob-choice-btn-title">Build My Own</div>
+                        <div class="ob-choice-btn-desc">I'll create my own dimensions, paths and habits from scratch.</div>
+                    </div>
+                    <div class="ob-choice-arrow">→</div>
+                </button>
+            </div>
+        </div>
+
+        <!-- ── Step 1: Focus area picker (max 2) ─────────────────────────── -->
+        <div class="ob-focus-picker" id="obFocusPicker" style="display:none;">
+            <div class="ob-focus-header">
+                <h2 class="ob-title">What area of life would you like to focus on?</h2>
+                <p class="ob-body">Pick up to two. We'll suggest starter activities for each.</p>
+            </div>
+            <div class="ob-area-grid" id="obFocusGrid"><!-- rendered by JS --></div>
+            <div class="ob-focus-nav">
+                <button type="button" class="ob-btn-ghost" onclick="obShowChoiceScreenAgain()">← Back</button>
+                <button type="button" class="ob-btn-next" id="obFocusNextBtn"
+                        onclick="obShowActivityPicker()" disabled>Pick at least one →</button>
+            </div>
+        </div>
+
+        <!-- ── Step 2: Activity picker (max 4 across chosen areas) ───────── -->
+        <div class="ob-activity-picker" id="obActivityPicker" style="display:none;">
+            <div class="ob-focus-header">
+                <h2 class="ob-title">Pick your starter activities</h2>
+                <p class="ob-body">Choose up to 4. You can always add more later.</p>
+            </div>
+            <div class="ob-activity-progress">
+                <div class="ob-activity-progress-bar">
+                    <div class="ob-activity-progress-fill" id="obActivityProgressFill"></div>
+                </div>
+                <div class="ob-activity-progress-label" id="obActivityProgressLabel">0 of 4 selected</div>
+            </div>
+            <div class="ob-activity-groups" id="obActivityGroups"><!-- rendered by JS --></div>
+            <div class="ob-focus-nav">
+                <button type="button" class="ob-btn-ghost" onclick="obBackToFocus()">← Back</button>
+                <button type="button" class="ob-btn-next" id="obActivityFinishBtn"
+                        onclick="obFinishPicker()" disabled>Pick at least one →</button>
+            </div>
+        </div>
+
+    </div><!-- /onboardingOverlay -->
+
+    <!-- Main App -->
+    <div id="appContainer" class="app-container">
+        <!-- Sticky Header -->
+        <div class="sticky-header">
+            <div class="header-content">
+                <div class="header-top">
+                    <!-- Left: LEVEL label + SVG-rendered big number.
+                         The level number is rendered as TWO stacked SVG <text>
+                         elements: a gradient-filled one (visible) and a stroked
+                         one (the gold trace overlay). Because they share identical
+                         font attributes and coordinates, the trace is guaranteed
+                         to follow the digit's actual contour. JS measures the
+                         text after each update and resizes the SVG to fit. -->
+                    <div class="level-badge">
+                        <span class="level-label">Level</span>
+                        <div class="level-display">
+                            <svg id="levelSvg" class="level-svg" width="68" height="50"
+                                 overflow="visible" xmlns="http://www.w3.org/2000/svg"
+                                 aria-label="Level">
+                                <defs>
+                                    <linearGradient id="levelGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                                        <stop offset="30%" stop-color="var(--color-text-primary)"/>
+                                        <stop offset="100%" stop-color="var(--color-progress)"/>
+                                    </linearGradient>
+                                </defs>
+                                <text id="currentLevel" class="level-svg-text level-svg-fill"
+                                      x="0" y="42">1</text>
+                                <text id="currentLevelTrace" class="level-svg-text level-svg-trace"
+                                      x="0" y="42" aria-hidden="true">1</text>
+                            </svg>
+                        </div>
+                    </div>
+                    <!-- Center: alternating XP / progress% on LEFT, target on RIGHT, bar below.
+                         Both sides now use the same small text size + baseline so they line up
+                         cleanly. The left value alternates "X XP" ↔ "Y% done" every 30s. -->
+                    <div class="progress-section">
+                        <div class="progress-meta">
+                            <div class="progress-alt" aria-live="polite">
+                                <div class="progress-alt-frame">
+                                    <!-- Invisible spacer establishes the slot's natural width AND
+                                         baseline so it bottom-aligns with the right-side text. Width
+                                         matches the longest of the two transitioning items so the
+                                         layout never reflows mid-transition. -->
+                                    <span class="progress-alt-spacer">100% done</span>
+                                    <span class="progress-alt-item progress-alt-xp" data-state="active">
+                                        <span class="progress-alt-num" id="currentXP">0</span>
+                                        <span class="progress-alt-label"> XP</span>
+                                    </span>
+                                    <span class="progress-alt-item progress-alt-pct">
+                                        <span class="progress-alt-num" id="progressPercent">0%</span>
+                                        <span class="progress-alt-label"> done</span>
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="header-meta-right">
+                                <span class="header-meta-xp-left"><span id="xpToNextDisplay">50</span> XP to next</span>
+                            </div>
+                        </div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" id="progressBar" style="width: 0%;"></div>
+                        </div>
+                    </div>
+                    <div class="user-info">
+                        <button class="profile-avatar-btn" id="profileAvatarBtn" onclick="openProfileOverlay()" title="Your Profile">
+                            <img id="profileAvatarImg" src="" alt="" style="display:none;width:100%;height:100%;object-fit:cover;border-radius:50%;">
+                            <span id="profileAvatarInitial" style="font-size:15px;font-weight:700;line-height:1;"></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Navigation Tabs -->
+            <div class="nav-tabs">
+                <button class="nav-tab" onclick="switchTab('friends')"><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="9" cy="7" r="4" fill="currentColor" opacity="0.13" stroke="currentColor" stroke-width="1.6"/>
+  <path d="M2 21v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2" fill="currentColor" opacity="0.1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+  <circle cx="17.5" cy="9" r="3" fill="currentColor" opacity="0.13" stroke="currentColor" stroke-width="1.4"/>
+  <path d="M20.5 21v-1.5a3.5 3.5 0 0 0-3-3.46" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+</svg><span>Friends</span></button>
+                <button class="nav-tab" onclick="switchTab('challenges')"><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path d="M2 20 L8.5 8 L12 13.5 L15 9.5 L22 20 Z" fill="currentColor" opacity="0.13" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M15 9.5 L17.2 13 L12.8 13 Z" fill="currentColor" opacity="0.4"/>
+  <line x1="15" y1="9.5" x2="15" y2="4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+  <path d="M15 4 L19 5.8 L15 7.5 Z" fill="currentColor" opacity="0.85"/>
+</svg><span>Challenges</span></button>
+                <button class="nav-tab active" onclick="switchTab('activities')"><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <rect x="3" y="4" width="14" height="16" rx="3" fill="currentColor" opacity="0.12" stroke="currentColor" stroke-width="1.6"/>
+  <rect x="5.5" y="8" width="9" height="2" rx="1" fill="currentColor" opacity="0.35"/>
+  <circle cx="15.5" cy="15.5" r="4.5" fill="currentColor" opacity="0.18" stroke="currentColor" stroke-width="1.5"/>
+  <polyline points="13.4,15.5 14.9,17 17.6,13.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="5.5" y1="12" x2="11.5" y2="12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.45"/>
+  <line x1="5.5" y1="15" x2="9.5" y2="15" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.3"/>
+</svg><span>Activities</span></button>
+                <button class="nav-tab" onclick="switchTab('analytics')"><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path d="M3 18 L7 13 L11 15.5 L16 8 L21 5 L21 18 Z" fill="currentColor" opacity="0.13"/>
+  <line x1="3" y1="18" x2="21" y2="18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.5"/>
+  <polyline points="3,18 7,13 11,15.5 16,8 21,5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <polyline points="18,3.5 21,5 19.5,8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg><span>Analytics</span></button>
+                <button class="nav-tab" onclick="switchTab('settings')"><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <path d="M12 2
+    L13.5 4.3 L16.2 3.8 L17 6.4 L19.5 7.5 L19 10.2 L21 12
+    L19 13.8 L19.5 16.5 L17 17.6 L16.2 20.2 L13.5 19.7 L12 22
+    L10.5 19.7 L7.8 20.2 L7 17.6 L4.5 16.5 L5 13.8 L3 12
+    L5 10.2 L4.5 7.5 L7 6.4 L7.8 3.8 L10.5 4.3 Z"
+    fill="currentColor" opacity="0.13" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+  <circle cx="12" cy="12" r="3.5" fill="currentColor" opacity="0.13" stroke="currentColor" stroke-width="1.6"/>
+  <circle cx="12" cy="12" r="1.2" fill="currentColor" opacity="0.55"/>
+</svg><span>Settings</span></button>
+            </div>
+
+            <!-- Activities Tab -->
+            <div id="activitiesTab" class="tab-content active">
+                <!-- Sub-tab pills -->
+                <div class="sub-tabs" id="activitiesSubTabs">
+                    <button class="sub-tab active" onclick="switchSubTab('activities','myActivities')">My Activities</button>
+                    <button class="sub-tab" onclick="switchSubTab('activities','categories')">Categories</button>
+                </div>
+
+                <!-- My Activities sub-tab -->
+                <div id="activitiesSubMyActivities" class="sub-tab-content">
+                    <!-- Action toolbar -->
+                    <div class="act-toolbar" id="actToolbar">
+                        <!-- Bare icon row with hairline dividers (no pill container) -->
+                        <div class="tool-cluster">
+                            <!-- Grid toggle -->
+                            <button class="act-tb-btn" id="viewToggleBtn" onclick="toggleActivityView()" title="Switch to grid view">
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                            </button>
+                            <span class="tool-divider" aria-hidden="true"></span>
+                            <!-- Filter + dropdown -->
+                            <div style="position:relative;display:flex;">
+                                <button class="act-tb-btn" id="filterBtn" onclick="toggleFilterPanel()" title="Sort &amp; Filter">
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+                                    <span id="filterActiveDot" class="act-tb-dot" style="display:none;" aria-hidden="true"></span>
+                                </button>
+                                <div class="filter-panel" id="filterPanel" style="display:none;">
+                                    <div class="filter-panel-title">Sort activities</div>
+                                    <div class="filter-options" id="filterOptions"></div>
+                                    <div class="filter-panel-footer">
+                                        <button class="btn-filter-default" id="setDefaultFilterBtn" onclick="setDefaultActivitySort()">Set as default view</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <span class="tool-divider" aria-hidden="true"></span>
+                            <!-- Daily Planner -->
+                            <button class="act-tb-btn" id="plannerBtn" onclick="togglePlannerInline()" title="Daily Planner">
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                            </button>
+                            <span class="tool-divider" aria-hidden="true"></span>
+                            <!-- Search -->
+                            <button class="act-tb-btn" onclick="openActivitySearch()" title="Search activities">
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                            </button>
+                        </div>
+                        <!-- Activity count — bare text, no pill -->
+                        <span class="act-count-pill" id="activitySlotCount"></span>
+                        <!-- Add button — keeps its blue pill (primary CTA, exception to the bare-style rule) -->
+                        <button class="act-tb-add-main" onclick="openActivityModal(null,null)" title="Add activity">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                            Add
+                        </button>
+                    </div>
+
+                    <!-- Inline Daily Planner panel — replaces activity list when open -->
+                    <div id="activitiesInlinePlanner" style="display:none;">
+                        <!-- Title row: date title left, [Today] [📅] [+ Schedule] right -->
+                        <div class="planner-cal-actions">
+                            <div class="planner-cal-title" id="plannerCalTitle">Today</div>
+                            <div class="planner-cal-jump">
+                                <button class="planner-cal-btn planner-cal-btn-today" id="plannerTodayBtn"
+                                    onclick="setPlannerDate(null)" style="display:none;">Today</button>
+                                <button class="planner-cal-btn planner-cal-btn-pick" id="plannerDatePickBtn"
+                                    onclick="openPlannerDatePicker()" title="Pick a date" aria-label="Pick a date">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                                </button>
+                                <button class="planner-cal-btn planner-cal-btn-schedule" onclick="openPlannerAddModal()" title="Add to schedule">
+                                    <span style="font-size:13px;line-height:1;font-weight:700;">+</span>
+                                    <span>Schedule</span>
+                                </button>
+                            </div>
+                        </div>
+                        <!-- Hidden native date picker for jump-to-date -->
+                        <input type="date" id="plannerDatePicker" style="position:absolute;opacity:0;width:0;height:0;pointer-events:none;" onchange="setPlannerDate(this.value)">
+                        <!-- Beautiful, scrollable day strip -->
+                        <div class="planner-cal-strip" id="plannerCalStrip"></div>
+                        <div id="plannerTimeline"></div>
+                    </div>
+
+                    <div id="activitiesListContainer"></div>
+                </div>
+
+                <!-- Categories sub-tab (formerly Dimensions) -->
+                <div id="activitiesSubCategories" class="sub-tab-content" style="display:none;">
+                    <!-- Page title row — matches an-page-title scale on other redesigned tabs.
+                         Info button opens an explainer modal with the hierarchy graphic. -->
+                    <div class="cat-page-header">
+                        <h1 class="an-page-title">Your Dimensions</h1>
+                        <button class="cat-info-btn" onclick="openCategoriesInfo()" aria-label="What are Dimensions &amp; Paths?" title="What are Dimensions &amp; Paths?">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                        </button>
+                    </div>
+
+                    <!-- Toolbar: search (bare icon, primitive-aligned) + count + primary Add pill.
+                         Mirrors the My Activities toolbar so users only learn one pattern. -->
+                    <div class="act-toolbar cat-toolbar">
+                        <div class="tool-cluster">
+                            <button class="act-tb-btn" onclick="openCategoriesSearch()" title="Find an activity">
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                            </button>
+                        </div>
+                        <span class="act-count-pill" id="catDimensionCount"></span>
+                        <button class="act-tb-add-main" onclick="openDimensionModal()" title="Add dimension">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                            Add Dimension
+                        </button>
+                    </div>
+
+                    <div id="dimensionsContainer"></div>
+                </div>
+            </div>
+
+            <!-- Challenges Tab -->
+            <div id="challengesTab" class="tab-content">
+                <!-- Sub-tab pills -->
+                <div class="sub-tabs" id="challengesSubTabs">
+                    <button class="sub-tab active" onclick="switchSubTab('challenges','myChallenges')">My Challenges</button>
+                    <button class="sub-tab" onclick="switchSubTab('challenges','groupChallenge')">Group Challenge</button>
+                </div>
+
+                <!-- My Challenges sub-tab -->
+                <div id="challengesSubMyChallenges" class="sub-tab-content">
+                    <div class="section-header">
+                        <h2 class="section-title">My Challenges</h2>
+                        <button class="btn-add" onclick="openChallengeModal()">
+                            + Create Challenge
+                        </button>
+                    </div>
+                    <div id="challengesContainer"></div>
+                </div>
+
+                <!-- Group Challenge sub-tab -->
+                <div id="challengesSubGroupChallenge" class="sub-tab-content" style="display:none;">
+                    <div id="groupChallengeContent"></div>
+                </div>
+            </div>
+
+            <!-- Friends Tab -->
+            <div id="friendsTab" class="tab-content">
+                <h1 class="an-page-title" style="margin-bottom:18px;">Friends</h1>
+
+                <!-- Leaderboard sub-tabs -->
+                <div class="fr-lb-tabs" id="frLbTabs">
+                    <button class="fr-lb-tab active" id="frTabToday" onclick="setLeaderboardMetric('xpToday')">XP Today</button>
+                    <button class="fr-lb-tab" id="frTabWeek" onclick="setLeaderboardMetric('weeklyXP')">This Week</button>
+                    <button class="fr-lb-tab" id="frTabHour" onclick="setLeaderboardMetric('xpPerHour')">XP / Hour</button>
+                </div>
+
+                <!-- Leaderboard rows (no card wrapper) -->
+                <div id="friendsLeaderboard" style="margin-bottom:18px;"></div>
+
+                <!-- Add Friend -->
+                <div id="friendsAddSection" style="margin-bottom:18px;"></div>
+
+                <!-- All Friends -->
+                <div id="friendsAllList"></div>
+            </div>
+
+            <!-- Analytics Tab -->
+            <div id="analyticsTab" class="tab-content">
+
+                <!-- ── Page header ───────────────────────────────────── -->
+                <div class="an-page-header">
+                    <h1 class="an-page-title">Analytics</h1>
+                    <button class="an-filter-btn" id="analyticsFilterToggle" onclick="toggleAnalyticsFilterPanel()" aria-expanded="false" aria-label="Filters">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="11" y1="18" x2="13" y2="18"/></svg>
+                        <span>Filter</span>
+                        <span class="an-filter-badge" id="analyticsFilterBadge" style="display:none;"></span>
+                    </button>
+                </div>
+
+                <!-- ── Filter panel (collapsible) ────────────────────── -->
+                <div class="an-filter-panel" id="analyticsFilters" style="display:none;">
+                    <div class="an-filter-row">
+                        <span class="an-filter-row-label">View</span>
+                        <div class="filter-pills" id="filterViewPills">
+                            <button class="filter-pill active" onclick="setAnalyticsFilter('view','all',this)">All</button>
+                            <button class="filter-pill" onclick="setAnalyticsFilter('view','dimension',this)">Dimension</button>
+                            <button class="filter-pill" onclick="setAnalyticsFilter('view','path',this)">Path</button>
+                            <button class="filter-pill" onclick="setAnalyticsFilter('view','activity',this)">Activity</button>
+                        </div>
+                    </div>
+                    <div class="an-filter-row" id="filterDimGroup" style="display:none;">
+                        <span class="an-filter-row-label">Dimension</span>
+                        <select class="filter-select" id="filterDimSelect" onchange="applyAnalyticsFilters()"></select>
+                    </div>
+                    <div class="an-filter-row" id="filterPathGroup" style="display:none;">
+                        <span class="an-filter-row-label">Path</span>
+                        <select class="filter-select" id="filterPathSelect" onchange="applyAnalyticsFilters()"></select>
+                    </div>
+                    <div class="an-filter-row" id="filterActivityGroup" style="display:none;">
+                        <span class="an-filter-row-label">Activity</span>
+                        <select class="filter-select" id="filterActivitySelect" onchange="applyAnalyticsFilters()"></select>
+                    </div>
+                    <div class="an-filter-row">
+                        <span class="an-filter-row-label">Period</span>
+                        <div class="filter-pills">
+                            <button class="filter-pill" onclick="setAnalyticsFilter('period','7d',this)">7 Days</button>
+                            <button class="filter-pill" onclick="setAnalyticsFilter('period','30d',this)">30 Days</button>
+                            <button class="filter-pill active" onclick="setAnalyticsFilter('period','all',this)">All Time</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── Summary stat cards (3 rows × 2) ───────────────── -->
+                <div class="an-stat-grid" id="analyticsSummary"></div>
+
+                <!-- ── XP Over Time Chart ─────────────────────────────── -->
+                <div class="analytics-card">
+                    <div class="an-chart-top">
+                        <div class="an-chart-title-row">
+                            <span class="an-section-kicker">XP Over Time</span>
+                            <div class="an-mode-tabs">
+                                <button class="an-mode-tab active" id="chartModeCumulative" onclick="setChartMode('cumulative',this)">Cumulative</button>
+                                <button class="an-mode-tab" id="chartModeDaily" onclick="setChartMode('daily',this)">Daily</button>
+                            </div>
+                        </div>
+                        <div class="an-range-selector" id="chartTimePills">
+                            <button class="an-range-btn" onclick="setChartTimeRange('1m',this)">1M</button>
+                            <button class="an-range-btn" onclick="setChartTimeRange('3m',this)">3M</button>
+                            <button class="an-range-btn" onclick="setChartTimeRange('6m',this)">6M</button>
+                            <button class="an-range-btn" onclick="setChartTimeRange('1y',this)">1Y</button>
+                            <button class="an-range-btn active" onclick="setChartTimeRange('all',this)">All</button>
+                        </div>
+                    </div>
+                    <div class="an-compare-row">
+                        <span class="an-filter-row-label">Compare</span>
+                        <select id="chartOverlayAdd" class="filter-select an-compare-select" onchange="addChartOverlay(this)">
+                            <option value="">+ Add series…</option>
+                        </select>
+                        <label class="an-hide-main-toggle" title="Hide the Overall XP line when comparing specific series">
+                            <input type="checkbox" id="chartHideMain" onchange="toggleChartHideMain(this.checked)">
+                            <span class="an-toggle-track"><span class="an-toggle-thumb"></span></span>
+                            <span class="an-toggle-label">Hide Overall</span>
+                        </label>
+                        <div id="chartOverlayChips" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;"></div>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="xpChart"></canvas>
+                        <div id="xpChartEmpty" class="chart-empty" style="display:none;">No completion data yet</div>
+                    </div>
+                    <div id="chartLegend" style="display:none;gap:14px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid var(--color-border);"></div>
+                </div>
+
+                <!-- ── Activity Calendar ──────────────────────────────── -->
+                <div class="analytics-card">
+                    <div class="an-cal-header">
+                        <div class="an-cal-nav">
+                            <button class="an-cal-arrow" onclick="calendarNav(-1)" aria-label="Previous month">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                            </button>
+                            <span id="calendarMonthLabel" class="an-cal-month"></span>
+                            <button class="an-cal-arrow" onclick="calendarNav(1)" aria-label="Next month">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                            </button>
+                        </div>
+                        <div class="an-cal-controls">
+                            <select id="calendarActivityFilter" class="filter-select an-cal-select" onchange="window._calendarSelId=this.value;">
+                                <option value="">All Activities</option>
+                            </select>
+                            <button class="an-cal-refresh-btn" onclick="refreshCalendar()">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                                Refresh
+                            </button>
+                        </div>
+                    </div>
+                    <div id="calendarGrid"></div>
+                </div>
+
+                <!-- ── Activity History ───────────────────────────────── -->
+                <div class="analytics-card" id="activityHistoryCard">
+                    <button class="an-collapse-btn" id="activityHistoryToggleBtn" onclick="toggleActivityHistory()">
+                        <span class="an-collapse-icon">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                        </span>
+                        <div class="an-collapse-text">
+                            <span class="an-collapse-title">Activity History</span>
+                            <span class="an-collapse-sub">All XP changes</span>
+                        </div>
+                        <svg class="an-collapse-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="an-collapse-body" id="activityHistoryBody">
+                        <div id="activityHistoryFilters" class="an-history-filter-row">
+                            <button class="filter-pill active" onclick="setHistoryFilter('all',this)">All</button>
+                            <button class="filter-pill" onclick="setHistoryFilter('positive',this)"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:3px;"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 5 5 12"/></svg>Gains</button>
+                            <button class="filter-pill" onclick="setHistoryFilter('negative',this)"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:3px;"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="5 12 12 19 19 12"/></svg>Losses</button>
+                            <button class="filter-pill" onclick="setHistoryFilter('penalty',this)"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:3px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>Auto-deductions</button>
+                            <div id="historyPenaltyNote" style="display:none;font-size:11px;color:var(--color-text-secondary);padding:4px 2px 0;line-height:1.5;width:100%;">These are <strong style='color:var(--color-text-primary);'>automatic XP deductions</strong> applied the next time you open the app after missing a skip-penalty activity.</div>
+                        </div>
+                        <div id="activityHistoryList"></div>
+                        <div id="activityHistoryMore" style="text-align:center;padding:12px 0 4px;display:none;">
+                            <button class="filter-pill" onclick="loadMoreHistory()" style="padding:8px 20px;">Load more</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── XP Leaderboard ─────────────────────────────────── -->
+                <div class="analytics-card">
+                    <button class="an-collapse-btn" id="xpLeaderboardToggleBtn" onclick="toggleAnSection('xpLeaderboardBody','xpLeaderboardToggleBtn')">
+                        <span class="an-collapse-icon an-icon-gold">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2z"/></svg>
+                        </span>
+                        <div class="an-collapse-text">
+                            <span class="an-collapse-title">XP Leaderboard</span>
+                            <span class="an-collapse-sub">Top activities by XP earned</span>
+                        </div>
+                        <svg class="an-collapse-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="an-collapse-body" id="xpLeaderboardBody">
+                        <div id="xpLeaderboard"></div>
+                    </div>
+                </div>
+
+                <!-- ── Streak Leaderboard ─────────────────────────────── -->
+                <div class="analytics-card">
+                    <button class="an-collapse-btn" id="streakBoardToggleBtn" onclick="toggleAnSection('streakBoardBody','streakBoardToggleBtn')">
+                        <span class="an-collapse-icon an-icon-coral">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
+                        </span>
+                        <div class="an-collapse-text">
+                            <span class="an-collapse-title">Streak Leaderboard</span>
+                            <span class="an-collapse-sub">Top activities by current streak</span>
+                        </div>
+                        <svg class="an-collapse-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="an-collapse-body" id="streakBoardBody">
+                        <div id="streakBoard"></div>
+                    </div>
+                </div>
+
+                <!-- ── Activity Frequency ─────────────────────────────── -->
+                <div class="analytics-card">
+                    <button class="an-collapse-btn" id="frequencyToggleBtn" onclick="toggleFrequencyChart()">
+                        <span class="an-collapse-icon an-icon-blue">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                        </span>
+                        <div class="an-collapse-text">
+                            <span class="an-collapse-title">Activity Frequency</span>
+                            <span class="an-collapse-sub">How often each activity was completed</span>
+                        </div>
+                        <svg class="an-collapse-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="guide-section-body" id="frequencyBody" style="margin-top:0;padding-top:12px;">
+                        <div id="frequencyChart"></div>
+                    </div>
+                </div>
+
+                <!-- ── Dimension Progress ─────────────────────────────── -->
+                <div class="analytics-card" id="dimProgressCard">
+                    <button class="an-collapse-btn" id="dimProgressToggleBtn" onclick="toggleDimProgress()">
+                        <span class="an-collapse-icon an-icon-green">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
+                        </span>
+                        <div class="an-collapse-text">
+                            <span class="an-collapse-title">Dimension Progress</span>
+                            <span class="an-collapse-sub">XP &amp; levels per dimension</span>
+                        </div>
+                        <svg class="an-collapse-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="guide-section-body" id="dimProgressBody">
+                        <div id="dimProgressList" style="padding-top:4px;"></div>
+                    </div>
+                </div>
+
+                <!-- ── Activity Pairs ─────────────────────────────────── -->
+                <div class="analytics-card">
+                    <button class="an-collapse-btn" id="combosToggleBtn" onclick="toggleCombosPanel()">
+                        <span class="an-collapse-icon an-icon-amber">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="12" r="3"/><circle cx="16" cy="8" r="3"/><circle cx="16" cy="16" r="3"/><line x1="10.7" y1="10.7" x2="13.3" y2="9.3"/><line x1="10.7" y1="13.3" x2="13.3" y2="14.7"/></svg>
+                        </span>
+                        <div class="an-collapse-text">
+                            <span class="an-collapse-title">Activity Pairs <span class="an-collapse-tag">Same Day</span></span>
+                            <span class="an-collapse-sub">Activities you often complete together</span>
+                        </div>
+                        <svg class="an-collapse-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="guide-section-body" id="combosBody" style="margin-top:0;padding-top:12px;">
+                        <div id="combosPanel"></div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Settings Tab -->
+            <div id="settingsTab" class="tab-content">
+
+                <h1 class="st-page-title">Settings</h1>
+
+                <!-- Install Mindkraft (hidden when already running as PWA) -->
+                <div class="settings-card" id="installCard">
+                    <button class="st-collapse-btn" id="installToggleBtn" onclick="toggleInstallGuide()">
+                        <span class="st-icon st-icon-blue">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        </span>
+                        <div class="st-collapse-text">
+                            <span class="st-collapse-title">Install Mindkraft</span>
+                            <span class="st-collapse-sub">Add to your home screen for the best experience</span>
+                        </div>
+                        <svg class="st-collapse-chevron" id="installChevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div id="installGuideBody" style="display:none;padding:4px 0 8px;">
+                        <div class="guide-section-divider"></div>
+                        <div class="install-section">
+                            <div class="install-section-title">
+                                <svg viewBox="0 0 24 24" fill="currentColor" style="width:15px;height:15px;flex-shrink:0;"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+                                iPhone / iPad
+                            </div>
+                            <ol class="install-steps">
+                                <li>Open <strong>Safari</strong> — must be Safari, not Chrome or Firefox.</li>
+                                <li>Tap the <strong>Share</strong> button (box with arrow pointing up).</li>
+                                <li>Tap <strong>"Add to Home Screen"</strong>.</li>
+                                <li>Tap <strong>Add</strong> in the top-right.</li>
+                                <li>Launch from your home screen for the full-screen experience.</li>
+                            </ol>
+                        </div>
+                        <div class="install-divider"></div>
+                        <div class="install-section">
+                            <div class="install-section-title">
+                                <svg viewBox="0 0 24 24" fill="currentColor" style="width:15px;height:15px;flex-shrink:0;"><path d="M17.523 15.341c-.33 0-.604.264-.604.604 0 .33.264.604.604.604.33 0 .604-.265.604-.604 0-.34-.274-.604-.604-.604zm-11.046 0c-.33 0-.604.264-.604.604 0 .33.264.604.604.604.33 0 .604-.265.604-.604 0-.34-.274-.604-.604-.604zm11.41-6.915l1.165-2.018a.243.243 0 0 0-.088-.33.243.243 0 0 0-.33.088l-1.18 2.04A7.353 7.353 0 0 0 12 7.5c-1.07 0-2.087.227-3.003.627L7.808 6.187a.243.243 0 0 0-.33-.088.243.243 0 0 0-.088.33l1.165 2.018C6.468 9.668 5.25 11.43 5.25 13.5h13.5c0-2.07-1.218-3.832-2.863-5.074z"/></svg>
+                                Android
+                            </div>
+                            <p style="font-size:13px;color:var(--color-text-secondary);margin:0 0 12px;">Tap the button below — your browser will prompt you to install.</p>
+                            <button class="btn-settings-save" id="androidInstallBtn" onclick="triggerAndroidInstall()" style="width:100%;justify-content:center;gap:8px;">Install App</button>
+                            <p id="androidInstallFallback" style="display:none;font-size:12px;color:var(--color-text-secondary);margin:8px 0 0;text-align:center;">
+                                Tap browser menu (⋮) → <strong>"Add to Home Screen"</strong> or <strong>"Install app"</strong>.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- How to Use Mindkraft -->
+                <div class="settings-card">
+                    <button class="st-collapse-btn" id="guideToggleBtn" onclick="toggleGuide()">
+                        <span class="st-icon st-icon-gold">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                        </span>
+                        <div class="st-collapse-text">
+                            <span class="st-collapse-title">How to Use Mindkraft</span>
+                            <span class="st-collapse-sub">Everything you need to know</span>
+                        </div>
+                        <svg class="st-collapse-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="guide-section-body" id="guideBody">
+
+                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Getting Started</div><div class="guide-inner-body">When you first open Mindkraft, a short tour walks you through the core idea. You then choose: <strong>Quick Start</strong> — creates 3 ready-made activities and 2 challenges — or <strong>Build My Own</strong> to start from scratch. Either way, you can edit or delete everything later. Your progress saves to the cloud every time you complete an activity.</div></div>
+
+                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>Dimensions → Paths → Activities</div><div class="guide-inner-body">Everything is organised in three layers. <strong>Dimensions</strong> are big life areas (e.g. Health, Career). Inside each, <strong>Paths</strong> are specific approaches (e.g. Morning Fitness). Inside each Path, <strong>Activities</strong> are the concrete daily actions that earn XP (e.g. Run 5km). Create these in <strong>My Activities</strong> using the + button.</div></div>
+
+                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><polyline points="20 6 9 17 4 12"/></svg>Completing Activities &amp; Earning XP</div><div class="guide-inner-body">The <strong>My Activities</strong> tab shows what's due today. <strong>Tap any card</strong> to mark it done — XP floats up as confirmation. A small <strong>undo</strong> button appears if you tap by mistake. <strong>Long-press a card</strong> to edit, delete, view history, or configure it. Activity slots unlock as you level up: L1 = 4, growing quickly.</div></div>
+
+                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Frequency Types</div><div class="guide-inner-body"><strong>Daily</strong> — resets every day, builds streaks. <strong>Occasional</strong> — any day, no streak pressure; can auto-delete after completion. <strong>Weekly / Bi-weekly / Monthly</strong> — periodic windows with streaks. <strong>Custom</strong> — set a day interval or pick specific weekdays.</div></div>
+
+                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Card Types &amp; Views</div><div class="guide-inner-body">Toggle between <strong>List</strong> and <strong>Grid</strong> view on the My Activities header. In Grid mode, long-press any card to choose from <strong>7 card layouts</strong> — including a full-width feature row. Your layout choices are saved automatically.</div></div>
+
+                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Daily Planner</div><div class="guide-inner-body">Open the <strong>Daily Planner</strong> from the My Activities header to schedule activities at specific times. Tap <strong>+ Add</strong>, pick any activity or write a note, toggle <strong>Recurring</strong> to repeat daily. Completing a planned item awards XP just like the main list.</div></div>
+
+                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>Streaks, Shields &amp; Bonus XP</div><div class="guide-inner-body">Consistent completions build your streak. From streak 5 onward you earn exponential bonus XP — streak 10 ≈ 4×, streak 30 ≈ 17× base XP. <strong>Streak Shields</strong> (up to 3) absorb missed days so one slip doesn't reset everything. Shields regenerate over time.</div></div>
+
+                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>Levelling &amp; Dimensions</div><div class="guide-inner-body">You have a <strong>global level</strong> plus a separate level per <strong>Dimension</strong>. Levelling speed uses the formula <strong>round(k × (2L − 1))</strong> — adjust k in Level Scaling. Dimension levels unlock cosmetic rewards. Negative XP can drain within a level but can never de-level you.</div></div>
+
+                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2z"/></svg>Challenges</div><div class="guide-inner-body"><strong>Personal Challenges</strong> are time-boxed goals with bonus XP on completion. <strong>Group Challenges</strong> let a group each nominate a personal challenge to contribute — a shared leaderboard tracks everyone's progress. Completed challenges can be taken again.</div></div>
+
+                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Friends &amp; Social</div><div class="guide-inner-body">Add friends in the <strong>Friends</strong> tab using their <strong>MK-XXXX code</strong> (find yours in the Add Friend section). View their level, spider chart, and top activities. Share your progress with a <strong>Share Card</strong> on level up.</div></div>
+
+                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>Spider Chart &amp; Life Balance</div><div class="guide-inner-body">Your <strong>Profile</strong> shows a spider chart across five categories: Body, Mind, People, Work, Extra. Go to <strong>Profile → Configure Chart</strong> to assign activities to categories. The chart updates live and shows on friends' profile cards.</div></div>
+
+                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Analytics</div><div class="guide-inner-body">The <strong>Analytics</strong> tab shows XP over time. Use <strong>Cumulative</strong> vs <strong>Daily</strong> views, overlay any dimension/path/activity with <strong>Compare</strong>, and toggle <strong>Hide Overall</strong> to compare overlays directly. Below: Activity Calendar, full History, XP &amp; streak leaderboards, frequency charts, dimension progress.</div></div>
+
+                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="10.5" r="2.5"/><circle cx="8.5" cy="7.5" r="2.5"/><circle cx="6.5" cy="12.5" r="2.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>Themes</div><div class="guide-inner-body">Pick a theme preset in Settings — six dark and four light options. <strong>Custom mode</strong> lets you tweak every colour, background glow, and gradient direction. Save up to 3 named templates. Hit <strong>Apply Theme</strong> to persist.</div></div>
+
+                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Backup &amp; Data</div><div class="guide-inner-body">Mindkraft auto-creates a cloud backup every time you save. Hit <strong>Backup Now</strong> for an immediate snapshot. Use <strong>Restore Backup</strong> to roll back. <strong>Export</strong> a full JSON file and <strong>Import</strong> it on any device. Works across all your devices.</div></div>
+
+                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>Rewards &amp; Profile</div><div class="guide-inner-body">Tap your avatar to open <strong>Profile</strong> — set a username, view stats, and define <strong>Rewards</strong> tied to level milestones. Rewards also unlock on Dimension levels. Your character title evolves based on your most-invested category. A special surprise awaits at Level 100.</div></div>
+
+                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>Negative Activities &amp; Skip Penalty</div><div class="guide-inner-body">Activities can award <strong>negative XP</strong> for habits you want to break. The <strong>Skip Penalty</strong> option auto-deducts XP the next time you open the app after missing a day — great for hard accountability. Penalties appear clearly in your Activity History.</div></div>
+
+                    </div>
+                </div>
+
+                <div class="settings-card">
+                    <button class="st-collapse-btn" id="levelScalingToggleBtn" onclick="toggleLevelScaling()">
+                        <span class="st-icon st-icon-blue">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+                        </span>
+                        <div class="st-collapse-text">
+                            <span class="st-collapse-title">Level Scaling</span>
+                            <span class="st-collapse-sub">Adjust how fast you level up</span>
+                        </div>
+                        <svg class="st-collapse-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="guide-section-body" id="levelScalingBody">
+                        <div style="padding:4px 0 4px;">
+                            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;">
+                                <label style="font-size:13px;color:var(--color-text-secondary);font-weight:600;">Scaling Factor (k)</label>
+                                <span id="scalingValueDisplay" style="font-size:20px;font-weight:800;color:var(--color-progress);">8.5</span>
+                            </div>
+                            <input type="range" id="levelScalingSlider" min="5" max="20" step="0.5" value="8.5"
+                                style="width:100%;accent-color:var(--color-progress);cursor:pointer;"
+                                oninput="previewLevelScaling(this.value)">
+                            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--color-text-secondary);margin-top:2px;">
+                                <span>5 — easier</span><span>20 — harder</span>
+                            </div>
+                            <p style="font-size:12px;color:var(--color-text-secondary);margin-top:10px;line-height:1.6;">
+                                Formula: <strong style="color:var(--color-text-primary);">round(k × (2L − 1))</strong> XP to advance each level.
+                            </p>
+                            <div id="scalingPreviewTable" style="margin-top:10px;font-size:12px;color:var(--color-text-secondary);line-height:1.8;background:rgba(0,0,0,0.15);border-radius:8px;padding:10px 12px;"></div>
+                            <button class="btn-settings-save" onclick="applyLevelScaling()" style="margin-top:8px;">Apply Scaling</button>
+                            <p class="settings-note" style="margin-top:8px;">Changing this recalculates your level from your total XP. Your earned XP is never lost — only the thresholds shift.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Streak Bonus Scaling -->
+                <div class="settings-card">
+                    <button class="st-collapse-btn" id="streakScalingToggleBtn" onclick="toggleStreakScaling()">
+                        <span class="st-icon st-icon-coral">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
+                        </span>
+                        <div class="st-collapse-text">
+                            <span class="st-collapse-title">Streak Bonus Scaling</span>
+                            <span class="st-collapse-sub">Adjust how powerful streak bonuses get</span>
+                        </div>
+                        <svg class="st-collapse-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="guide-section-body" id="streakScalingBody">
+                        <div style="padding:4px 0 4px;">
+                            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;">
+                                <label style="font-size:13px;color:var(--color-text-secondary);font-weight:600;">Exponent (e)</label>
+                                <span id="streakScalingDisplay" style="font-size:20px;font-weight:800;color:var(--color-progress);">1.2</span>
+                            </div>
+                            <input type="range" id="streakScalingSlider" min="0.5" max="2.0" step="0.1" value="1.2"
+                                style="width:100%;accent-color:var(--color-progress);cursor:pointer;"
+                                oninput="previewStreakScaling(this.value)">
+                            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--color-text-secondary);margin-top:2px;">
+                                <span>0.5 — gentler</span><span>2.0 — explosive</span>
+                            </div>
+                            <p style="font-size:12px;color:var(--color-text-secondary);margin-top:10px;line-height:1.6;">
+                                Formula: <strong style="color:var(--color-text-primary);">1 + 0.1 × streak<sup>e</sup></strong> (kicks in at streak ≥ 5).<br>
+                                At <strong style="color:var(--color-text-primary);">e = 1.5</strong> (default): streak 10 = ×4.2, streak 20 = ×9.4.<br>
+                                Lower e to keep bonuses modest; raise it to reward long streaks more heavily.
+                            </p>
+                            <div id="streakScalingPreview" style="margin-top:10px;font-size:12px;color:var(--color-text-secondary);line-height:1.8;background:rgba(0,0,0,0.15);border-radius:8px;padding:10px 12px;"></div>
+                            <button class="btn-settings-save" onclick="applyStreakScaling()" style="margin-top:8px;">Apply Changes</button>
+                            <p class="settings-note" style="margin-top:8px;">This changes how future streak bonuses are calculated. Past XP is unaffected — only new completions use the updated formula.</p>
+                        </div>
+                    </div>
+                </div>
+
+
+                  <!-- Daily Reminder -->
+                <div class="settings-card settings-card-compact">
+                    <button class="st-collapse-btn" id="reminderToggleBtn" onclick="toggleReminder()">
+                        <span class="st-icon st-icon-amber">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                        </span>
+                        <div class="st-collapse-text">
+                            <span class="st-collapse-title">Daily Reminder</span>
+                            <span class="st-collapse-sub">Notify me to check off today's tasks</span>
+                        </div>
+                        <svg class="st-collapse-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="guide-section-body" id="reminderBody">
+                        <p id="reminderPermStatus" style="font-size:13px;color:var(--color-text-secondary);margin-bottom:12px;min-height:18px;"></p>
+                        <div class="reminder-time-row">
+                            <label class="reminder-time-label">Remind me at:</label>
+                            <input type="time" id="reminderTime" class="reminder-time-input" />
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+                            <button class="btn-settings-save" onclick="saveReminder()">Save Reminder</button>
+                            <button class="btn-settings-save" style="background:var(--color-accent-red);border-color:var(--color-accent-red);" onclick="clearReminder()">Clear</button>
+                        </div>
+                    </div>
+                </div>
+
+                  <!-- Theme Customizer -->
+                <div class="settings-card">
+                    <div class="settings-card-header">
+                        <span class="st-icon st-icon-purple"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="10.5" r="2.5"/><circle cx="8.5" cy="7.5" r="2.5"/><circle cx="6.5" cy="12.5" r="2.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg></span>
+                        <div>
+                            <span class="st-card-title">Theme</span>
+                            <p class="settings-card-sub">Pick a vibe or build your own</p>
+                        </div>
+                    </div>
+                    <div class="theme-presets" id="themePresets"></div>
+
+                    <!-- Reset button shown inline when custom theme is active -->
+                    <div id="themeResetRow" style="display:none;margin-top:10px;">
+                        <button class="btn-secondary" onclick="resetCustomTheme()" style="font-size:12px;">↺ Reset to saved</button>
+                    </div>
+
+                    <!-- Custom theme panel (collapsible; shown when Custom swatch active) -->
+                    <div id="themeCustomCollapseHeader" style="display:none;margin-top:12px;cursor:pointer;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--color-border);" onclick="toggleCustomThemePanel()">
+                        <span style="font-size:13px;color:var(--color-text-secondary);flex:1;font-weight:600;">Customise colours &amp; gradients</span>
+                        <svg id="customPanelChevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;color:var(--color-text-secondary);transition:transform 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>
+                    </div>
+                    <div class="theme-custom-panel" id="themeCustomPanel">
+
+                        <!-- Saved custom templates -->
+                        <div class="theme-custom-section">
+                            <div class="theme-custom-section-title">My Saved Themes</div>
+                            <div class="theme-saved-slots" id="themeSavedSlots"></div>
+                        </div>
+
+                        <!-- Colours -->
+                        <div class="theme-custom-section">
+                            <div class="theme-custom-section-title">Colours</div>
+                            <div class="theme-color-grid" id="themeColorGrid"></div>
+                        </div>
+
+                        <!-- Background Gradient — 3 glows + angle -->
+                        <div class="theme-custom-section">
+                            <div class="theme-custom-section-title">Background Gradient</div>
+                            <div class="theme-gradient-presets" id="gradientPresets"></div>
+
+                            <!-- Angle slider -->
+                            <div class="theme-angle-row">
+                                <label class="theme-angle-label">Direction</label>
+                                <input type="range" id="glowAngle" min="0" max="360" value="135"
+                                    oninput="updateGradientPreview();document.getElementById('glowAngleVal').textContent=this.value+'°'">
+                                <span class="theme-opacity-val" id="glowAngleVal">135°</span>
+                            </div>
+
+                            <div class="theme-gradient-stops">
+                                <!-- Glow A — Top -->
+                                <div class="theme-gradient-stop">
+                                    <div class="theme-gradient-stop-title">Top</div>
+                                    <div class="theme-glow-hex-row">
+                                        <input type="color" id="glowAColor" value="#4a7c9e" oninput="onGlowColorInput('A')">
+                                        <input type="text" id="glowAHex" class="theme-hex-input" value="#4a7c9e" maxlength="7"
+                                            oninput="onGlowHexInput('A')" placeholder="#rrggbb">
+                                        <button class="theme-hex-copy" onclick="copyHex('glowAHex')" title="Copy hex">⧉</button>
+                                    </div>
+                                    <div class="theme-opacity-row">
+                                        <label>Intensity</label>
+                                        <input type="range" id="glowAOpacity" min="0" max="40" value="14"
+                                            oninput="updateGradientPreview();document.getElementById('glowAVal').textContent=this.value+'%'">
+                                        <span class="theme-opacity-val" id="glowAVal">14%</span>
+                                    </div>
+                                </div>
+                                <!-- Glow M — Middle -->
+                                <div class="theme-gradient-stop">
+                                    <div class="theme-gradient-stop-title">Middle</div>
+                                    <div class="theme-glow-hex-row">
+                                        <input type="color" id="glowMColor" value="#3a3a5c" oninput="onGlowColorInput('M')">
+                                        <input type="text" id="glowMHex" class="theme-hex-input" value="#3a3a5c" maxlength="7"
+                                            oninput="onGlowHexInput('M')" placeholder="#rrggbb">
+                                        <button class="theme-hex-copy" onclick="copyHex('glowMHex')" title="Copy hex">⧉</button>
+                                    </div>
+                                    <div class="theme-opacity-row">
+                                        <label>Intensity</label>
+                                        <input type="range" id="glowMOpacity" min="0" max="40" value="8"
+                                            oninput="updateGradientPreview();document.getElementById('glowMVal').textContent=this.value+'%'">
+                                        <span class="theme-opacity-val" id="glowMVal">8%</span>
+                                    </div>
+                                </div>
+                                <!-- Glow B — Bottom -->
+                                <div class="theme-gradient-stop">
+                                    <div class="theme-gradient-stop-title">Bottom</div>
+                                    <div class="theme-glow-hex-row">
+                                        <input type="color" id="glowBColor" value="#8e3b5f" oninput="onGlowColorInput('B')">
+                                        <input type="text" id="glowBHex" class="theme-hex-input" value="#8e3b5f" maxlength="7"
+                                            oninput="onGlowHexInput('B')" placeholder="#rrggbb">
+                                        <button class="theme-hex-copy" onclick="copyHex('glowBHex')" title="Copy hex">⧉</button>
+                                    </div>
+                                    <div class="theme-opacity-row">
+                                        <label>Intensity</label>
+                                        <input type="range" id="glowBOpacity" min="0" max="40" value="10"
+                                            oninput="updateGradientPreview();document.getElementById('glowBVal').textContent=this.value+'%'">
+                                        <span class="theme-opacity-val" id="glowBVal">10%</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <input type="color" id="themeAccentPicker" value="#4472a0" style="display:none;" oninput="previewThemeColor('accent',this.value)">
+                    <input type="color" id="themeProgressPicker" value="#537db8" style="display:none;" oninput="previewThemeColor('progress',this.value)">
+                    <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;align-items:center;">
+                        <button class="btn-settings-save" onclick="saveTheme()">Apply Theme</button>
+                        <button class="btn-secondary" id="saveCustomSlotBtn" style="display:none;" onclick="saveCustomSlot()">Save as template</button>
+                    </div>
+                </div>
+
+                <!-- Streak Pausing -->              <!-- Data Management -->
+                <div class="settings-card">
+                    <div class="settings-card-header">
+                        <span class="st-icon st-icon-green"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></span>
+                        <div>
+                            <span class="st-card-title">Data</span>
+                            <p class="settings-card-sub">Import, export, or reset your data</p>
+                        </div>
+                    </div>
+                    <div class="data-actions">
+                        <button class="btn-data btn-data-export" onclick="exportData()">
+                            <span class="btn-data-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                            </span>
+                            <span class="btn-data-label">Export Data<span>Download a JSON backup</span></span>
+                        </button>
+                        <button class="btn-data btn-data-import" onclick="document.getElementById('importFileInput').click()">
+                            <span class="btn-data-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                            </span>
+                            <span class="btn-data-label">Import Data<span>Restore from JSON backup</span></span>
+                        </button>
+                        <input type="file" id="importFileInput" accept=".json" style="display:none;" onchange="importData(event)">
+                        <button class="btn-data btn-data-restore" onclick="backupNow()" id="backupNowBtn">
+                            <span class="btn-data-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v14a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                            </span>
+                            <span class="btn-data-label">Backup Now<span>Save a cloud snapshot immediately</span></span>
+                        </button>
+                        <button class="btn-data btn-data-restore" onclick="restoreAutoBackup()" id="restoreBackupBtn">
+                            <span class="btn-data-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                            </span>
+                            <span class="btn-data-label">Restore Backup<span id="restoreBackupMeta">No backup yet</span></span>
+                        </button>
+                        <button class="btn-data btn-data-reset" onclick="confirmResetData()">
+                            <span class="btn-data-icon">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                            </span>
+                            <span class="btn-data-label">Reset All Data<span>Permanently clears everything</span></span>
+                        </button>
+                    </div>
+                    <p class="settings-note" style="margin-top:10px;font-size:11px;line-height:1.6;color:var(--color-text-secondary);">
+                        <strong style="color:var(--color-text-primary);">Daily Cloud Backup</strong> — Your data is snapshotted once per day to your account's cloud storage (not just this browser). Works across devices. Only the latest daily snapshot is kept.
+                    </p>
+                </div>
+
+                <!-- Account -->
+                <div class="settings-card">
+                    <div class="settings-card-header">
+                        <span class="st-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
+                        <div>
+                            <span class="st-card-title">Account</span>
+                            <p class="settings-card-sub">Signed in as <span id="settingsEmail" style="color:var(--color-text-primary);"></span></p>
+                        </div>
+                    </div>
+                    <button class="btn-logout" onclick="handleLogout()">Logout</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Search Overlay -->
+    <div id="activitySearchOverlay" class="search-overlay" style="display:none;" onclick="closeActivitySearch(event)">
+        <div class="search-box" onclick="event.stopPropagation()">
+            <div class="search-input-row">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;color:var(--color-text-secondary)"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="text" id="activitySearchInput" placeholder="Search activities…" oninput="renderSearchResults()" onkeydown="searchKeyHandler(event)" autocomplete="off">
+                <button class="search-close-btn" onclick="closeActivitySearch()" aria-label="Close">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="search-results" id="activitySearchResults">
+                <div class="search-empty">Start typing to find an activity</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confetti Container -->
+    <div id="confettiContainer" class="confetti-container"></div>
+
+    <!-- Modals -->
+    <!-- Planner Add Modal -->
+    <div id="plannerAddModal" class="modal-overlay">
+        <div class="modal pl-modal">
+            <div class="modal-header pl-modal-header">
+                <div>
+                    <div class="pl-modal-eyebrow">Daily Planner</div>
+                    <h3 class="modal-title">Add to schedule</h3>
+                </div>
+                <button class="pl-modal-close" onclick="closePlannerAddModal()" aria-label="Close">✕</button>
+            </div>
+            <div class="modal-body pl-modal-body">
+                <!-- Type toggle — sub-tab-style underline primitive -->
+                <div class="pl-type-tabs">
+                    <button class="pl-type-tab active" id="plannerTypeActivity" onclick="setPlannerAddType('activity')">
+                        <span>Activity</span>
+                    </button>
+                    <button class="pl-type-tab" id="plannerTypeNote" onclick="setPlannerAddType('note')">
+                        <span>Note</span>
+                    </button>
+                </div>
+
+                <!-- Time + repeat row -->
+                <div class="pl-meta-row">
+                    <div class="pl-time-field">
+                        <label class="pl-field-label">Time <span class="pl-field-hint">(optional)</span></label>
+                        <input type="time" id="plannerAddTime" class="pl-input pl-input-time">
+                    </div>
+                    <label class="pl-repeat-toggle" for="plannerAddRecurring">
+                        <input type="checkbox" id="plannerAddRecurring">
+                        <span class="pl-repeat-track"><span class="pl-repeat-thumb"></span></span>
+                        <span class="pl-repeat-label">Repeat daily</span>
+                    </label>
+                </div>
+
+                <!-- Activity picker (shown when type=activity) -->
+                <div id="plannerActivityPicker">
+                    <label class="pl-field-label">Activity</label>
+                    <input type="text" id="plannerActivitySearch" class="pl-input"
+                        placeholder="Search activities…" oninput="filterPlannerActivities()" autocomplete="off">
+                    <div id="plannerActivityList" class="pl-act-list"></div>
+                </div>
+
+                <!-- Note input (shown when type=note) -->
+                <div id="plannerNotePicker" style="display:none;">
+                    <label class="pl-field-label">Note</label>
+                    <input type="text" id="plannerNoteText" class="pl-input"
+                        placeholder="e.g., Team standup, Buy groceries…" maxlength="120">
+                </div>
+            </div>
+            <div class="modal-footer pl-modal-footer">
+                <button type="button" class="btn-secondary pl-btn-secondary" onclick="closePlannerAddModal()">Cancel</button>
+                <button type="button" class="btn-primary pl-btn-primary" onclick="savePlannerItem()">Add</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dimension Modal -->
+    <!-- Dimension Modal — pl-modal pattern (brief-aligned) -->
+    <div id="dimensionModal" class="modal-overlay">
+        <div class="modal pl-modal">
+            <div class="modal-header pl-modal-header">
+                <div>
+                    <div class="pl-modal-eyebrow">Categories</div>
+                    <h3 class="modal-title" id="dimensionModalTitle">Create Dimension</h3>
+                </div>
+                <button class="pl-modal-close" type="button" onclick="closeDimensionModal()" aria-label="Close">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <form id="dimensionForm" onsubmit="saveDimension(event)">
+                <div class="modal-body pl-modal-body">
+                    <div class="cat-form-group">
+                        <label class="pl-field-label">Dimension Name</label>
+                        <input type="text" id="dimensionName" class="pl-input" placeholder="e.g., Health, Mind, Knowledge" required>
+                    </div>
+                    <div class="cat-form-group">
+                        <label class="pl-field-label">Color Theme</label>
+                        <input type="hidden" id="dimensionColor" value="blue">
+                        <div id="dimensionColorPills" class="dim-color-pills"></div>
+                    </div>
+                </div>
+                <div class="modal-footer pl-modal-footer">
+                    <button type="button" class="btn-secondary pl-btn-secondary" onclick="closeDimensionModal()">Cancel</button>
+                    <button type="submit" class="btn-primary pl-btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Path Modal — pl-modal pattern (brief-aligned) -->
+    <div id="pathModal" class="modal-overlay">
+        <div class="modal pl-modal">
+            <div class="modal-header pl-modal-header">
+                <div>
+                    <div class="pl-modal-eyebrow">Categories</div>
+                    <h3 class="modal-title" id="pathModalTitle">Create Path</h3>
+                </div>
+                <button class="pl-modal-close" type="button" onclick="closePathModal()" aria-label="Close">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <form id="pathForm" onsubmit="savePath(event)">
+                <div class="modal-body pl-modal-body">
+                    <div class="cat-form-group">
+                        <label class="pl-field-label">Path Name</label>
+                        <input type="text" id="pathName" class="pl-input" placeholder="e.g., Exercise, Reading, Meditation" required>
+                    </div>
+                </div>
+                <div class="modal-footer pl-modal-footer">
+                    <button type="button" class="btn-secondary pl-btn-secondary" onclick="closePathModal()">Cancel</button>
+                    <button type="submit" class="btn-primary pl-btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Categories Info Modal — explains the Dimension → Path → Activity hierarchy.
+         Re-uses the onboarding tree graphic (ob-tree*) so the visual language is
+         consistent across the two places this concept appears. -->
+    <div id="categoriesInfoModal" class="modal-overlay">
+        <div class="modal pl-modal">
+            <div class="modal-header pl-modal-header">
+                <div>
+                    <div class="pl-modal-eyebrow">How it's organised</div>
+                    <h3 class="modal-title">Dimensions, Paths &amp; Activities</h3>
+                </div>
+                <button class="pl-modal-close" type="button" onclick="closeCategoriesInfo()" aria-label="Close">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="modal-body pl-modal-body">
+                <!-- Hierarchy graphic — same tree primitive as the onboarding slide -->
+                <div class="cat-info-graphic">
+                    <div class="ob-tree">
+                        <div class="ob-tree-row ob-tree-dim">💪 Health</div>
+                        <div class="ob-tree-row ob-tree-path">└ Exercise</div>
+                        <div class="ob-tree-row ob-tree-act">└ Morning Run</div>
+                        <div class="ob-tree-row ob-tree-dim" style="margin-top:8px;">🧠 Mind</div>
+                        <div class="ob-tree-row ob-tree-path">└ Focus</div>
+                        <div class="ob-tree-row ob-tree-act">└ Deep Work Session</div>
+                    </div>
+                </div>
+
+                <div class="cat-info-row">
+                    <div class="cat-info-dot cat-info-dot-dim"></div>
+                    <div class="cat-info-text">
+                        <div class="cat-info-name">Dimension</div>
+                        <div class="cat-info-desc">A big area of your life — Health, Mind, Career, Relationships. Pick a colour; it shows up across the app.</div>
+                    </div>
+                </div>
+                <div class="cat-info-row">
+                    <div class="cat-info-dot cat-info-dot-path"></div>
+                    <div class="cat-info-text">
+                        <div class="cat-info-name">Path</div>
+                        <div class="cat-info-desc">A specific practice inside a Dimension — Exercise lives inside Health, Reading lives inside Mind. Paths group related activities together.</div>
+                    </div>
+                </div>
+                <div class="cat-info-row">
+                    <div class="cat-info-dot cat-info-dot-act"></div>
+                    <div class="cat-info-text">
+                        <div class="cat-info-name">Activity</div>
+                        <div class="cat-info-desc">The thing you actually do — Morning Run, 20-min Read, Deep Work. Activities earn XP and build streaks.</div>
+                    </div>
+                </div>
+
+                <p class="cat-info-foot">Tap any activity on this page to mark it done — you don't have to switch tabs.</p>
+            </div>
+            <div class="modal-footer pl-modal-footer">
+                <button type="button" class="btn-primary pl-btn-primary" onclick="closeCategoriesInfo()">Got it</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Categories Search Overlay — same shell as activitySearchOverlay but the
+         action button is "Go to" (scrolls + highlights) instead of "Do/Undo".
+         Lives separately so we don't fight over the same modal element. -->
+    <div id="categoriesSearchOverlay" class="search-overlay" style="display:none;" onclick="closeCategoriesSearch(event)">
+        <div class="search-box" onclick="event.stopPropagation()">
+            <div class="search-input-row">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;color:var(--color-text-secondary)"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="text" id="categoriesSearchInput" placeholder="Find an activity to jump to…" oninput="renderCategoriesSearchResults()" onkeydown="categoriesSearchKeyHandler(event)" autocomplete="off">
+                <button class="search-close-btn" onclick="closeCategoriesSearch()" aria-label="Close">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="search-results" id="categoriesSearchResults">
+                <div class="search-empty">Start typing to find an activity</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Group Modal -->
+    <div id="groupModal" class="modal-overlay">
+        <div class="modal pl-modal grp-modal">
+            <div class="modal-header pl-modal-header">
+                <div>
+                    <div class="pl-modal-eyebrow">Routine Group</div>
+                    <h3 class="modal-title" id="groupModalTitle">New Group</h3>
+                </div>
+                <button class="pl-modal-close" onclick="closeGroupModal()" aria-label="Close">✕</button>
+            </div>
+            <form id="groupForm" onsubmit="saveGroupFromModal(event)">
+                <div class="modal-body pl-modal-body">
+                    <input type="hidden" id="groupEditingId" value="">
+
+                    <div class="pl-field">
+                        <label class="pl-field-label">Name</label>
+                        <input type="text" id="groupName" class="pl-input" placeholder="e.g., Morning Routine" required maxlength="40">
+                    </div>
+
+                    <div class="pl-field">
+                        <div class="pl-field-row">
+                            <label class="pl-field-label">
+                                <span>Active hours</span>
+                                <button type="button" class="pl-info-btn" onclick="toggleInfoHint(this)" aria-label="What does this do?" aria-expanded="false">
+                                    <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                                </button>
+                            </label>
+                            <label class="pl-repeat-toggle pl-repeat-toggle-compact" for="groupAllDay">
+                                <input type="checkbox" id="groupAllDay" onchange="toggleGroupAllDay()">
+                                <span class="pl-repeat-track"><span class="pl-repeat-thumb"></span></span>
+                                <span class="pl-repeat-label">All day</span>
+                            </label>
+                        </div>
+                        <div id="groupTimeRow" class="group-time-row pl-time-row">
+                            <select id="groupTimeStart" class="pl-input pl-input-select"></select>
+                            <span class="group-time-sep">→</span>
+                            <select id="groupTimeEnd" class="pl-input pl-input-select"></select>
+                        </div>
+                        <div class="pl-info-hint" hidden>
+                            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                            <span>The group surfaces to the top of your activities list during these hours.</span>
+                        </div>
+                    </div>
+
+                    <div class="pl-field">
+                        <div class="pl-field-row">
+                            <label class="pl-field-label">Activities</label>
+                            <span id="groupActCount" class="pl-field-count">0 selected</span>
+                        </div>
+                        <input type="text" id="groupActSearch" class="pl-input" placeholder="Search activities…" oninput="renderGroupActPicker()">
+                        <div id="groupActList" class="group-act-list pl-act-list" style="margin-top:10px;max-height:240px;"></div>
+                    </div>
+                </div>
+                <div class="modal-footer pl-modal-footer">
+                    <button type="button" class="btn-secondary pl-btn-secondary" onclick="closeGroupModal()">Cancel</button>
+                    <button type="button" id="groupDeleteBtn" class="btn-secondary pl-btn-secondary pl-btn-danger group-delete-btn" onclick="deleteGroupFromModal()" style="display:none;">Delete</button>
+                    <button type="submit" class="btn-primary pl-btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Challenge Modal -->
+    <div id="challengeModal" class="modal-overlay">
+        <div class="modal modal-wide">
+            <div class="modal-header">
+                <h3 class="modal-title" id="challengeModalTitle">Create Challenge</h3>
+            </div>
+            <form id="challengeForm" onsubmit="saveChallenge(event)">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Challenge Name *</label>
+                        <input type="text" id="challengeName" placeholder="e.g., 30-Day Fitness Challenge" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Description</label>
+                        <textarea id="challengeDescription" placeholder="Describe your challenge goal"></textarea>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Start Date *</label>
+                            <input type="date" id="challengeStartDate" required>
+                        </div>
+                        <div class="form-group">
+                            <label>End Date *</label>
+                            <input type="date" id="challengeEndDate" required>
+                        </div>
+                    </div>
+                    <!-- Enforce date range toggle -->
+                    <input type="checkbox" id="challengeEnforceDateRange" style="display:none;">
+                    <button type="button" class="metric-toggle-btn" id="enforceDateRangeBtn" onclick="toggleChallengeEnforceDateRange()">
+                        <span class="mtb-icon">📅</span>
+                        <span class="mtb-label">Enforce date range — auto-fail if end date passes without completion</span>
+                        <span class="mtb-check" id="enforceDateRangeCheck"></span>
+                    </button>
+                    <!-- Activities picker -->
+                    <div class="form-group" id="challengeActivitySelectGroup" style="margin-top:4px;">
+                        <!-- Selected pills summary -->
+                        <div id="challengeSelectedSummary" style="display:none; margin-bottom:8px;">
+                            <div id="challengeSelectedPills" class="ch-pills"></div>
+                        </div>
+                        <!-- Picker toggle button -->
+                        <button type="button" class="ch-picker-toggle" id="challengePickerToggle" onclick="toggleChallengeActivityPicker()">
+                            <span id="challengePickerToggleLabel">＋ Select Activities</span>
+                            <span id="challengePickerToggleCount" class="ch-picker-count" style="display:none;"></span>
+                        </button>
+                        <!-- Searchable picker panel -->
+                        <div id="challengeActivityPicker" style="display:none;" class="ch-picker-panel">
+                            <input type="text" id="challengeActivitySearch" class="ch-search-input" placeholder="Search activities…" oninput="filterChallengeActivities(this.value)">
+                            <div id="challengeActivityChecklist" class="ch-checklist"></div>
+                            <p id="challengeActivityChecklistEmpty" style="display:none; color:var(--color-text-secondary); font-size:12px; padding:8px 4px;">No activities found. Create activities first.</p>
+                        </div>
+                        <!-- XP preview -->
+                        <div id="challengeXPPreview" class="ch-xp-preview" style="display:none;">
+                            <span style="color:var(--color-text-secondary);">Completion bonus:</span>
+                            <strong id="challengeXPPreviewValue" style="color:var(--color-progress);">+0 XP</strong>
+                            <span style="color:var(--color-text-secondary); font-size:11px;">(20% of total activity base XP)</span>
+                        </div>
+                    </div>
+                    <!-- Enforce completion toggle -->
+                    <input type="checkbox" id="challengeEnforceActivities" style="display:none;">
+                    <button type="button" class="metric-toggle-btn" id="enforceActivitiesBtn" onclick="toggleChallengeEnforceActivities()">
+                        <span class="mtb-icon">🔒</span>
+                        <span class="mtb-label">Enforce completion — all activity targets must be met</span>
+                        <span class="mtb-check" id="enforceActivitiesCheck"></span>
+                    </button>
+                    <!-- ── Goal Metric (optional) ───────────────────────── -->
+                    <button type="button" class="metric-toggle-btn" id="metricToggleBtn" onclick="toggleMetricSection()">
+                        <span class="mtb-icon">🎯</span>
+                        <span class="mtb-label">Track a real-world goal <span style="color:var(--color-text-secondary);font-size:12px;font-weight:400;">(optional)</span></span>
+                        <span class="mtb-check" id="metricToggleCheck"></span>
+                    </button>
+                    <input type="hidden" id="challengeMetricEnabled" value="0">
+                    <div id="challengeMetricGroup" style="display:none;" class="ch-metric-panel">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Target Quantity</label>
+                                <input type="number" id="challengeMetricQty" placeholder="e.g. 10" min="0.01" step="any">
+                            </div>
+                            <div class="form-group">
+                                <label>Unit</label>
+                                <input type="text" id="challengeMetricUnit" placeholder="e.g. kg, pages, km">
+                            </div>
+                        </div>
+                        <p class="form-hint" style="margin-top:0;">💡 Examples: 10 kg (weight loss) · 250 pages (book) · 50 km (running)</p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn-secondary" onclick="closeChallengeModal()">Cancel</button>
+                    <button type="submit" class="btn-primary" id="challengeSubmitBtn">Create Challenge</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Activity Modal — pl-modal shell, brief-aligned, v120 -->
+    <div id="activityModal" class="modal-overlay">
+        <div class="modal pl-modal ay-modal">
+            <div class="modal-header pl-modal-header">
+                <div class="ay-modal-titlerow">
+                    <div>
+                        <div class="pl-modal-eyebrow">Activity</div>
+                        <h3 class="modal-title" id="activityModalTitle">Create Activity</h3>
+                    </div>
+                    <button class="cat-info-btn ay-info-btn" type="button" onclick="openActivityInfo()" aria-label="What's an activity?" title="What's an activity?">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                    </button>
+                </div>
+                <button class="pl-modal-close" type="button" onclick="closeActivityModal()" aria-label="Close">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <form id="activityForm" onsubmit="saveActivity(event)">
+                <div class="modal-body pl-modal-body ay-modal-body">
+
+                    <!-- Slot limit notice (only when adding past the cap) -->
+                    <div id="activityLimitNotice" class="ay-limit-notice" style="display:none;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                        <div class="ay-limit-text">
+                            <strong>Activity slots full</strong> — <span id="limitCurrent">0</span>/<span id="limitMax">3</span> used. Level up to unlock more (next at Level <span id="limitNextLevel">3</span>).
+                        </div>
+                    </div>
+
+                    <!-- ══════════════════════════════════════════════════ -->
+                    <!-- 1. ACTIVITY NAME                                    -->
+                    <!-- ══════════════════════════════════════════════════ -->
+                    <div class="ay-field">
+                        <label class="pl-field-label" for="activityName">Activity Name</label>
+                        <input type="text" id="activityName" class="pl-input" placeholder="e.g., Morning Run, Read 10 pages" required>
+                    </div>
+
+                    <!-- ══════════════════════════════════════════════════ -->
+                    <!-- 2. BASE XP — 3 preset chips + custom input          -->
+                    <!-- ══════════════════════════════════════════════════ -->
+                    <div class="ay-field">
+                        <label class="pl-field-label">Base XP</label>
+                        <div class="ay-xp-presets" id="ayXpPresets">
+                            <button type="button" class="ay-xp-chip" data-xp="10" onclick="setActivityXP(10)">
+                                <span class="ay-xp-chip-label">Easy habit</span>
+                                <span class="ay-xp-chip-value">10 XP</span>
+                            </button>
+                            <button type="button" class="ay-xp-chip" data-xp="25" onclick="setActivityXP(25)">
+                                <span class="ay-xp-chip-label">Medium habit</span>
+                                <span class="ay-xp-chip-value">25 XP</span>
+                            </button>
+                            <button type="button" class="ay-xp-chip" data-xp="40" onclick="setActivityXP(40)">
+                                <span class="ay-xp-chip-label">Hard habit</span>
+                                <span class="ay-xp-chip-value">40 XP</span>
+                            </button>
+                        </div>
+                        <div class="ay-xp-custom">
+                            <input type="number" id="activityXP" class="pl-input ay-xp-input"
+                                   placeholder="Custom amount" min="1" max="50" required
+                                   oninput="syncActivityXPPreset()">
+                            <span class="ay-xp-input-suffix">XP</span>
+                        </div>
+                        <p class="ay-hint">Max 50 XP · XP compounds with streaks</p>
+                    </div>
+
+                    <!-- ══════════════════════════════════════════════════ -->
+                    <!-- 3. FREQUENCY                                        -->
+                    <!-- ══════════════════════════════════════════════════ -->
+                    <div class="ay-field">
+                        <label class="pl-field-label" for="activityFrequency">Frequency</label>
+                        <select id="activityFrequency" class="pl-input ay-select" onchange="toggleCustomDays()">
+                            <option value="daily">Daily</option>
+                            <option value="occasional">Occasional (one-off tasks)</option>
+                            <option value="weekly">Weekly</option>
+                            <option value="biweekly">Bi-weekly</option>
+                            <option value="monthly">Monthly</option>
+                            <option value="custom">Custom interval</option>
+                        </select>
+                    </div>
+
+                    <!-- Custom interval — shown only when frequency = custom.
+                         Now wrapped in a single inset panel with clean spacing. -->
+                    <div id="customDaysGroup" class="ay-inset" style="display:none;">
+                        <div class="ay-inset-header">
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                            <span>Custom interval</span>
+                        </div>
+
+                        <!-- Schedule type — segmented control, indicator primitive -->
+                        <div class="ay-field">
+                            <label class="pl-field-label">Schedule type</label>
+                            <div class="ay-seg">
+                                <button type="button" class="ay-seg-btn active" id="subtypeCycle" onclick="setCustomSubtype('cycle')">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/></svg>
+                                    <span>Every X days</span>
+                                </button>
+                                <button type="button" class="ay-seg-btn" id="subtypeDays" onclick="setCustomSubtype('days')">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                                    <span>Specific weekdays</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="ay-field-row">
+                            <!-- Times per cycle — always shown inside custom -->
+                            <div class="ay-field">
+                                <label class="pl-field-label" for="activityCustomTimes">Times per cycle</label>
+                                <input type="number" id="activityCustomTimes" class="pl-input" placeholder="1" min="1" max="99" value="1">
+                            </div>
+                            <!-- Every-X-days: N days input -->
+                            <div class="ay-field" id="cycleSubGroup">
+                                <label class="pl-field-label" for="activityCustomDays">Repeat every</label>
+                                <div class="ay-input-suffix-wrap">
+                                    <input type="number" id="activityCustomDays" class="pl-input ay-input-with-suffix" placeholder="3" min="1" max="365" value="3">
+                                    <span class="ay-input-suffix-text">days</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Specific weekdays: day picker -->
+                        <div class="ay-field" id="weekdaySubGroup" style="display:none;">
+                            <label class="pl-field-label">Active days of the week</label>
+                            <div class="ay-day-picker" id="dayPickerBtns">
+                                <button type="button" class="ay-day-btn" data-day="0">Su</button>
+                                <button type="button" class="ay-day-btn" data-day="1">Mo</button>
+                                <button type="button" class="ay-day-btn" data-day="2">Tu</button>
+                                <button type="button" class="ay-day-btn" data-day="3">We</button>
+                                <button type="button" class="ay-day-btn" data-day="4">Th</button>
+                                <button type="button" class="ay-day-btn" data-day="5">Fr</button>
+                                <button type="button" class="ay-day-btn" data-day="6">Sa</button>
+                            </div>
+                            <p class="ay-hint">Activity only appears on highlighted days</p>
+                        </div>
+                    </div>
+
+                    <!-- ══════════════════════════════════════════════════ -->
+                    <!-- 4. ADVANCED SETUP — accordion (in-flow, never overlay) -->
+                    <!-- ══════════════════════════════════════════════════ -->
+                    <div class="ay-accordion">
+                        <button type="button" id="advancedSectionHeader" class="ay-accordion-head"
+                                onclick="toggleAdvancedSection()" aria-expanded="false">
+                            <span class="ay-accordion-title">Advanced setup</span>
+                            <span class="ay-accordion-sub">Dimension, description, multiple completions, negative XP</span>
+                            <svg class="ay-accordion-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                        </button>
+
+                        <div id="advancedSectionContent" class="ay-accordion-body" style="display:none;">
+
+                            <!-- Dimension + Path -->
+                            <div class="ay-field-row" id="activityDimPathGroup">
+                                <div class="ay-field">
+                                    <label class="pl-field-label" for="activityDimSelect">Dimension</label>
+                                    <select id="activityDimSelect" class="pl-input ay-select" onchange="populateActivityPathSelect()">
+                                        <option value="uncategorized">Uncategorized</option>
+                                    </select>
+                                </div>
+                                <div class="ay-field">
+                                    <label class="pl-field-label" for="activityPathSelect">Path</label>
+                                    <select id="activityPathSelect" class="pl-input ay-select">
+                                        <option value="uncategorized">Uncategorized</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- Description -->
+                            <div class="ay-field">
+                                <label class="pl-field-label" for="activityDescription">Description</label>
+                                <textarea id="activityDescription" class="pl-input ay-textarea" rows="2"
+                                          placeholder="What is this activity about? Visible in the Categories tab."></textarea>
+                            </div>
+
+                            <!-- Occasional: delete on completion -->
+                            <div id="occasionalDeleteGroup" class="ay-toggle-row" style="display:none;">
+                                <div class="ay-toggle-text">
+                                    <span class="ay-toggle-title">Delete after completion</span>
+                                    <span class="ay-toggle-sub">One-time task — disappears once done</span>
+                                </div>
+                                <label class="toggle-switch ay-toggle-switch">
+                                    <input type="checkbox" id="activityDeleteOnComplete">
+                                    <span class="toggle-knob"></span>
+                                </label>
+                            </div>
+
+                            <!-- Allow multiple completions per day -->
+                            <div id="allowMultipleGroup" class="ay-toggle-row" style="display:none;">
+                                <div class="ay-toggle-text">
+                                    <span class="ay-toggle-title">Allow multiple times a day</span>
+                                    <span class="ay-toggle-sub">Each completion earns XP — streak only advances once per cycle</span>
+                                </div>
+                                <label class="toggle-switch ay-toggle-switch">
+                                    <input type="checkbox" id="activityAllowMultiple">
+                                    <span class="toggle-knob"></span>
+                                </label>
+                            </div>
+
+                            <!-- Enable Negative XP -->
+                            <div class="ay-toggle-row">
+                                <div class="ay-toggle-text">
+                                    <span class="ay-toggle-title">Enable Negative XP</span>
+                                    <span class="ay-toggle-sub">For bad habits or accountability tracking</span>
+                                </div>
+                                <label class="toggle-switch ay-toggle-switch">
+                                    <input type="checkbox" id="activityNegativeEnabled" onchange="toggleNegativeXpSection()">
+                                    <span class="toggle-knob"></span>
+                                </label>
+                            </div>
+
+                            <!-- Negative XP mode -->
+                            <div id="negativeXpSection" class="ay-inset ay-inset-tight" style="display:none;">
+                                <div class="ay-inset-header">
+                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                                    <span>When does XP get deducted?</span>
+                                </div>
+                                <div class="ay-radio-group">
+                                    <label class="ay-radio">
+                                        <input type="radio" name="negativeXpMode" id="negModePerform" value="perform" checked>
+                                        <span class="ay-radio-dot" aria-hidden="true"></span>
+                                        <span class="ay-radio-text">
+                                            <span class="ay-radio-title">When performed</span>
+                                            <span class="ay-radio-desc">Logging it costs XP — discourages the habit</span>
+                                        </span>
+                                    </label>
+                                    <label class="ay-radio">
+                                        <input type="radio" name="negativeXpMode" id="negModeSkip" value="skip">
+                                        <span class="ay-radio-dot" aria-hidden="true"></span>
+                                        <span class="ay-radio-text">
+                                            <span class="ay-radio-title">When skipped</span>
+                                            <span class="ay-radio-desc">Doing it earns XP; missing a day deducts XP</span>
+                                        </span>
+                                    </label>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                </div>
+                <div class="modal-footer pl-modal-footer">
+                    <button type="button" class="btn-secondary pl-btn-secondary" onclick="closeActivityModal()">Cancel</button>
+                    <button type="submit" class="btn-primary pl-btn-primary">Save Activity</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Activity Info Modal — explains activities, XP, streaks, frequency.
+         Same pl-modal shell as the Categories info modal. -->
+    <div id="activityInfoModal" class="modal-overlay">
+        <div class="modal pl-modal">
+            <div class="modal-header pl-modal-header">
+                <div>
+                    <div class="pl-modal-eyebrow">How activities work</div>
+                    <h3 class="modal-title">Activities, XP &amp; Streaks</h3>
+                </div>
+                <button class="pl-modal-close" type="button" onclick="closeActivityInfo()" aria-label="Close">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="modal-body pl-modal-body">
+                <div class="ay-info-row">
+                    <div class="ay-info-dot ay-info-dot-xp"></div>
+                    <div class="ay-info-text">
+                        <div class="ay-info-name">Base XP</div>
+                        <div class="ay-info-desc">Pick how hard the habit is. <strong>Easy</strong> for low-effort actions (drink water), <strong>Medium</strong> for daily disciplines (workout), <strong>Hard</strong> for serious effort (deep work). XP grows with your streak.</div>
+                    </div>
+                </div>
+                <div class="ay-info-row">
+                    <div class="ay-info-dot ay-info-dot-freq"></div>
+                    <div class="ay-info-text">
+                        <div class="ay-info-name">Frequency</div>
+                        <div class="ay-info-desc">How often the activity should appear. <strong>Daily</strong> shows every day; <strong>Custom</strong> lets you set "every 3 days" or "Mon/Wed/Fri". <strong>Occasional</strong> is for one-offs.</div>
+                    </div>
+                </div>
+                <div class="ay-info-row">
+                    <div class="ay-info-dot ay-info-dot-streak"></div>
+                    <div class="ay-info-text">
+                        <div class="ay-info-name">Streaks</div>
+                        <div class="ay-info-desc">Every consecutive completion grows your streak. Streaks add a multiplier to your XP — consistency pays compound interest.</div>
+                    </div>
+                </div>
+                <div class="ay-info-row">
+                    <div class="ay-info-dot ay-info-dot-adv"></div>
+                    <div class="ay-info-text">
+                        <div class="ay-info-name">Advanced setup</div>
+                        <div class="ay-info-desc">Pick a <strong>Dimension</strong> &amp; <strong>Path</strong> to organise it, or leave it as <strong>Uncategorized</strong>. Allow <strong>multiple completions per day</strong>, or set <strong>negative XP</strong> for bad habits you want to break.</div>
+                    </div>
+                </div>
+                <p class="ay-info-foot">Start with one or two activities. You can always edit or delete them later.</p>
+            </div>
+            <div class="modal-footer pl-modal-footer">
+                <button type="button" class="btn-primary pl-btn-primary" onclick="closeActivityInfo()">Got it</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Reward Edit Modal -->
+    <div id="rewardModal" class="modal-overlay">
+        <div class="modal modal-wide">
+            <div class="modal-header">
+                <h3 class="modal-title" id="rewardModalTitle">Set Reward for Level <span id="rewardModalLevel"></span></h3>
+            </div>
+            <form id="rewardForm" onsubmit="saveReward(event)">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Reward Title *</label>
+                        <input type="text" id="rewardTitle" placeholder="e.g., Weekend Getaway, New Sneakers…" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Description</label>
+                        <textarea id="rewardDescription" placeholder="Describe what this reward means to you…" style="min-height:90px;"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Link <span style="color:var(--color-text-secondary);font-weight:400;font-size:12px;">(optional — opens in new tab)</span></label>
+                        <input type="url" id="rewardLink" placeholder="https://…">
+                    </div>
+                    <div class="form-group">
+                        <label>Icon / Emoji <span style="color:var(--color-text-secondary);font-weight:400;font-size:12px;">(optional)</span></label>
+                        <input type="text" id="rewardIcon" placeholder="" maxlength="4" style="font-size:22px; width:80px; text-align:center;">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn-secondary" onclick="closeRewardModal()">Cancel</button>
+                    <button type="submit" class="btn-primary">Save Reward</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Reward Unlock Celebration Overlay -->
+    <div id="rewardUnlockOverlay" style="display:none;" class="reward-unlock-overlay" onclick="dismissRewardOverlay()">
+        <div class="reward-unlock-card" onclick="event.stopPropagation()">
+            <span class="reward-unlock-icon" id="rewardUnlockIcon">🎁</span>
+            <div class="reward-unlock-level" id="rewardUnlockLevel">LEVEL UP!</div>
+            <div class="reward-unlock-title" id="rewardUnlockTitle">You earned a reward!</div>
+            <div class="reward-unlock-desc" id="rewardUnlockDesc"></div>
+            <button class="btn-reward-claim" onclick="dismissRewardOverlay()">🎉 Claim Reward</button>
+        </div>
+    </div>
+
+    <!-- Dim Reward Unlock Overlay -->
+    <div id="dimRewardUnlockOverlay" style="display:none;" class="reward-unlock-overlay" onclick="dismissDimRewardOverlay()">
+        <div class="reward-unlock-card" onclick="event.stopPropagation()">
+            <span class="reward-unlock-icon" id="dimRewardUnlockIcon">🗺️</span>
+            <div class="reward-unlock-level" id="dimRewardUnlockLevel" style="color:var(--color-accent-olive);">DIMENSION LEVEL UP!</div>
+            <div class="reward-unlock-title" id="dimRewardUnlockTitle">Dimension reward unlocked!</div>
+            <div class="reward-unlock-desc" id="dimRewardUnlockDesc"></div>
+            <button class="btn-reward-claim" onclick="dismissDimRewardOverlay()">🎉 Claim Reward</button>
+        </div>
+    </div>
+
+    <!-- Profile Overlay -->
+    <div id="profileOverlay" style="display:none;position:fixed;inset:0;z-index:9000;background:var(--color-bg-primary);overflow-y:auto;">
+        <div style="max-width:560px;margin:0 auto;padding:0 0 80px;">
+            <!-- Sticky top bar -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px 12px;position:sticky;top:0;background:var(--color-bg-primary);z-index:10;border-bottom:1px solid var(--color-border);">
+                <span style="font-size:13px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--color-text-secondary);">Profile</span>
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <button onclick="handleLogout()" style="background:none;border:1px solid var(--color-border);color:var(--color-text-secondary);padding:6px 14px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">Sign out</button>
+                    <button onclick="closeProfileOverlay()" style="background:none;border:none;color:var(--color-text-secondary);cursor:pointer;padding:4px;line-height:0;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <div style="padding:24px 20px 0;">
+
+                <!-- Identity row -->
+                <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px;">
+                    <div id="profileLargeAvatar" style="width:68px;height:68px;border-radius:50%;background:var(--color-bg-card);border:2px solid var(--color-border);display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;font-size:26px;font-weight:700;color:#fff;"></div>
+                    <div style="flex:1;min-width:0;">
+                        <div id="profileCharTitle" style="font-size:10px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--color-text-secondary);margin-bottom:3px;"></div>
+                        <!-- Username display mode -->
+                        <div id="profileUsernameDisplay" style="display:flex;align-items:center;gap:7px;cursor:pointer;" onclick="startUsernameEdit()">
+                            <span id="profileUsernameText" style="font-size:21px;font-weight:800;color:var(--color-text-primary);letter-spacing:-0.02em;line-height:1.1;"></span>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.4;margin-top:2px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                        </div>
+                        <!-- Username edit mode -->
+                        <div id="profileUsernameEdit" style="display:none;margin-top:2px;">
+                            <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;">
+                                <input id="profileUsernameInput" type="text" maxlength="32" placeholder="Your username"
+                                    style="background:var(--color-bg-card);border:1.5px solid var(--color-accent-blue);border-radius:10px;padding:7px 11px;font-size:15px;font-weight:700;color:var(--color-text-primary);font-family:inherit;width:150px;outline:none;min-width:0;"
+                                    onkeydown="profileUsernameKeydown(event)">
+                                <button onclick="saveUsername()" style="background:var(--color-accent-blue);color:#fff;border:none;border-radius:10px;padding:7px 14px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap;">Save</button>
+                                <button onclick="cancelUsernameEdit()" style="background:none;border:1px solid var(--color-border);color:var(--color-text-secondary);border-radius:10px;padding:7px 10px;font-size:13px;cursor:pointer;font-family:inherit;">✕</button>
+                            </div>
+                        </div>
+                        <div id="profileMemberSince" style="font-size:11px;color:var(--color-text-secondary);margin-top:5px;"></div>
+                        <!-- Friend Code -->
+                        <div id="profileFriendCodeRow" style="display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap;">
+                            <span id="profileFriendCodeVal" style="font-size:13px;font-weight:700;letter-spacing:0.12em;color:var(--color-text-primary);background:var(--color-bg-primary);border:1px solid var(--color-border);border-radius:8px;padding:4px 10px;font-family:monospace;"></span>
+                            <button onclick="shareFriendCode()" title="Share your code"
+                                style="display:flex;align-items:center;gap:5px;background:var(--color-accent-blue);border:none;cursor:pointer;padding:5px 12px;border-radius:8px;color:#fff;font-size:12px;font-weight:600;font-family:inherit;line-height:1;">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                                Share
+                            </button>
+                            <button onclick="copyFriendCode()" title="Copy code"
+                                style="background:none;border:1px solid var(--color-border);cursor:pointer;padding:5px 10px;border-radius:8px;color:var(--color-text-secondary);font-size:12px;font-family:inherit;line-height:1;">Copy</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Stats grid — 3 col, equal tiles -->
+                <div id="profileStatsGrid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;"></div>
+
+                <!-- Level Progress — matches header aesthetic -->
+                <div id="profileXpSection" style="margin-bottom:14px;padding:14px 16px;background:var(--color-bg-card);border-radius:14px;border:1px solid var(--color-border);">
+                    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;">
+                        <div>
+                            <span id="profileXpCurrent" style="font-size:18px;font-weight:700;letter-spacing:-0.03em;background:linear-gradient(135deg,var(--color-accent-blue) 0%,var(--color-progress) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;"></span>
+                            <span style="font-size:9px;font-weight:600;color:var(--color-text-secondary);letter-spacing:0.06em;text-transform:uppercase;margin-left:4px;">XP</span>
+                        </div>
+                        <div style="display:flex;align-items:baseline;gap:4px;font-size:11px;color:var(--color-text-secondary);">
+                            <span id="profileProgressPct" style="font-weight:500;"></span>
+                            <span style="opacity:0.4;">·</span>
+                            <span id="profileXpToNext" style="color:#6dbf7e;font-weight:600;"></span>
+                        </div>
+                    </div>
+                    <div style="width:100%;height:11px;background:rgba(255,255,255,0.07);border-radius:99px;overflow:hidden;position:relative;">
+                        <div id="profileLevelBar" style="height:100%;border-radius:99px;background:linear-gradient(90deg,var(--color-accent-blue),var(--color-progress));transition:width 0.8s cubic-bezier(0.4,0,0.2,1);width:0%;position:relative;">
+                            <span style="position:absolute;inset:0;border-radius:99px;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.25),transparent);animation:shimmer 2.5s ease-in-out infinite;"></span>
+                        </div>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;margin-top:5px;font-size:11px;color:var(--color-text-secondary);">
+                        <span id="profileLevelLabel" style="font-weight:600;color:var(--color-progress);"></span>
+                        <span id="profileXpLabel"></span>
+                    </div>
+                </div>
+
+                <!-- Rewards (collapsible, moved from main tab) -->
+                <div style="margin-bottom:24px;">
+                    <button onclick="toggleProfileRewards()" id="profileRewardsToggleBtn"
+                        style="width:100%;display:flex;align-items:center;gap:10px;background:var(--color-bg-card);border:1px solid var(--color-border);border-radius:12px;padding:12px 16px;cursor:pointer;font-family:inherit;color:var(--color-text-primary);text-align:left;">
+                        <span style="font-size:18px;flex-shrink:0;">💎</span>
+                        <span style="font-size:13px;font-weight:600;flex:1;">Rewards</span>
+                        <span id="profileRewardsChevron" style="font-size:11px;color:var(--color-text-secondary);transition:transform 0.2s;">▼</span>
+                    </button>
+                    <div id="profileRewardsBody" style="display:none;padding-top:12px;">
+                        <div class="rewards-mode-toggle">
+                            <button class="rewards-mode-pill active" id="rewardModeGlobal" onclick="switchRewardMode('global')">🌐 Global Levels</button>
+                            <button class="rewards-mode-pill" id="rewardModeDim" onclick="switchRewardMode('dimension')">🗺️ Dimension Levels</button>
+                        </div>
+                        <div id="rewardsGlobalSection">
+                            <div class="rewards-intro">
+                                <p>Define a reward for each global level milestone. When you level up, your reward appears front and center. 🌟</p>
+                            </div>
+                            <div id="rewardsTimeline" class="rewards-timeline"></div>
+                        </div>
+                        <div id="rewardsDimSection" style="display:none;">
+                            <div class="rewards-intro">
+                                <p>Each dimension has its own level track — XP earned from activities inside it fills the dimension's bar. Assign rewards to milestones below. 🗺️</p>
+                            </div>
+                            <div class="dim-rewards-selector">
+                                <select class="filter-select" id="dimRewardSelect" onchange="renderDimRewards()" style="width:100%;padding:10px 12px;font-size:14px;margin-bottom:16px;">
+                                    <option value="">— Select a dimension —</option>
+                                </select>
+                            </div>
+                            <div id="dimRewardsTimeline" class="rewards-timeline"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Life Balance heading -->
+                <div style="margin-bottom:6px;">
+                    <div style="font-size:15px;font-weight:700;color:var(--color-text-primary);margin-bottom:5px;">Life Balance</div>
+                    <p style="font-size:12px;color:var(--color-text-secondary);margin:0 0 14px;line-height:1.6;">Your activity fingerprint across life areas. Assign activities to categories using the configurator below.</p>
+                    <div id="profileSpiderContainer" style="width:100%;"></div>
+                    <div id="profileSpiderLegend" style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;padding:10px 0 4px;"></div>
+                </div>
+
+                <!-- Spider Config Accordion -->
+                <div style="margin-top:14px;">
+                    <button onclick="toggleSpiderConfig()" id="spiderConfigToggleBtn"
+                        style="width:100%;display:flex;align-items:center;gap:10px;background:var(--color-bg-card);border:1px solid var(--color-border);border-radius:12px;padding:12px 16px;cursor:pointer;font-family:inherit;color:var(--color-text-primary);text-align:left;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.6;"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+                        <span style="font-size:13px;font-weight:600;flex:1;">Configure Life Categories</span>
+                        <span id="spiderConfigChevron" style="font-size:11px;color:var(--color-text-secondary);transition:transform 0.2s;">▼</span>
+                    </button>
+                    <div id="spiderConfigBody" style="display:none;padding-top:12px;">
+                        <p style="font-size:12px;color:var(--color-text-secondary);margin:0 0 12px;line-height:1.5;">Tap a category to assign it. Tap again to remove. Only affects the spider chart.</p>
+                        <div id="spiderConfigList"></div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- App JS -->
+    <script type="module" src="app.js"></script>
+
+    <!-- Service Worker Registration -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function() {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(function(reg) {
+                        console.log('[SW] Registered, scope:', reg.scope);
+                    })
+                    .catch(function(err) {
+                        console.warn('[SW] Registration failed:', err);
+                    });
+            });
+        }
+    </script>
+
+    <!-- PWA Install Prompt -->
+    <div id="pwaInstallBanner" style="display:none;">
+        <div class="pwa-install-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </div>
+        <div class="pwa-install-text">
+            <div class="pwa-install-title">Install Mindkraft</div>
+            <div class="pwa-install-sub">Add to your home screen for the best experience</div>
+        </div>
+        <button class="pwa-install-btn" id="pwaInstallBtn">Install</button>
+        <button class="pwa-dismiss-btn" id="pwaInstallDismiss" aria-label="Dismiss">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+    </div>
+    <!-- Friend Profile Card Overlay -->
+    <div id="friendProfileOverlay"
+         style="display:none;position:fixed;inset:0;z-index:9500;background:rgba(0,0,0,0.6);align-items:flex-end;justify-content:center;"
+         onclick="if(event.target===this)closeFriendProfileCard()">
+        <div style="background:var(--color-bg-card);border-radius:20px 20px 0 0;width:100%;max-width:560px;max-height:88vh;overflow-y:auto;padding:0 0 32px;">
+            <!-- Handle + close -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px 12px;position:sticky;top:0;background:var(--color-bg-card);z-index:2;border-bottom:1px solid var(--color-border);">
+                <span style="font-size:13px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--color-text-secondary);">Profile</span>
+                <button onclick="closeFriendProfileCard()" style="background:none;border:none;color:var(--color-text-secondary);cursor:pointer;padding:4px;line-height:0;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div id="friendProfileContent" style="padding:20px 20px 0;"></div>
+        </div>
+    </div>
+
+    <!-- ── Group Challenge: Create / Edit Modal ───────────────────────── -->
+    <div id="groupCreateModal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title" id="groupCreateModalTitle">Create Group Challenge</h3>
+            </div>
+            <form id="groupCreateForm" onsubmit="saveGroupChallenge(event)">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Group Name *</label>
+                        <input type="text" id="groupName" placeholder="e.g., Q2 Growth Squad" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Description</label>
+                        <textarea id="groupDescription" placeholder="What's the mission?"></textarea>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Start Date *</label>
+                            <input type="date" id="groupStartDate" required>
+                        </div>
+                        <div class="form-group">
+                            <label>End Date *</label>
+                            <input type="date" id="groupEndDate" required>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn-secondary" onclick="closeGroupCreateModal()">Cancel</button>
+                    <button type="submit" class="btn-primary" id="groupCreateSubmitBtn">Create Group Challenge</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ── Group Challenge: Join by Code Modal ────────────────────────── -->
+    <div id="groupJoinModal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title">Join Group Challenge</h3>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Invite Code</label>
+                    <input type="text" id="groupJoinCodeInput" placeholder="e.g., ABC123" maxlength="8"
+                        style="text-transform:uppercase;letter-spacing:4px;font-size:18px;text-align:center;">
+                </div>
+                <p class="form-hint">Ask your group creator for the 6-character invite code.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-secondary" onclick="closeGroupJoinModal()">Cancel</button>
+                <button type="button" class="btn-primary" onclick="joinGroupByCode()">Join Group</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Group Challenge: Nominate Challenge Modal ──────────────────── -->
+    <div id="groupNominateModal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title" id="groupNominateTitle">Nominate a Challenge</h3>
+            </div>
+            <div class="modal-body">
+                <p class="form-hint" style="margin-bottom:14px;">Pick one of your active personal challenges to contribute to the group. Existing progress counts.</p>
+                <div id="groupNominateList"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-secondary" onclick="closeGroupNominateModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Group Challenge: Invite Members Modal ──────────────────────── -->
+    <div id="groupInviteModal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title">Invite to Group</h3>
+            </div>
+            <div class="modal-body">
+                <!-- Invite code share row -->
+                <div class="gc-invite-code-panel">
+                    <div class="gc-invite-code-label">Invite Code</div>
+                    <div class="gc-invite-code-display" id="inviteModalCode">———</div>
+                    <div class="gc-invite-code-actions">
+                        <button class="btn-secondary" onclick="copyGroupCodeFromModal()">📋 Copy Code</button>
+                        <button class="btn-primary" onclick="shareGroupLinkFromModal()">🔗 Share Link</button>
+                    </div>
+                </div>
+                <!-- Friends list -->
+                <div class="form-group" style="margin-top:16px;">
+                    <label>Invite Friends</label>
+                    <div id="groupInviteFriendsList" style="margin-top:8px;"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-secondary" onclick="closeGroupInviteModal()">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Tutorial Overlay ─────────────────────────────────────────── -->
+    <div id="tutorialOverlay" style="display:none;position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,0.82);align-items:center;justify-content:center;padding:24px;">
+        <div class="tutorial-card" id="tutorialCard">
+            <!-- populated by JS -->
+        </div>
+    </div>
+
+    <!-- ── Tab Unlock Popup (level-gated tab celebration) ──────────────── -->
+    <div id="unlockPopupOverlay" class="unlock-popup-overlay" style="display:none;">
+        <div class="unlock-popup-card" id="unlockPopupCard">
+            <!-- populated by JS -->
+        </div>
+    </div>
+
+    <!-- ── Spotlight Overlay (points at a nav tab after unlock) ─────────── -->
+    <div id="spotlightOverlay" class="spotlight-overlay" style="display:none;">
+        <div class="spotlight-cutout" id="spotlightCutout"></div>
+        <div class="spotlight-card" id="spotlightCard">
+            <!-- populated by JS -->
+        </div>
+    </div>
+
+    <!-- ── Categorization Prompt ────────────────────────────────────── -->
+    <div id="categorizationPrompt" style="display:none;position:fixed;inset:0;z-index:8500;background:rgba(0,0,0,0.78);align-items:center;justify-content:center;padding:24px;">
+        <div class="tutorial-card">
+            <div class="tutorial-emoji">📥</div>
+            <h2 class="tutorial-title">Time to organise!</h2>
+            <p class="tutorial-body">You have <strong id="uncatCount">0</strong> uncategorised activities. Grouping them into Dimensions and Paths unlocks the full power of Analytics and the spider chart.</p>
+            <button class="tutorial-cta" onclick="goToCategories()">Take me there →</button>
+            <button class="tutorial-skip" onclick="dismissCategorizationPrompt()">Maybe later</button>
+        </div>
+    </div>
+    <!-- Retroactive Activity Picker Modal -->
+    <div id="retroPickerModal" class="modal-overlay" onclick="if(event.target===this)closeRetroPicker()">
+        <div class="modal retro-picker-modal">
+            <div class="modal-header retro-picker-header">
+                <div>
+                    <div class="retro-picker-eyebrow">Add Missed Activity</div>
+                    <div class="modal-title" id="retroPickerTitle">—</div>
+                </div>
+                <button class="retro-picker-close-btn" onclick="closeRetroPicker()">✕</button>
+            </div>
+            <div class="retro-picker-search-wrap">
+                <input id="retroPickerSearch" class="retro-picker-search" type="text"
+                    placeholder="Search activities…" oninput="filterRetroPicker(this.value)" autocomplete="off"/>
+            </div>
+            <div id="retroPickerList" class="retro-picker-scroll"></div>
+        </div>
+    </div>
+    <!-- Grid card expand overlay -->
+    <div id="gridCardOverlay" class="grid-card-overlay" style="display:none;" onclick="closeGridCardOverlay()">
+        <div class="grid-card-overlay-inner" id="gridCardOverlayContent" onclick="event.stopPropagation()">
+            <button class="grid-overlay-close" onclick="closeGridCardOverlay()">×</button>
+        </div>
+    </div>
+
+    <!-- Card type picker popup -->
+    <div id="cardTypePicker" class="card-type-picker" style="display:none;" onclick="closeCardTypePicker()">
+        <div class="card-type-picker-inner" onclick="event.stopPropagation()">
+            <div class="card-type-picker-header">
+                <button class="card-type-picker-back" onclick="closeCardTypePicker()" aria-label="Back">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                    <span>Back</span>
+                </button>
+                <div class="card-type-picker-title">Choose card size</div>
+                <div style="width:54px;"></div>
+            </div>
+            <div class="card-type-picker-grid" id="cardTypePickerGrid"></div>
+        </div>
+    </div>
+
+</body>
+</html>
