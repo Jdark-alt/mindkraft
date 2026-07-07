@@ -581,6 +581,7 @@
                 <div class="sub-tabs" id="activitiesSubTabs">
                     <button class="sub-tab active" onclick="switchSubTab('activities','myActivities')">My Activities</button>
                     <button class="sub-tab" onclick="switchSubTab('activities','categories')">Categories</button>
+                    <button class="sub-tab" onclick="switchSubTab('activities','techTree')">Tech Tree</button>
                 </div>
 
                 <!-- My Activities sub-tab -->
@@ -683,6 +684,11 @@
                     </div>
 
                     <div id="dimensionsContainer"></div>
+                </div>
+
+                <!-- Tech Tree sub-tab — content rendered entirely by renderTechTree() -->
+                <div id="activitiesSubTechTree" class="sub-tab-content" style="display:none;">
+                    <div id="techTreeContainer"></div>
                 </div>
             </div>
 
@@ -1891,6 +1897,20 @@
                             <option value="monthly">Monthly</option>
                             <option value="custom">Custom interval</option>
                         </select>
+                    </div>
+
+                    <!-- Tech Tree mastery threshold — hidden unless creating from a
+                         tree node ("Accept as new") or editing an activity that
+                         already carries a threshold. One field, per spec. -->
+                    <div id="ttMasteryGroup" class="ay-field" style="display:none;">
+                        <label class="pl-field-label">Tech Tree Mastery Goal</label>
+                        <div class="tt-mastery-row">
+                            <input type="number" id="ttMasteryCount" class="pl-input" min="1" max="999" value="15" style="width:80px;">
+                            <span class="tt-mastery-sep">completions within</span>
+                            <input type="number" id="ttMasteryWindow" class="pl-input" min="1" max="3650" value="30" placeholder="∞" style="width:80px;">
+                            <span class="tt-mastery-sep">days</span>
+                        </div>
+                        <p class="ay-hint">When reached, this node is mastered on your Tech Tree — permanently. Leave days empty for a lifetime count.</p>
                     </div>
 
                     <!-- Custom interval — shown only when frequency = custom.
