@@ -220,10 +220,18 @@ function describeError(err) {
 }
 
 function isNetworkError(err) {
-    return err && (err.message === 'fetch failed' || (err.cause && err.cause.code));
+    return err && (err.message === 'fetch failed'
+        || err.name === 'TimeoutError' || err.name === 'AbortError'
+        || (err.cause && err.cause.code));
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// undici's default header timeout is 300s — a black-holed connection would
+// hang each attempt for 5 minutes and blow through the job's time limit
+// before the worker can write the error state back to Firestore. Every fetch
+// gets a hard deadline instead.
+const FETCH_TIMEOUT_MS = 45000;
 
 async function callTechTreeModel(prompt, maxTokens) {
     if (!NVIDIA_API_KEY) {
@@ -233,6 +241,7 @@ async function callTechTreeModel(prompt, maxTokens) {
     async function once(tokens) {
         const res = await fetch(NIM_ENDPOINT, {
             method: 'POST',
+            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
             headers: {
                 'Authorization': 'Bearer ' + NVIDIA_API_KEY,
                 'Content-Type': 'application/json',
@@ -542,13 +551,16 @@ async function nimPreflight() {
         console.error('NIM preflight: NVIDIA_API_KEY secret is missing or empty.');
         return;
     }
+    const started = Date.now();
     try {
         const res = await fetch(NIM_BASE + '/models', {
+            signal: AbortSignal.timeout(15000),
             headers: { 'Authorization': 'Bearer ' + NVIDIA_API_KEY },
         });
-        console.log('NIM preflight: HTTP', res.status, res.status === 401 ? '(key rejected — check the NVIDIA_API_KEY secret)' : '');
+        console.log('NIM preflight: HTTP', res.status, 'in', Date.now() - started, 'ms',
+            res.status === 401 ? '(key rejected — check the NVIDIA_API_KEY secret)' : '');
     } catch (err) {
-        console.error('NIM preflight failed:', describeError(err));
+        console.error('NIM preflight failed after', Date.now() - started, 'ms:', describeError(err));
     }
 }
 
@@ -589,4 +601,8 @@ async function main() {
     console.log(`Done. Processed: ${processed}, failed: ${failed}, scanned: ${snapshot.size}`);
 }
 
-main().catch(err => { console.error('Fatal error:', err); process.exit(1); });
+// Explicit exit — firebase-admin's gRPC channels can keep the event loop
+// alive after the work is done, which would idle the job until its timeout.
+main()
+    .then(() => process.exit(0))
+    .catch(err => { console.error('Fatal error:', err); process.exit(1); });
