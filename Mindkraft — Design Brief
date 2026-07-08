@@ -1,0 +1,179 @@
+# Mindkraft — Design Brief
+ 
+## What this document is
+ 
+This brief captures the design system established by the Activities tab redesign (v110.x). It exists so future work on other tabs — Challenges, Analytics, Settings, Friends, future Mindkraft surfaces — can extend the same visual and behavioral language without re-deriving every decision. Use it as a constitution, not a recipe. When a new situation arises that the brief doesn't cover, follow the principles to decide; then update the brief.
+ 
+## 1. Principles
+ 
+These are the immovable things. Every decision downstream defers to them.
+ 
+**Hierarchy is earned, not assigned.** One hero element per surface. Everything else demotes through size, weight, and contrast — not color. The user never picks what's important; the data does (Today view), or the structure does (Manage view).
+ 
+**Surface, not borders.** Cards and blocks lift through inset top highlights and drop shadows, never through visible 1px outlines. Borders are edges of light at low opacity. Visible borders are a code smell.
+ 
+**One color, one job.**
+ 
+- **Blue** (`--color-progress`) — interactive primary. CTAs, the indicator primitive, the ring fallback. Never decorative.
+- **Green** (`--chip-xp-fg`) — rewards, positive deltas, completion confirmation. Never warnings or progress.
+- **Coral** (`--chip-streak-fg`) — streaks, celebration, "you've earned this." Never urgent.
+- **Amber** (`--chip-warn-fg`) — urgency and warnings. At-risk, time pressure. Never identity.
+- **Red** (`--color-accent-red`) — destruction, negative XP, irreversibles. Used sparingly.
+- **Gold** (`#f5c563`) — level-up, achievements, golden trace. The rarest accent. Reserved for genuine milestones.
+ 
+If a color does two jobs, it does neither. Adding a new color requires removing one. We do not have a "decorative" palette.
+ 
+**Motion confirms, never decorates.** Every animation answers "what just happened?" or "where am I in time?" The block mount cascade tells the user the screen is freshly composed. The just-toggled card pulse confirms the tap. The golden trace is the only ambient animation we permit, and it's tied to the user's actual level — earned identity.
+ 
+**Earned uniqueness, not declared.** Two users with similar activities should not have identical screens. Uniqueness comes from data (streak length determines streak block size; dominant dimension determines whether a focus banner appears) — not from user-picked card sizes or color overrides. Authorship lives in _what the user does_, not in _what the user decorates_.
+ 
+**Inter, always.** No display fonts. Weight (400 / 500 / 600 / 700 / 800) and tracking carry personality. Tabular numerals for any counter, score, percentage, or quantity.
+ 
+**Trust through transparency.** When the algorithm makes a choice, surface why — but quietly. 
+ 
+## 2. Systems
+ 
+### Surfaces
+ 
+Three material levels. Each has a recipe.
+ 
+**Page background.** `--color-bg-primary` (#1a1a1a dark / parallel light). Default canvas. No styling.
+ 
+**Card material.** `#22242a` in dark, `var(--color-bg-card)` in light. Used for: activity cards, header, bottom nav, toast pill, Today blocks. The recipe:
+ 
+```css
+background: #22242a;
+border: 1px solid rgba(255,255,255,0.045);
+border-radius: 11–14px;
+box-shadow:
+  0 1px 0 rgba(255,255,255,0.075) inset,    /* top highlight */
+  0 -1px 0 rgba(0,0,0,0.4) inset,            /* bottom shadow */
+  0 1px 2px rgba(0,0,0,0.5),                 /* near-shadow */
+  0 6px 18px rgba(0,0,0,0.35);               /* far-shadow */
+```
+ 
+Radius scales with size: 9–10px for chips and small tiles, 11–12px for activity cards, 14px for major blocks (Hero, modal panels).
+ 
+**Recessed surface.** `rgba(255,255,255,0.025)` with a `rgba(255,255,255,0.05)` hairline. Used inside cards for sub-elements: quick-win tiles, cycle cards, search result rows. Sits one level below card material.
+ 
+### The Indicator Primitive
+ 
+Active state across the entire app is communicated by **one shape**: a thin horizontal line with a soft accent halo. Sub-tabs use it. Action-bar icons use it. The bottom nav uses it (as a glow on the icon, not a line below — same conceptual primitive, adapted to fit). We do not invent new active-state treatments. If you need to show "this is selected" anywhere, scale this primitive.
+ 
+```css
+position: absolute;
+left: 22%; right: 22%; bottom: 4px;
+height: 2px;
+background: linear-gradient(90deg, transparent, var(--color-progress) 30%, var(--color-progress) 70%, transparent);
+box-shadow: 0 0 10px rgba(90,159,212,0.7), 0 0 22px rgba(90,159,212,0.35);
+```
+ 
+For icons: drop the line, keep the accent color + glow filter.
+ 
+### Hairlines, not boxes
+ 
+When two things need separation, use a 1px line at ~50% opacity. Never a border, never a divider with shadow. This applies to: sub-tab separator, action-bar dividers, list-section dividers, search result rows.
+ 
+### Type scale
+ 
+Sized by role, not by feel. Each step is a real jump in size — no ambiguous middle weights.
+ 
+|Role|Size|Weight|Tracking|
+|---|---|---|---|
+|Sub-tab labels (largest text)|19px|600 / 700 active|-0.018em|
+|Section titles|15px|600|-0.015em|
+|Hero name|22px|700|-0.025em|
+|Card name|14.5px|500|-0.005em|
+|Block header label|11px|700 uppercase|0.14em|
+|Card meta / chip|10–12px|500–600|-0.005em|
+|Kicker text (NEXT UP)|9px|700 uppercase|0.18em|
+|Tabular numerals (level number)|50px|800|-2px|
+ 
+Use `font-variant-numeric: tabular-nums` for any digit that updates.
+ 
+### Chip system
+ 
+One shape (`border-radius: 999px`), four semantic backgrounds. Each chip is small, consistent, and color-coded by job:
+ 
+- **XP chip** — text-only, no background, `--chip-xp-fg` color
+- **Streak chip** — pill, `--chip-streak-bg` background, `--chip-streak-fg` text, fire icon
+- **Warn chip** — pill, `--chip-warn-bg` background, `--chip-warn-fg` text, warning glyph
+- **Counter / multi chip** — pill, blue background, used for multi-completes
+ 
+Never invent new chip shapes. If a new state needs surfacing, pick the closest job-color above.
+ 
+### Dimension color treatment
+ 
+Every activity belongs to a dimension. The dimension's color appears as:
+ 
+- A **left-edge bar** (3px wide, glowing) on certain cards
+- A **left-edge accent** (2px, subtle) on certain other cards
+- The **streak progress arc** on activity rings (fallback to `--color-progress` if no dim color)
+ 
+Never as a card background. Dimension colors tint, they don't fill.
+ 
+## 3. Playbook
+ 
+### When designing a new view
+ 
+Ask, in order:
+ 
+1. **What job is this view doing?** Mode A (what to do now) or Mode B (what does my life look like)? Mode A views are algorithmic and dense with data; Mode B views are user-controlled and inventory-like.
+2. **What is the hero element?** Every screen has exactly one. If you can't name it in five words, the screen needs rework.
+3. **Which existing components can I reuse?** Cards, chips, the indicator primitive, the toast pill, the block library. Reuse before inventing.
+4. **What does the data look like in three states: sparse, normal, dense?** Sparse should feel intentional, not empty. Dense should not require scrolling beyond two screens.
+ 
+### When adding a new state or status
+ 
+Never invent a new color. Map to an existing job:
+ 
+- Is it about success/reward? Green.
+- Is it celebratory / streaky? Coral.
+- Is it urgent? Amber.
+- Is it interactive? Blue.
+- Is it destructive? Red.
+ 
+If none fit, you're probably adding noise. Reconsider the feature.
+ 
+### When adding a new active state or selection cue
+ 
+Use the indicator primitive (the glowing underline). Don't add a colored background, don't add a border-glow, don't add a checkmark. The primitive scales — make it shorter, make it longer, drop the line and keep the glow for icons. But it's the same primitive.
+ 
+### When a screen feels empty
+ 
+Diagnose which kind of empty:
+ 
+- **Onboarding empty** (user has no data yet) → CTA + sub-copy explaining the first action.
+- **All-done empty** (user completed everything) → celebratory; treat as a reward state.
+- **Eligibility empty** (data exists, nothing applicable right now) → quiet, informational, no CTA.
+ 
+Each kind has different copy. The wrong copy is worse than no copy.
+ 
+### When a screen feels too dense
+ 
+Three knobs to turn, in order:
+ 
+1. **Cut redundancy.** Same info shown twice? Pick one.
+2. **Demote rather than remove.** Bury behind a tap, shrink type, lower contrast.
+3. **Cap quantity.** Today view caps at 10 cards for a reason. Lists can scroll; dashboards can't.
+ 
+### When in doubt about size
+ 
+Smaller wins. Mindkraft errs on the side of restraint. A 15px section title looks confident; an 18px section title looks shouty. We dropped section titles from 21px to 15px and the screen improved. Trust the pattern.
+ 
+## 4. Anti-patterns
+ 
+Catalogue of things this design system explicitly rejects:
+ 
+- **Glassmorphism.** No frosted glass surfaces outside the bottom-nav island. We are not iOS 16.
+- **Skeuomorphic gradients** that imply physical depth. Soft shadows only.
+- **Generic segmented controls** for sub-tabs. We use the blade/underline primitive instead.
+- **Emoji as UI primitives** (🔥 ⚡ ⚠ as anchors of meaning). We use SVG icons styled to match. Emoji is acceptable in user-typed content only.
+- **Pop-up confirmations** for routine actions. Tap → done. Toasts confirm; modals interrupt.
+- **Multiple active states on screen at once.** One indicator primitive lit at a time per region.
+- **"Decorative" animations** with no informational role.
+ 
+## 5. The five-word version
+ 
+If you remember nothing else: **earned hierarchy, single primitives, restraint.**
+ 
