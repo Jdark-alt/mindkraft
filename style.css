@@ -13981,19 +13981,27 @@
 
         /* ════════════════════════════════════════════════════════════════
            CHARACTER TECH TREE
+           Styled per the Mindkraft design brief: card material recipe,
+           recessed sub-surfaces, hairlines not boxes, one color one job,
+           SVG glyphs (no emoji primitives), tabular numerals.
            ════════════════════════════════════════════════════════════════ */
 
+        .tt-num { font-variant-numeric: tabular-nums; }
+        .tt-gold { color: #f5c563; display: inline-flex; align-items: center; gap: 3px; }
+        .tt-blue { color: var(--color-progress); display: inline-flex; }
+
+        /* Card material (same recipe as .settings-card) */
         .tt-card {
             background: #22242a;
             border: 1px solid rgba(255,255,255,0.045);
-            border-radius: 13px;
+            border-radius: 14px;
             padding: 20px 18px;
             margin-bottom: 12px;
             box-shadow:
                 0 1px 0 rgba(255,255,255,0.075) inset,
-                0 -1px 0 rgba(0,0,0,0.35) inset,
-                0 1px 2px rgba(0,0,0,0.55),
-                0 4px 12px rgba(0,0,0,0.34);
+                0 -1px 0 rgba(0,0,0,0.4) inset,
+                0 1px 2px rgba(0,0,0,0.5),
+                0 6px 18px rgba(0,0,0,0.35);
         }
         [data-theme-mode="light"] .tt-card {
             background: var(--color-bg-card);
@@ -14002,22 +14010,22 @@
         }
 
         .tt-title {
-            font-size: 19px;
-            font-weight: 800;
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: -0.015em;
             color: var(--color-text-primary);
             margin: 0 0 8px;
         }
         .tt-muted {
-            font-size: 13px;
+            font-size: 12.5px;
             color: var(--color-text-secondary);
             line-height: 1.55;
             margin: 4px 0 8px;
         }
         .tt-error {
-            font-size: 12.5px;
-            color: #e08c8c;
-            background: rgba(180,60,60,0.12);
-            border: 1px solid rgba(180,60,60,0.3);
+            font-size: 12px;
+            color: var(--color-accent-red, #c96a6a);
+            background: rgba(180,60,60,0.08);
             border-radius: 8px;
             padding: 8px 10px;
             margin: 8px 0;
@@ -14026,44 +14034,50 @@
         .tt-goal-input {
             width: 100%;
             resize: vertical;
-            min-height: 64px;
+            min-height: 58px;
             line-height: 1.5;
         }
 
+        /* Gate rows — recessed surface, met = green (reward job) */
         .tt-gate {
             display: flex;
-            gap: 10px;
+            gap: 8px;
             margin: 14px 0 10px;
         }
         .tt-gate-item {
             flex: 1;
-            font-size: 12.5px;
-            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            font-size: 12px;
+            font-weight: 600;
             color: var(--color-text-secondary);
-            background: rgba(128,128,140,0.10);
-            border: 1px solid var(--color-border);
+            background: rgba(255,255,255,0.025);
+            box-shadow: 0 0 0 1px rgba(255,255,255,0.05) inset;
             border-radius: 9px;
             padding: 9px 10px;
-            text-align: center;
         }
-        .tt-gate-item.met {
-            color: #8fbf8f;
-            border-color: rgba(107,139,111,0.45);
-            background: rgba(107,139,111,0.12);
-        }
+        .tt-gate-item.met { color: var(--chip-xp-fg, #8fbf8f); }
 
-        /* Buttons */
+        /* Buttons — primary CTA is blue (interactive), secondary is card
+           material, ghost is bare text. All carry an SVG glyph + label. */
         .tt-btn {
-            display: block;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 7px;
             width: 100%;
             padding: 11px 14px;
             margin-top: 8px;
             border-radius: 10px;
-            border: 1px solid var(--color-border);
-            background: rgba(128,128,140,0.12);
+            border: 1px solid rgba(255,255,255,0.045);
+            background: rgba(255,255,255,0.03);
+            box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset, 0 1px 2px rgba(0,0,0,0.3);
             color: var(--color-text-primary);
-            font-size: 13.5px;
-            font-weight: 700;
+            font-size: 13px;
+            font-weight: 600;
+            font-family: inherit;
             cursor: pointer;
             transition: filter .15s ease, transform .06s ease;
         }
@@ -14072,7 +14086,9 @@
         .tt-btn-primary {
             background: var(--color-progress);
             border-color: transparent;
+            box-shadow: 0 1px 0 rgba(255,255,255,0.18) inset, 0 2px 8px rgba(90,159,212,0.3);
             color: #fff;
+            font-weight: 700;
         }
         .tt-btn-primary:disabled {
             opacity: 0.45;
@@ -14080,6 +14096,9 @@
         }
         .tt-btn-ghost {
             background: transparent;
+            border-color: transparent;
+            box-shadow: none;
+            color: var(--color-text-secondary);
         }
         .tt-generate-btn { margin-top: 6px; }
 
@@ -14087,16 +14106,16 @@
         .tt-building { text-align: center; padding: 34px 20px; }
         .tt-building .tt-btn-ghost { max-width: 220px; margin: 14px auto 0; }
         .tt-building-spinner {
-            width: 42px; height: 42px;
+            width: 40px; height: 40px;
             margin: 0 auto 16px;
             border-radius: 50%;
-            border: 3px solid rgba(128,128,140,0.25);
+            border: 3px solid rgba(128,128,140,0.2);
             border-top-color: var(--color-progress);
             animation: tt-spin 0.9s linear infinite;
         }
         @keyframes tt-spin { to { transform: rotate(360deg); } }
 
-        /* Toolbar + goal bar */
+        /* Toolbar — recessed chip buttons */
         .tt-toolbar {
             display: flex;
             flex-wrap: wrap;
@@ -14105,26 +14124,35 @@
         }
         .tt-tb-btn {
             flex: 1 1 auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
             padding: 8px 11px;
             border-radius: 9px;
-            border: 1px solid var(--color-border);
-            background: rgba(128,128,140,0.10);
-            color: var(--color-text-primary);
-            font-size: 12px;
-            font-weight: 700;
+            border: none;
+            background: rgba(255,255,255,0.025);
+            box-shadow: 0 0 0 1px rgba(255,255,255,0.05) inset;
+            color: var(--color-text-secondary);
+            font-size: 11.5px;
+            font-weight: 600;
+            font-family: inherit;
             cursor: pointer;
             white-space: nowrap;
         }
-        .tt-tb-btn:hover { filter: brightness(1.15); }
+        .tt-tb-btn:hover { color: var(--color-text-primary); filter: brightness(1.15); }
+
+        /* Goal bar — recessed, single hairline aesthetic */
         .tt-goal-bar {
             display: flex;
             align-items: center;
-            gap: 8px;
-            background: rgba(128,128,140,0.08);
-            border: 1px solid var(--color-border);
+            gap: 9px;
+            background: rgba(255,255,255,0.025);
+            box-shadow: 0 0 0 1px rgba(255,255,255,0.05) inset;
             border-radius: 10px;
             padding: 9px 12px;
             margin-bottom: 10px;
+            color: var(--color-text-secondary);
         }
         .tt-goal-text {
             flex: 1;
@@ -14142,11 +14170,12 @@
             color: var(--color-progress);
             font-size: 12px;
             font-weight: 700;
+            font-family: inherit;
             cursor: pointer;
             padding: 4px 6px;
         }
         .tt-rev-note {
-            font-size: 12px;
+            font-size: 11.5px;
             color: var(--color-text-secondary);
             margin: 0 2px 10px;
         }
@@ -14154,45 +14183,51 @@
         /* Canvas */
         .tt-canvas-preview {
             position: relative;
-            background: radial-gradient(circle at 50% 50%, rgba(90,159,212,0.05), transparent 70%), #1d1f24;
-            border: 1px solid var(--color-border);
-            border-radius: 13px;
+            background: #1d1f24;
+            border: 1px solid rgba(255,255,255,0.045);
+            border-radius: 14px;
             overflow: hidden;
             cursor: pointer;
             margin-bottom: 14px;
+            box-shadow:
+                0 1px 0 rgba(255,255,255,0.05) inset,
+                0 1px 2px rgba(0,0,0,0.5);
         }
         [data-theme-mode="light"] .tt-canvas-preview {
-            background: radial-gradient(circle at 50% 50%, rgba(90,159,212,0.06), transparent 70%), var(--color-bg-card);
+            background: var(--color-bg-card);
+            border-color: var(--color-border);
         }
-        .tt-canvas-preview .tt-svg { display: block; width: 100%; height: 340px; }
+        .tt-canvas-preview .tt-svg { display: block; width: 100%; height: 360px; }
         .tt-canvas-expand {
             position: absolute;
             right: 10px; bottom: 8px;
-            font-size: 11px;
-            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 10.5px;
+            font-weight: 600;
             color: var(--color-text-secondary);
-            background: rgba(0,0,0,0.35);
+            background: rgba(0,0,0,0.4);
             border-radius: 7px;
             padding: 4px 8px;
             pointer-events: none;
         }
-        [data-theme-mode="light"] .tt-canvas-expand { background: rgba(255,255,255,0.6); }
+        [data-theme-mode="light"] .tt-canvas-expand { background: rgba(255,255,255,0.65); }
 
-        .tt-svg-core { fill: rgba(90,159,212,0.18); stroke: var(--color-progress); stroke-width: 2; }
-        .tt-svg-core-label { font-size: 13px; font-weight: 800; fill: var(--color-text-primary); }
-        .tt-svg-core-sub { font-size: 8px; font-weight: 700; fill: var(--color-text-secondary); letter-spacing: 1.5px; }
-        .tt-svg-sector-label { font-size: 11px; font-weight: 800; opacity: 0.55; letter-spacing: 0.5px; }
-        .tt-svg-label { font-size: 10.5px; font-weight: 600; fill: var(--color-text-secondary); }
-        .tt-svg-glyph { font-size: 14px; }
-        .tt-svg-pct { font-size: 10px; font-weight: 800; }
-        .tt-svg-node.tt-locked { opacity: 0.55; }
-        .tt-svg-node.tt-archived { opacity: 0.35; }
+        .tt-svg-core { fill: rgba(90,159,212,0.14); stroke: var(--color-progress); stroke-width: 2; }
+        .tt-svg-core-label { font-size: 12.5px; font-weight: 800; fill: var(--color-text-primary); font-variant-numeric: tabular-nums; }
+        .tt-svg-core-sub { font-size: 7.5px; font-weight: 700; fill: var(--color-text-secondary); letter-spacing: 1.6px; }
+        .tt-svg-sector-label { font-size: 10.5px; font-weight: 700; opacity: 0.85; letter-spacing: 0.06em; text-transform: uppercase; }
+        .tt-svg-label { font-size: 10px; font-weight: 600; fill: var(--color-text-primary); opacity: 0.85; }
+        .tt-svg-label-dim { fill: var(--color-text-secondary); opacity: 0.6; }
+        .tt-svg-pct { font-size: 10px; font-weight: 800; fill: var(--color-text-primary); font-variant-numeric: tabular-nums; }
+        .tt-svg-node.tt-locked { opacity: 0.62; }
+        .tt-svg-node.tt-archived { opacity: 0.38; }
         .tt-svg-node.tt-available .tt-svg-avail-ring {
-            animation: tt-avail-pulse 2.2s ease-in-out infinite;
-            transform-origin: center;
+            animation: tt-avail-pulse 2.4s ease-in-out infinite;
         }
         @keyframes tt-avail-pulse {
-            0%, 100% { opacity: 0.5; }
+            0%, 100% { opacity: 0.55; }
             50% { opacity: 1; }
         }
 
@@ -14210,10 +14245,10 @@
             align-items: center;
             gap: 10px;
             padding: calc(env(safe-area-inset-top, 0px) + 12px) 14px 10px;
-            border-bottom: 1px solid var(--color-border);
+            box-shadow: 0 1px 0 var(--color-border);
         }
-        .tt-fullscreen-title { font-size: 15px; font-weight: 800; color: var(--color-text-primary); }
-        .tt-fullscreen-hint { flex: 1; font-size: 11px; color: var(--color-text-secondary); text-align: right; }
+        .tt-fullscreen-title { font-size: 15px; font-weight: 700; letter-spacing: -0.015em; color: var(--color-text-primary); }
+        .tt-fullscreen-hint { flex: 1; font-size: 10.5px; color: var(--color-text-secondary); text-align: right; }
         .tt-fullscreen-bar .tt-btn { width: auto; margin: 0; padding: 7px 12px; font-size: 12px; }
         .tt-fullscreen-canvas {
             flex: 1;
@@ -14222,17 +14257,18 @@
         }
         .tt-fullscreen-canvas .tt-svg { width: 100%; height: 100%; display: block; }
 
-        /* Node list rows */
-        .tt-group { margin-bottom: 14px; }
+        /* Node list rows — card material + left-edge dimension bar (3px, glowing) */
+        .tt-group { margin-bottom: 16px; }
         .tt-group-label {
             font-size: 11px;
-            font-weight: 800;
+            font-weight: 700;
             text-transform: uppercase;
-            letter-spacing: 0.8px;
+            letter-spacing: 0.14em;
             color: var(--color-text-secondary);
-            margin: 0 2px 6px;
+            margin: 0 2px 7px;
         }
         .tt-node-row {
+            position: relative;
             display: flex;
             align-items: center;
             gap: 10px;
@@ -14241,34 +14277,56 @@
             background: #22242a;
             border: 1px solid rgba(255,255,255,0.045);
             border-radius: 11px;
-            padding: 11px 13px;
+            padding: 12px 13px 12px 16px;
             margin-bottom: 6px;
             color: var(--color-text-primary);
-            font-size: 13.5px;
-            font-weight: 600;
+            font-size: 14.5px;
+            font-weight: 500;
+            font-family: inherit;
+            letter-spacing: -0.005em;
             cursor: pointer;
+            overflow: hidden;
+            box-shadow:
+                0 1px 0 rgba(255,255,255,0.075) inset,
+                0 -1px 0 rgba(0,0,0,0.4) inset,
+                0 1px 2px rgba(0,0,0,0.5);
         }
         [data-theme-mode="light"] .tt-node-row {
             background: var(--color-bg-card);
             border-color: var(--color-border);
         }
-        .tt-node-row:hover { filter: brightness(1.1); }
+        .tt-node-row::before {
+            content: '';
+            position: absolute;
+            left: 0; top: 0; bottom: 0;
+            width: 3px;
+            background: var(--tt-dim, var(--color-progress));
+            box-shadow: 0 0 8px rgba(var(--tt-dim-rgb, 90,159,212), 0.55);
+        }
+        .tt-node-row:hover { filter: brightness(1.08); }
         .tt-node-row-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .tt-node-row-right { font-size: 12px; font-weight: 800; color: var(--color-text-secondary); }
+        .tt-node-row-right {
+            display: inline-flex;
+            align-items: center;
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--color-text-secondary);
+        }
+        .tt-row-pct { color: var(--color-text-secondary); }
         .tt-nexus-tag {
-            font-size: 9.5px;
-            font-weight: 800;
+            font-size: 9px;
+            font-weight: 700;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.1em;
             color: var(--color-progress);
-            border: 1px solid var(--color-progress);
-            border-radius: 5px;
-            padding: 1px 5px;
-            margin-left: 5px;
-            vertical-align: 1px;
+            background: rgba(90,159,212,0.12);
+            border-radius: 999px;
+            padding: 2px 7px;
+            margin-left: 6px;
+            vertical-align: 1.5px;
         }
 
-        /* Overlay (picker / forms) */
+        /* Overlay (picker / forms) — modal panel material */
         .tt-overlay {
             position: fixed;
             inset: 0;
@@ -14285,21 +14343,25 @@
             max-height: 78vh;
             overflow-y: auto;
             background: #24262c;
-            border: 1px solid rgba(255,255,255,0.07);
-            border-radius: 15px;
+            border: 1px solid rgba(255,255,255,0.045);
+            border-radius: 14px;
             padding: 18px;
-            box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+            box-shadow:
+                0 1px 0 rgba(255,255,255,0.075) inset,
+                0 12px 40px rgba(0,0,0,0.5);
         }
         [data-theme-mode="light"] .tt-overlay-card {
             background: var(--color-bg-card);
             border-color: var(--color-border);
         }
         .tt-form-title {
-            font-size: 15.5px;
-            font-weight: 800;
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: -0.015em;
             color: var(--color-text-primary);
             margin: 0 0 6px;
         }
+        .tt-form .pl-field-label { display: block; margin-top: 10px; }
         .tt-form .pl-input { width: 100%; }
         .tt-form-actions {
             display: flex;
@@ -14308,6 +14370,7 @@
         }
         .tt-form-actions .tt-btn { margin-top: 0; }
 
+        /* Picker & prereq lists — recessed rows separated by hairlines */
         .tt-picker-list, .tt-prereq-list {
             max-height: 44vh;
             overflow-y: auto;
@@ -14319,45 +14382,48 @@
             gap: 9px;
             width: 100%;
             text-align: left;
-            background: rgba(128,128,140,0.08);
-            border: 1px solid var(--color-border);
+            background: rgba(255,255,255,0.025);
+            box-shadow: 0 0 0 1px rgba(255,255,255,0.05) inset;
+            border: none;
             border-radius: 9px;
-            padding: 10px 11px;
+            padding: 11px;
             margin-bottom: 5px;
             color: var(--color-text-primary);
             font-size: 13px;
-            font-weight: 600;
+            font-weight: 500;
+            font-family: inherit;
             cursor: pointer;
         }
         .tt-picker-row:hover { filter: brightness(1.15); }
         .tt-picker-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .tt-picker-meta { font-size: 11px; color: var(--color-text-secondary); }
+        .tt-picker-meta { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--color-text-secondary); }
         .tt-picker-tag {
             font-size: 9px;
-            font-weight: 800;
+            font-weight: 700;
             text-transform: uppercase;
+            letter-spacing: 0.08em;
             color: var(--color-text-secondary);
-            border: 1px solid var(--color-border);
-            border-radius: 4px;
-            padding: 1px 4px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 999px;
+            padding: 1.5px 6px;
         }
         .tt-prereq-row {
             display: flex;
             align-items: center;
             gap: 9px;
-            padding: 9px 4px;
-            border-bottom: 1px solid var(--color-border);
+            padding: 10px 4px;
+            box-shadow: 0 1px 0 var(--color-border);
             font-size: 13px;
             color: var(--color-text-primary);
             cursor: pointer;
         }
         .tt-prereq-dot {
-            width: 10px; height: 10px;
+            width: 9px; height: 9px;
             border-radius: 50%;
             flex-shrink: 0;
+            box-shadow: 0 0 6px rgba(0,0,0,0.3);
         }
         .tt-prereq-name { flex: 1; }
-        .tt-prereq-star { font-size: 12px; }
 
         /* Mastery inputs */
         .tt-mastery-row {
@@ -14369,10 +14435,10 @@
         .tt-mastery-sep {
             font-size: 12px;
             color: var(--color-text-secondary);
-            font-weight: 600;
+            font-weight: 500;
         }
 
-        /* Node bottom sheet */
+        /* Node bottom sheet — major block material, 14px+ radius */
         .tt-sheet-backdrop {
             position: fixed;
             inset: 0;
@@ -14388,9 +14454,13 @@
             max-height: 74vh;
             overflow-y: auto;
             background: #24262c;
-            border: 1px solid rgba(255,255,255,0.07);
-            border-radius: 18px 18px 0 0;
+            border: 1px solid rgba(255,255,255,0.045);
+            border-bottom: none;
+            border-radius: 16px 16px 0 0;
             padding: 18px 18px calc(env(safe-area-inset-bottom, 0px) + 18px);
+            box-shadow:
+                0 1px 0 rgba(255,255,255,0.075) inset,
+                0 -8px 32px rgba(0,0,0,0.45);
             animation: tt-sheet-up 0.22s ease;
         }
         [data-theme-mode="light"] .tt-sheet {
@@ -14401,35 +14471,46 @@
             from { transform: translateY(30px); opacity: 0; }
             to { transform: translateY(0); opacity: 1; }
         }
-        .tt-sheet-head { display: flex; align-items: center; gap: 11px; }
-        .tt-sheet-dot { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; }
-        .tt-sheet-title { font-size: 16px; font-weight: 800; color: var(--color-text-primary); }
-        .tt-sheet-sub { font-size: 11.5px; color: var(--color-text-secondary); margin-top: 2px; }
-        .tt-sheet-desc { font-size: 13px; color: var(--color-text-secondary); line-height: 1.5; margin: 10px 0 0; }
+        .tt-sheet-head { display: flex; align-items: center; gap: 12px; }
+        .tt-sheet-bar {
+            width: 3px;
+            align-self: stretch;
+            border-radius: 2px;
+            background: var(--tt-dim, var(--color-progress));
+            box-shadow: 0 0 8px var(--tt-dim, var(--color-progress));
+            flex-shrink: 0;
+        }
+        .tt-sheet-title { font-size: 15.5px; font-weight: 700; letter-spacing: -0.015em; color: var(--color-text-primary); }
+        .tt-sheet-sub { font-size: 11px; color: var(--color-text-secondary); margin-top: 2px; }
+        .tt-sheet-desc { font-size: 12.5px; color: var(--color-text-secondary); line-height: 1.55; margin: 10px 0 0; }
         .tt-sheet-progress { margin-top: 12px; }
         .tt-sheet-progress-label {
             font-size: 11px;
-            font-weight: 800;
+            font-weight: 700;
             text-transform: uppercase;
-            letter-spacing: 0.6px;
+            letter-spacing: 0.14em;
             color: var(--color-text-secondary);
             margin-bottom: 5px;
         }
         .tt-progressbar {
-            height: 7px;
-            background: rgba(128,128,140,0.18);
+            height: 6px;
+            background: rgba(128,128,140,0.16);
             border-radius: 4px;
             overflow: hidden;
         }
         .tt-progressbar-fill { height: 100%; border-radius: 4px; transition: width .3s ease; }
         .tt-sheet-prereqs { margin-top: 12px; }
         .tt-sheet-prereq {
+            display: flex;
+            align-items: center;
+            gap: 7px;
             font-size: 12.5px;
             color: var(--color-text-secondary);
-            padding: 3px 0;
+            padding: 3.5px 0;
         }
-        .tt-sheet-prereq.met { color: #8fbf8f; }
+        .tt-sheet-prereq.met { color: var(--chip-xp-fg, #8fbf8f); }
         .tt-sheet-actions { margin-top: 14px; }
+
 
         /* Activities sub-tab row now holds 3 pills (My Activities / Categories /
            Tech Tree) — move the single center divider to thirds and add the

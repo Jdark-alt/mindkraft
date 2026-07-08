@@ -14526,6 +14526,32 @@
             return TT_MASTERY_DEFAULTS[frequency] || TT_MASTERY_DEFAULTS.daily;
         }
 
+        // Inline SVG icons — the design system uses stroked SVG glyphs, never
+        // emoji, as UI primitives. Same stroke style as the rest of the app.
+        function ttIcon(name, size) {
+            size = size || 14;
+            var fill = { star: true }[name] ? ' fill="currentColor" stroke="none"' : ' fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"';
+            var paths = {
+                lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+                star: '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
+                spark: '<path d="M12 3v3"/><path d="M12 18v3"/><path d="M3 12h3"/><path d="M18 12h3"/><path d="M5.6 5.6l2.2 2.2"/><path d="M16.2 16.2l2.2 2.2"/><path d="M18.4 5.6l-2.2 2.2"/><path d="M7.8 16.2l-2.2 2.2"/>',
+                plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+                check: '<polyline points="20 6 9 17 4 12"/>',
+                link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+                edit: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
+                x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+                archive: '<polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/>',
+                refresh: '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
+                revive: '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>',
+                target: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
+                branch: '<line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
+                expand: '<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>',
+                web: '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
+                circle: '<circle cx="12" cy="12" r="9"/>',
+            };
+            return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24"' + fill + ' aria-hidden="true" style="flex-shrink:0;">' + (paths[name] || '') + '</svg>';
+        }
+
         function ensureTechTree() {
             if (!window.userData) return null;
             if (!window.userData.techTree) {
@@ -14568,13 +14594,15 @@
             });
             return hit;
         }
-        function ttDimHex(dimId) {
-            var dim = (window.userData.dimensions || []).find(function(d) { return d.id === dimId; });
-            return (dim && DIM_HEX_MAP[dim.color]) || 'var(--color-progress, #5a9fd4)';
-        }
         function ttDimHexRaw(dimId) {
-            var dim = (window.userData.dimensions || []).find(function(d) { return d.id === dimId; });
-            return (dim && DIM_HEX_MAP[dim.color]) || '#5a9fd4';
+            var dims = window.userData.dimensions || [];
+            var idx = dims.findIndex(function(d) { return d.id === dimId; });
+            var dim = idx !== -1 ? dims[idx] : null;
+            if (dim && DIM_HEX_MAP[dim.color]) return DIM_HEX_MAP[dim.color];
+            // Dimension without an explicit color (e.g. Uncategorized) — assign a
+            // stable palette color by position so tree sectors stay distinguishable.
+            if (dim) return DIM_HEX_MAP[DIM_COLOR_ORDER[idx % DIM_COLOR_ORDER.length]] || '#5a9fd4';
+            return '#5a9fd4';
         }
         function ttDimName(dimId) {
             var dim = (window.userData.dimensions || []).find(function(d) { return d.id === dimId; });
@@ -14757,12 +14785,26 @@
             var tt = ensureTechTree();
             var node = tt.nodes.find(function(n) { return n.id === nodeId; });
             if (!node || node.kind !== 'suggested') return;
-            var note = prompt('What should be different about "' + node.title + '"?\n(e.g. "too time-intensive", "suggest something social instead")');
-            if (note === null) return;
-            note = note.trim();
-            if (!note) { showToast('A short note is required for a revision', 'olive'); return; }
             ttCloseSheet();
-            ttSubmitRequest({ type: 'revision', note: note, nodeIds: [nodeId] });
+            var revLeft = TT_REVISION_LIMIT - (tt.revisionsUsedSinceGeneration || 0);
+            window._ttRevisionConfirm = function() {
+                var el = document.getElementById('ttRevisionNote');
+                var note = (el && el.value || '').trim();
+                if (!note) { showToast('Add a line of feedback first', 'olive'); return; }
+                ttCloseOverlay();
+                ttSubmitRequest({ type: 'revision', note: note, nodeIds: [nodeId] });
+            };
+            ttShowOverlay(
+                '<div class="tt-form">'
+                + '<h3 class="tt-form-title">Revise "' + escapeHtml(node.title) + '"</h3>'
+                + '<p class="tt-muted">What should be different? Be specific — the AI replaces only this suggestion, guided by your note.</p>'
+                + '<textarea id="ttRevisionNote" class="pl-input tt-goal-input" rows="2" maxlength="240" placeholder="e.g. Too vague — suggest one concrete morning habit that pairs with my sleep schedule instead."></textarea>'
+                + '<p class="ay-hint">' + revLeft + ' of ' + TT_REVISION_LIMIT + ' revisions left for this generation.</p>'
+                + '<div class="tt-form-actions">'
+                + '<button class="tt-btn tt-btn-ghost" onclick="ttCloseOverlay()">Cancel</button>'
+                + '<button class="tt-btn tt-btn-primary" onclick="window._ttRevisionConfirm && window._ttRevisionConfirm()">Send revision</button>'
+                + '</div></div>'
+            );
         };
 
         window.ttCancelPending = function() {
@@ -15020,7 +15062,7 @@
                     + '<input type="checkbox" data-ttprereq="' + n.id + '"' + (current[n.id] ? ' checked' : '') + '>'
                     + '<span class="tt-prereq-dot" style="background:' + ttDimHexRaw(n.dimensionId) + ';"></span>'
                     + '<span class="tt-prereq-name">' + escapeHtml(n.title) + '</span>'
-                    + (ttNodeIsMastered(n) ? '<span class="tt-prereq-star">⭐</span>' : '')
+                    + (ttNodeIsMastered(n) ? '<span class="tt-gold">' + ttIcon('star', 12) + '</span>' : '')
                     + '</label>';
             }).join('') || '<p class="tt-muted">No other nodes to connect to yet.</p>';
             ttShowOverlay(
@@ -15069,6 +15111,8 @@
             if (el) el.style.display = 'none';
             window._ttPickerOnPick = null;
             window._ttMasteryConfirm = null;
+            window._ttRevisionConfirm = null;
+            window._ttGoalEditConfirm = null;
         };
 
         function ttOpenActivityPicker(opts) {
@@ -15085,7 +15129,8 @@
                     + '<span class="tt-prereq-dot" style="background:' + ttDimHexRaw(e.dim.id) + ';"></span>'
                     + '<span class="tt-picker-name">' + escapeHtml(e.activity.name)
                     + (onTree[e.activity.id] ? ' <span class="tt-picker-tag">on tree</span>' : '') + '</span>'
-                    + '<span class="tt-picker-meta">' + escapeHtml(e.activity.frequency || '') + (prog.mastered ? ' · ⭐' : '') + '</span>'
+                    + '<span class="tt-picker-meta">' + escapeHtml(e.activity.frequency || '')
+                    + (prog.mastered ? ' <span class="tt-gold">' + ttIcon('star', 11) + '</span>' : '') + '</span>'
                     + '</button>';
             }).join('') || '<p class="tt-muted">No activities available.</p>';
             ttShowOverlay(
@@ -15164,11 +15209,11 @@
             var e = node.activityId ? ttFindActivity(node.activityId) : null;
             var body = '';
 
-            var stateChip = { locked: '🔒 Locked', available: '✨ Available', active: '🌱 Active', archived: '🗄️ Archived' }[node.lifecycle] || node.lifecycle;
-            if (node.lifecycle === 'active' && ttNodeIsMastered(node)) stateChip = '⭐ Mastered';
+            var stateChip = { locked: 'Locked', available: 'Available', active: 'In progress', archived: 'Archived' }[node.lifecycle] || node.lifecycle;
+            if (node.lifecycle === 'active' && ttNodeIsMastered(node)) stateChip = 'Mastered';
 
-            body += '<div class="tt-sheet-head">'
-                + '<div class="tt-sheet-dot" style="background:' + hex + ';"></div>'
+            body += '<div class="tt-sheet-head" style="--tt-dim:' + hex + ';">'
+                + '<div class="tt-sheet-bar"></div>'
                 + '<div class="tt-sheet-titles">'
                 + '<div class="tt-sheet-title">' + escapeHtml(node.title) + '</div>'
                 + '<div class="tt-sheet-sub">' + escapeHtml(dimLabel) + ' · Tier ' + (node.tier || 1) + ' · ' + stateChip + '</div>'
@@ -15179,8 +15224,9 @@
                 var prog = ttMasteryProgress(e.activity);
                 var windowLabel = prog.windowDays ? 'last ' + prog.windowDays + ' days' : 'lifetime';
                 body += '<div class="tt-sheet-progress">'
-                    + '<div class="tt-sheet-progress-label">Mastery — ' + (prog.mastered ? 'achieved ⭐' :
-                        prog.count + ' / ' + prog.target + ' completions (' + windowLabel + ')') + '</div>'
+                    + '<div class="tt-sheet-progress-label">Mastery' + (prog.mastered
+                        ? ' <span class="tt-gold">' + ttIcon('star', 11) + ' achieved</span>'
+                        : ' — <span class="tt-num">' + prog.count + ' / ' + prog.target + '</span> completions (' + windowLabel + ')') + '</div>'
                     + '<div class="tt-progressbar"><div class="tt-progressbar-fill" style="width:' + Math.round(prog.pct * 100) + '%;background:' + hex + ';"></div></div>'
                     + '</div>';
             }
@@ -15198,30 +15244,35 @@
                             label = pe ? pe.activity.name : '(removed activity)';
                             met = pe ? !!pe.activity.techTreeMasteredAt : true;
                         }
-                        return '<div class="tt-sheet-prereq' + (met ? ' met' : '') + '">' + (met ? '⭐' : '○') + ' ' + escapeHtml(label) + '</div>';
+                        return '<div class="tt-sheet-prereq' + (met ? ' met' : '') + '">'
+                            + (met ? ttIcon('check', 12) : ttIcon('circle', 11)) + ' ' + escapeHtml(label) + '</div>';
                     }).join('') + '</div>';
             }
 
+            function btn(cls, action, icon, label) {
+                return '<button class="tt-btn' + (cls ? ' ' + cls : '') + '" onclick="' + action + '(\'' + node.id + '\')">'
+                    + ttIcon(icon) + '<span>' + label + '</span></button>';
+            }
             var actions = '';
             if (node.lifecycle === 'available' && node.kind === 'suggested') {
-                actions += '<button class="tt-btn tt-btn-primary" onclick="ttAcceptNode(\'' + node.id + '\')">✅ Accept as new activity</button>';
-                actions += '<button class="tt-btn" onclick="ttMapNode(\'' + node.id + '\')">🔗 I already do this</button>';
+                actions += btn('tt-btn-primary', 'ttAcceptNode', 'plus', 'Accept as new activity');
+                actions += btn('', 'ttMapNode', 'link', 'I already do this');
                 if (ttRevisionAvailable() && node.source === 'ai') {
-                    actions += '<button class="tt-btn" onclick="ttRequestRevision(\'' + node.id + '\')">✏️ Request revision</button>';
+                    actions += btn('', 'ttRequestRevision', 'edit', 'Request revision');
                 }
-                actions += '<button class="tt-btn tt-btn-ghost" onclick="ttRejectNode(\'' + node.id + '\')">🚫 Not now</button>';
+                actions += btn('tt-btn-ghost', 'ttRejectNode', 'archive', 'Not now');
             } else if (node.lifecycle === 'locked') {
                 if (ttRevisionAvailable() && node.source === 'ai') {
-                    actions += '<button class="tt-btn" onclick="ttRequestRevision(\'' + node.id + '\')">✏️ Request revision</button>';
+                    actions += btn('', 'ttRequestRevision', 'edit', 'Request revision');
                 }
-                actions += '<button class="tt-btn tt-btn-ghost" onclick="ttRejectNode(\'' + node.id + '\')">🚫 Not now</button>';
+                actions += btn('tt-btn-ghost', 'ttRejectNode', 'archive', 'Not now');
             } else if (node.lifecycle === 'archived') {
-                actions += '<button class="tt-btn tt-btn-primary" onclick="ttReviveNode(\'' + node.id + '\')">♻️ Revive</button>';
+                actions += btn('tt-btn-primary', 'ttReviveNode', 'revive', 'Revive');
             } else if (node.lifecycle === 'active' && e && !e.activity.techTreeMasteredAt) {
-                actions += '<button class="tt-btn" onclick="ttEditMasteryGoal(\'' + node.id + '\')">🎯 Edit mastery goal</button>';
+                actions += btn('', 'ttEditMasteryGoal', 'target', 'Edit mastery goal');
             }
             if (node.lifecycle !== 'active' && node.lifecycle !== 'archived') {
-                actions += '<button class="tt-btn tt-btn-ghost" onclick="ttOpenPrereqEditor(\'' + node.id + '\')">🕸️ Edit prerequisites</button>';
+                actions += btn('tt-btn-ghost', 'ttOpenPrereqEditor', 'branch', 'Edit prerequisites');
             }
             body += '<div class="tt-sheet-actions">' + actions + '</div>';
 
@@ -15295,8 +15346,13 @@
                     var group = nodes.filter(function(nd) {
                         return !nd.isNexus && (nd.dimensionId || 'uncategorized') === dimId && (nd.tier || 1) === tier;
                     });
+                    // Stagger alternate tiers by a half-step so consecutive tiers
+                    // don't stack on the same radial line (reduces label overlap).
+                    var stagger = (tier % 2 === 0 && group.length > 0)
+                        ? sector.span / (2 * (group.length + 1)) : 0;
                     group.forEach(function(nd, i) {
-                        var angle = sector.start + sector.span * (i + 1) / (group.length + 1);
+                        var angle = sector.start + sector.span * (i + 1) / (group.length + 1) + stagger;
+                        angle = Math.min(sector.start + sector.span - 0.06, angle);
                         var r = CORE_R + RING_GAP * tier;
                         pos[nd.id] = { x: Math.cos(angle) * r, y: Math.sin(angle) * r };
                     });
@@ -15317,7 +15373,7 @@
 
             return {
                 nodes: nodes, sectors: sectors, positions: pos,
-                coreR: CORE_R, extent: CORE_R + RING_GAP * maxTier + 70
+                coreR: CORE_R, extent: CORE_R + RING_GAP * maxTier + 88
             };
         }
 
@@ -15325,28 +15381,40 @@
             var layout = ttComputeLayout(showArchived);
             var tt = ensureTechTree();
             var E = layout.extent;
-            var NR = 22; // node radius
+            var NR = 20; // node radius
             var CIRC = 2 * Math.PI * NR;
             var svg = '';
 
-            // Sector wedges (subtle)
+            // Sector wedges: faint tint + a colored arc band at the outer edge
+            // carrying the dimension identity ("dimension colors tint, they
+            // don't fill" — design brief).
+            var bandR = E - 26;
             Object.keys(layout.sectors).forEach(function(dimId) {
                 var s = layout.sectors[dimId];
                 var hex = ttDimHexRaw(dimId);
-                var r = E - 40;
-                var x1 = Math.cos(s.start) * r, y1 = Math.sin(s.start) * r;
-                var x2 = Math.cos(s.start + s.span) * r, y2 = Math.sin(s.start + s.span) * r;
-                var large = s.span > Math.PI ? 1 : 0;
-                svg += '<path d="M0,0 L' + x1.toFixed(1) + ',' + y1.toFixed(1)
-                    + ' A' + r + ',' + r + ' 0 ' + large + ',1 ' + x2.toFixed(1) + ',' + y2.toFixed(1)
-                    + ' Z" fill="' + hex + '" opacity="0.06"/>';
-                // Sector label along the outer edge
-                var lx = Math.cos(s.center) * (r - 12), ly = Math.sin(s.center) * (r - 12);
-                svg += '<text x="' + lx.toFixed(1) + '" y="' + ly.toFixed(1) + '" class="tt-svg-sector-label" fill="' + hex + '" text-anchor="middle">'
+                var pad = 0.02; // radians of breathing room between bands
+                var a0 = s.start + pad, a1 = s.start + s.span - pad;
+                var large = (a1 - a0) > Math.PI ? 1 : 0;
+                var x1 = Math.cos(a0) * bandR, y1 = Math.sin(a0) * bandR;
+                var x2 = Math.cos(a1) * bandR, y2 = Math.sin(a1) * bandR;
+                // wedge tint
+                svg += '<path d="M0,0 L' + (Math.cos(s.start) * bandR).toFixed(1) + ',' + (Math.sin(s.start) * bandR).toFixed(1)
+                    + ' A' + bandR + ',' + bandR + ' 0 ' + (s.span > Math.PI ? 1 : 0) + ',1 '
+                    + (Math.cos(s.start + s.span) * bandR).toFixed(1) + ',' + (Math.sin(s.start + s.span) * bandR).toFixed(1)
+                    + ' Z" fill="' + hex + '" opacity="0.05"/>';
+                // colored identity band
+                svg += '<path d="M' + x1.toFixed(1) + ',' + y1.toFixed(1)
+                    + ' A' + bandR + ',' + bandR + ' 0 ' + large + ',1 ' + x2.toFixed(1) + ',' + y2.toFixed(1)
+                    + '" fill="none" stroke="' + hex + '" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>';
+                // label just outside the band, upright
+                var lx = Math.cos(s.center) * (bandR + 14), ly = Math.sin(s.center) * (bandR + 14);
+                svg += '<text x="' + lx.toFixed(1) + '" y="' + (ly + 4).toFixed(1) + '" class="tt-svg-sector-label" fill="' + hex + '" text-anchor="middle">'
                     + escapeHtml(ttDimName(dimId)) + '</text>';
             });
 
-            // Edges — prerequisites plus manual connections
+            // Edges — organic quadratic curves pulled gently toward the core.
+            // Solid + dimension-colored once the source is mastered; a quiet
+            // dashed hairline while the dependency is still open.
             var drawnEdges = {};
             function edge(fromId, toId) {
                 var key = fromId + '>' + toId;
@@ -15356,11 +15424,15 @@
                 if (!a || !b) return;
                 var from = tt.nodes.find(function(n) { return n.id === fromId; });
                 var met = from ? ttNodeIsMastered(from) : false;
-                svg += '<line x1="' + a.x.toFixed(1) + '" y1="' + a.y.toFixed(1) + '" x2="' + b.x.toFixed(1) + '" y2="' + b.y.toFixed(1)
-                    + '" stroke="' + (met ? ttDimHexRaw(from && from.dimensionId) : 'rgba(150,150,160,0.35)') + '"'
-                    + ' stroke-width="2"' + (met ? '' : ' stroke-dasharray="5,5"') + '/>';
+                var hex = ttDimHexRaw(from && from.dimensionId);
+                var mx = (a.x + b.x) / 2 * 0.78, my = (a.y + b.y) / 2 * 0.78;
+                var d = 'M' + a.x.toFixed(1) + ',' + a.y.toFixed(1)
+                    + ' Q' + mx.toFixed(1) + ',' + my.toFixed(1)
+                    + ' ' + b.x.toFixed(1) + ',' + b.y.toFixed(1);
+                svg += '<path d="' + d + '" fill="none" stroke="' + (met ? hex : 'rgba(150,150,160,0.22)') + '"'
+                    + ' stroke-width="' + (met ? 2 : 1.5) + '"'
+                    + (met ? ' opacity="0.8"' : ' stroke-dasharray="3,6" stroke-linecap="round"') + '/>';
             }
-            // Activity-prereq edges anchor at the node representing that activity, if any
             var nodeByActivity = {};
             layout.nodes.forEach(function(n) { if (n.activityId) nodeByActivity[n.activityId] = n.id; });
             layout.nodes.forEach(function(n) {
@@ -15371,59 +15443,80 @@
             });
             (tt.connections || []).forEach(function(c) { edge(c.fromNodeId, c.toNodeId); });
 
-            // Tier-1 trunk lines from core
-            layout.nodes.forEach(function(n) {
-                if ((n.tier || 1) !== 1 || (n.prerequisites || []).length) return;
-                var p = layout.positions[n.id];
-                if (!p) return;
-                svg += '<line x1="0" y1="0" x2="' + p.x.toFixed(1) + '" y2="' + p.y.toFixed(1) + '" stroke="rgba(150,150,160,0.18)" stroke-width="1.5"/>';
-            });
-
             // Core
             svg += '<circle cx="0" cy="0" r="' + layout.coreR + '" class="tt-svg-core"/>'
-                + '<text x="0" y="-4" class="tt-svg-core-label" text-anchor="middle">Lv ' + (window.userData.level || 1) + '</text>'
+                + '<text x="0" y="-3" class="tt-svg-core-label" text-anchor="middle">Lv ' + (window.userData.level || 1) + '</text>'
                 + '<text x="0" y="12" class="tt-svg-core-sub" text-anchor="middle">YOU</text>';
 
-            // Nodes
+            // Small stroked glyphs drawn in SVG (no emoji — design brief)
+            function glyphLock(color) {
+                return '<g stroke="' + color + '" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round">'
+                    + '<rect x="-5" y="-1" width="10" height="8" rx="1.6"/>'
+                    + '<path d="M-3 -1 v-2.4 a3 3 0 0 1 6 0 V-1"/></g>';
+            }
+            function glyphStar(color) {
+                return '<path fill="' + color + '" transform="scale(0.62) translate(0,1)" d="M0,-10 L2.9,-3.5 10,-2.6 4.7,2.2 6.1,9.3 0,5.8 -6.1,9.3 -4.7,2.2 -10,-2.6 -2.9,-3.5 Z"/>';
+            }
+            function glyphPlus(color) {
+                return '<g stroke="' + color + '" stroke-width="2.2" stroke-linecap="round">'
+                    + '<line x1="-5" y1="0" x2="5" y2="0"/><line x1="0" y1="-5" x2="0" y2="5"/></g>';
+            }
+            function glyphArchive(color) {
+                return '<g stroke="' + color + '" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round">'
+                    + '<rect x="-6" y="-5" width="12" height="4" rx="1"/>'
+                    + '<path d="M-5 -1 v6.5 h10 V-1"/><line x1="-2" y1="2.4" x2="2" y2="2.4"/></g>';
+            }
+
+            // Nodes — every state carries its dimension color; mastery is a
+            // proportional ring fill from grey (0%) to full color (100%).
             layout.nodes.forEach(function(n) {
                 var p = layout.positions[n.id];
                 if (!p) return;
                 var hex = ttDimHexRaw(n.dimensionId);
+                var rgb = _dimRgb(hex);
                 var e = n.activityId ? ttFindActivity(n.activityId) : null;
                 var prog = e ? ttMasteryProgress(e.activity) : { pct: 0, mastered: false };
                 var isMastered = n.lifecycle === 'active' && prog.mastered;
                 var cls = 'tt-svg-node tt-' + n.lifecycle + (n.isNexus ? ' tt-nexus' : '');
                 var click = interactive ? ' onclick="ttOpenNode(\'' + n.id + '\')"' : '';
                 svg += '<g class="' + cls + '" transform="translate(' + p.x.toFixed(1) + ',' + p.y.toFixed(1) + ')"' + click + ' style="cursor:pointer;">';
-                // Base disc
-                var baseFill = n.lifecycle === 'archived' ? 'rgba(120,120,130,0.10)'
+
+                var baseFill = n.lifecycle === 'archived' ? 'rgba(' + rgb + ',0.06)'
                     : isMastered ? hex
-                    : n.lifecycle === 'active' ? 'rgba(' + _dimRgb(hex) + ',' + (0.12 + prog.pct * 0.45).toFixed(2) + ')'
-                    : n.lifecycle === 'available' ? 'rgba(' + _dimRgb(hex) + ',0.16)'
-                    : 'rgba(120,120,130,0.12)';
-                svg += '<circle r="' + NR + '" fill="' + baseFill + '" class="tt-svg-disc"/>';
-                // Ring track + proportional mastery fill (spec §3 visual)
-                svg += '<circle r="' + NR + '" fill="none" stroke="rgba(150,150,160,0.25)" stroke-width="3"/>';
-                if (n.lifecycle === 'active' && prog.pct > 0) {
-                    svg += '<circle r="' + NR + '" fill="none" stroke="' + hex + '" stroke-width="3" stroke-linecap="round"'
-                        + ' stroke-dasharray="' + (CIRC * prog.pct).toFixed(1) + ' ' + CIRC.toFixed(1) + '"'
-                        + ' transform="rotate(-90)"/>';
+                    : n.lifecycle === 'active' ? 'rgba(' + rgb + ',' + (0.10 + prog.pct * 0.45).toFixed(2) + ')'
+                    : n.lifecycle === 'available' ? 'rgba(' + rgb + ',0.15)'
+                    : 'rgba(' + rgb + ',0.07)';
+                svg += '<circle r="' + NR + '" fill="' + baseFill + '"/>';
+
+                if (n.lifecycle === 'active') {
+                    // grey track + colored proportional arc
+                    svg += '<circle r="' + NR + '" fill="none" stroke="rgba(150,150,160,0.25)" stroke-width="3"/>';
+                    if (prog.pct > 0) {
+                        svg += '<circle r="' + NR + '" fill="none" stroke="' + hex + '" stroke-width="3" stroke-linecap="round"'
+                            + ' stroke-dasharray="' + (CIRC * prog.pct).toFixed(1) + ' ' + CIRC.toFixed(1) + '"'
+                            + ' transform="rotate(-90)"/>';
+                    }
                 } else if (n.lifecycle === 'available') {
-                    svg += '<circle r="' + NR + '" fill="none" stroke="' + hex + '" stroke-width="2" stroke-dasharray="4,4" class="tt-svg-avail-ring"/>';
+                    svg += '<circle r="' + NR + '" fill="none" stroke="' + hex + '" stroke-width="2.4" class="tt-svg-avail-ring"/>';
+                } else if (n.lifecycle === 'locked') {
+                    svg += '<circle r="' + NR + '" fill="none" stroke="rgba(' + rgb + ',0.4)" stroke-width="2" stroke-dasharray="3,5"/>';
+                } else {
+                    svg += '<circle r="' + NR + '" fill="none" stroke="rgba(150,150,160,0.3)" stroke-width="1.6" stroke-dasharray="3,5"/>';
                 }
                 if (n.isNexus) {
-                    svg += '<circle r="' + (NR + 5) + '" fill="none" stroke="' + hex + '" stroke-width="1.2" stroke-dasharray="2,4" opacity="0.8"/>';
+                    svg += '<circle r="' + (NR + 4.5) + '" fill="none" stroke="' + hex + '" stroke-width="1.1" stroke-dasharray="2,4" opacity="0.8"/>';
                 }
-                // Glyph
-                var glyph = n.lifecycle === 'locked' ? '🔒'
-                    : n.lifecycle === 'archived' ? '🗄️'
-                    : isMastered ? '⭐'
-                    : n.lifecycle === 'active' ? '' : '＋';
-                if (glyph) svg += '<text y="6" text-anchor="middle" class="tt-svg-glyph">' + glyph + '</text>';
-                else if (n.lifecycle === 'active') svg += '<text y="5" text-anchor="middle" class="tt-svg-pct" fill="#fff">' + Math.round(prog.pct * 100) + '%</text>';
-                // Label
+
+                if (isMastered) svg += glyphStar('#fff');
+                else if (n.lifecycle === 'active') svg += '<text y="4.5" text-anchor="middle" class="tt-svg-pct">' + Math.round(prog.pct * 100) + '%</text>';
+                else if (n.lifecycle === 'available') svg += glyphPlus(hex);
+                else if (n.lifecycle === 'locked') svg += glyphLock('rgba(' + rgb + ',0.75)');
+                else if (n.lifecycle === 'archived') svg += glyphArchive('rgba(150,150,160,0.7)');
+
                 var label = n.title.length > 16 ? n.title.slice(0, 15) + '…' : n.title;
-                svg += '<text y="' + (NR + 14) + '" text-anchor="middle" class="tt-svg-label">' + escapeHtml(label) + '</text>';
+                svg += '<text y="' + (NR + 13) + '" text-anchor="middle" class="tt-svg-label'
+                    + (n.lifecycle === 'locked' || n.lifecycle === 'archived' ? ' tt-svg-label-dim' : '') + '">'
+                    + escapeHtml(label) + '</text>';
                 svg += '</g>';
             });
 
@@ -15441,9 +15534,9 @@
             }
             el.innerHTML =
                 '<div class="tt-fullscreen-bar">'
-                + '<span class="tt-fullscreen-title">🌳 Tech Tree</span>'
+                + '<span class="tt-fullscreen-title">Tech Tree</span>'
                 + '<span class="tt-fullscreen-hint">drag to pan · pinch/scroll to zoom</span>'
-                + '<button class="tt-btn tt-btn-ghost" onclick="ttCloseFullscreen()">✕ Close</button>'
+                + '<button class="tt-btn tt-btn-ghost" onclick="ttCloseFullscreen()">' + ttIcon('x', 12) + '<span>Close</span></button>'
                 + '</div>'
                 + '<div class="tt-fullscreen-canvas" id="ttFsCanvas">' + ttBuildTreeSVG(window._ttShowArchived, true) + '</div>';
             el.style.display = 'flex';
@@ -15544,28 +15637,31 @@
                     + '<div class="tt-building-spinner"></div>'
                     + '<h2 class="tt-title">' + typeLabel + '…</h2>'
                     + '<p class="tt-muted">Your request is queued for the next generation cycle. This usually takes <strong>5–15 minutes</strong> — you can leave this screen; the tree appears automatically when ready.</p>'
-                    + '<button class="tt-btn tt-btn-ghost" onclick="ttCancelPending()">Cancel request</button>'
+                    + '<button class="tt-btn tt-btn-ghost" onclick="ttCancelPending()">' + ttIcon('x', 12) + '<span>Cancel request</span></button>'
                     + '</div>';
                 return;
             }
 
-            // ── Empty / gate state (spec §2) ──────────────────────────────
+            // ── Empty / gate state (spec §2) — onboarding empty: CTA + copy ──
             if (tt.status !== 'generated' || !tt.nodes.length) {
                 var gate = ttGateStatus();
                 var actOk = gate.activityCount >= 3;
                 container.innerHTML =
                     '<div class="tt-card">'
-                    + '<h2 class="tt-title">🌳 Character Tech Tree</h2>'
+                    + '<h2 class="tt-title">Character Tech Tree</h2>'
                     + '<p class="tt-muted">State your goal and the AI proposes a personalized path toward it — a tree of new activities that unlock and master as you complete them, built on top of what you already do.</p>'
-                    + (tt.lastError ? '<div class="tt-error">⚠️ ' + escapeHtml(tt.lastError) + '</div>' : '')
+                    + (tt.lastError ? '<div class="tt-error">' + escapeHtml(tt.lastError) + '</div>' : '')
                     + '<label class="pl-field-label" style="margin-top:14px;">Your goal</label>'
                     + '<textarea id="ttGoalInput" class="pl-input tt-goal-input" rows="3" maxlength="500" placeholder="e.g. Run a half-marathon by next summer while keeping my study routine">' + escapeHtml(tt.goalText || '') + '</textarea>'
                     + '<button class="tt-btn tt-btn-ghost" style="margin-top:8px;" onclick="ttSaveGoal()">Save goal</button>'
                     + '<div class="tt-gate">'
-                    + '<div class="tt-gate-item' + (actOk ? ' met' : '') + '">' + (actOk ? '✅' : '○') + ' ' + Math.min(gate.activityCount, 3) + '/3 activities</div>'
-                    + '<div class="tt-gate-item' + (gate.hasGoal ? ' met' : '') + '">' + (gate.hasGoal ? '✅' : '○') + ' goal ' + (gate.hasGoal ? 'set' : 'not set') + '</div>'
+                    + '<div class="tt-gate-item' + (actOk ? ' met' : '') + '">' + ttIcon(actOk ? 'check' : 'circle', 12)
+                    + '<span><span class="tt-num">' + Math.min(gate.activityCount, 3) + '/3</span> activities</span></div>'
+                    + '<div class="tt-gate-item' + (gate.hasGoal ? ' met' : '') + '">' + ttIcon(gate.hasGoal ? 'check' : 'circle', 12)
+                    + '<span>goal ' + (gate.hasGoal ? 'set' : 'not set') + '</span></div>'
                     + '</div>'
-                    + '<button class="tt-btn tt-btn-primary tt-generate-btn" ' + (gate.met ? '' : 'disabled ') + 'onclick="ttRequestGenerate()">⚡ Generate Character Tree</button>'
+                    + '<button class="tt-btn tt-btn-primary tt-generate-btn" ' + (gate.met ? '' : 'disabled ') + 'onclick="ttRequestGenerate()">'
+                    + ttIcon('branch') + '<span>Generate Character Tree</span></button>'
                     + (gate.met ? '' : '<p class="ay-hint" style="text-align:center;">Unlocks with 3+ activities and a saved goal</p>')
                     + '</div>';
                 return;
@@ -15578,44 +15674,49 @@
             var archivedCount = tt.nodes.filter(function(n) { return n.lifecycle === 'archived'; }).length;
 
             var html = '<div class="tt-toolbar">'
-                + '<button class="tt-tb-btn" onclick="ttOpenAddExisting()" title="Add existing activity">＋ Add existing</button>'
-                + '<button class="tt-tb-btn" onclick="ttOpenCustomNodeForm()" title="Add custom node">✦ Custom node</button>'
-                + '<button class="tt-tb-btn" onclick="ttRequestRegenerate()">🔄 Regenerate' + (cost > 0 ? ' (' + cost + ' XP)' : ' (free)') + '</button>'
-                + (archivedCount ? '<button class="tt-tb-btn" onclick="ttToggleArchived()">' + (window._ttShowArchived ? 'Hide' : 'Show') + ' archived (' + archivedCount + ')</button>' : '')
+                + '<button class="tt-tb-btn" onclick="ttOpenAddExisting()">' + ttIcon('plus', 12) + '<span>Add existing</span></button>'
+                + '<button class="tt-tb-btn" onclick="ttOpenCustomNodeForm()">' + ttIcon('edit', 12) + '<span>Custom node</span></button>'
+                + '<button class="tt-tb-btn" onclick="ttRequestRegenerate()">' + ttIcon('refresh', 12)
+                + '<span>Regenerate' + (cost > 0 ? ' · <span class="tt-num">' + cost + '</span> XP' : ' · free') + '</span></button>'
+                + (archivedCount ? '<button class="tt-tb-btn" onclick="ttToggleArchived()">' + ttIcon('archive', 12)
+                    + '<span>' + (window._ttShowArchived ? 'Hide' : 'Show') + ' archived (' + archivedCount + ')</span></button>' : '')
                 + '</div>';
 
             html += '<div class="tt-goal-bar">'
-                + '<span class="tt-goal-text">🎯 ' + escapeHtml(tt.goalText || 'No goal set') + '</span>'
+                + ttIcon('target', 13)
+                + '<span class="tt-goal-text">' + escapeHtml(tt.goalText || 'No goal set') + '</span>'
                 + '<button class="tt-goal-edit" onclick="ttStartGoalEdit()">Edit</button>'
                 + '</div>';
             if (revOpen) {
-                html += '<p class="tt-rev-note">✏️ ' + revLeft + ' revision' + (revLeft === 1 ? '' : 's') + ' left — tap a suggested node to request a targeted fix (24h window).</p>';
+                html += '<p class="tt-rev-note"><span class="tt-num">' + revLeft + '</span> revision' + (revLeft === 1 ? '' : 's') + ' left — tap a suggested node to request a targeted fix (24h window).</p>';
             }
 
             html += '<div class="tt-canvas-preview" onclick="ttOpenFullscreen()">'
                 + ttBuildTreeSVG(window._ttShowArchived, false)
-                + '<div class="tt-canvas-expand">⛶ Tap to explore</div>'
+                + '<div class="tt-canvas-expand">' + ttIcon('expand', 11) + '<span>Tap to explore</span></div>'
                 + '</div>';
 
-            // Node list — grouped, tappable rows mirroring the canvas
+            // Node list — grouped, tappable rows mirroring the canvas.
+            // Left-edge dimension bar per the brief's dimension color treatment.
             function nodeRow(n) {
                 var hex = ttDimHexRaw(n.dimensionId);
                 var e = n.activityId ? ttFindActivity(n.activityId) : null;
                 var prog = e ? ttMasteryProgress(e.activity) : null;
                 var right = '';
                 if (n.lifecycle === 'active' && prog) {
-                    right = prog.mastered ? '⭐' : Math.round(prog.pct * 100) + '%';
-                } else if (n.lifecycle === 'locked') right = '🔒';
-                else if (n.lifecycle === 'available') right = '✨';
-                else if (n.lifecycle === 'archived') right = '🗄️';
-                return '<button class="tt-node-row" onclick="ttOpenNode(\'' + n.id + '\')">'
-                    + '<span class="tt-prereq-dot" style="background:' + hex + ';"></span>'
+                    right = prog.mastered
+                        ? '<span class="tt-gold">' + ttIcon('star', 13) + '</span>'
+                        : '<span class="tt-num tt-row-pct">' + Math.round(prog.pct * 100) + '%</span>';
+                } else if (n.lifecycle === 'locked') right = ttIcon('lock', 12);
+                else if (n.lifecycle === 'available') right = '<span class="tt-blue">' + ttIcon('spark', 13) + '</span>';
+                else if (n.lifecycle === 'archived') right = ttIcon('archive', 12);
+                return '<button class="tt-node-row" style="--tt-dim:' + hex + ';--tt-dim-rgb:' + _dimRgb(hex) + ';" onclick="ttOpenNode(\'' + n.id + '\')">'
                     + '<span class="tt-node-row-title">' + escapeHtml(n.title) + (n.isNexus ? ' <span class="tt-nexus-tag">nexus</span>' : '') + '</span>'
                     + '<span class="tt-node-row-right">' + right + '</span>'
                     + '</button>';
             }
             var groups = [
-                { label: 'Available — tap to accept, map, or pass', match: function(n) { return n.lifecycle === 'available'; } },
+                { label: 'Available', match: function(n) { return n.lifecycle === 'available'; } },
                 { label: 'In progress', match: function(n) { return n.lifecycle === 'active' && !ttNodeIsMastered(n); } },
                 { label: 'Mastered', match: function(n) { return n.lifecycle === 'active' && ttNodeIsMastered(n); } },
                 { label: 'Locked', match: function(n) { return n.lifecycle === 'locked'; } },
@@ -15758,7 +15859,7 @@
                     var btn = document.createElement('button');
                     btn.className = 'gc-action-item';
                     btn.setAttribute('data-tt-add', '1');
-                    btn.innerHTML = '<span class="gc-action-icon">🌳</span><span>Add to Tech Tree</span>';
+                    btn.innerHTML = '<span class="gc-action-icon">' + ttIcon('branch', 14) + '</span><span>Add to Tech Tree</span>';
                     btn.addEventListener('click', function(e) {
                         e.stopPropagation();
                         closeGridActionMenu();
