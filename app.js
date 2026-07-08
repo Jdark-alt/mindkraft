@@ -14670,6 +14670,17 @@
             var tt = window.userData.techTree;
             if (tt && tt.nodes) {
                 tt.nodes.forEach(function(node) {
+                    // Nodes backed by a real activity follow that activity's
+                    // CURRENT dimension — recategorizing an activity moves its
+                    // node to the right sector on the next pass, so the tree
+                    // never locks in a stale placement.
+                    if (node.activityId) {
+                        var e = ttFindActivity(node.activityId);
+                        if (e && node.dimensionId !== e.dim.id) {
+                            node.dimensionId = e.dim.id;
+                            changed = true;
+                        }
+                    }
                     if (node.lifecycle === 'archived' || node.lifecycle === 'active') return;
                     var want = ttNodePrereqsMet(node) ? 'available' : 'locked';
                     if (node.lifecycle !== want) { node.lifecycle = want; changed = true; }
@@ -15299,7 +15310,10 @@
             var tt = ensureTechTree();
             var nodes = tt.nodes.filter(function(n) { return showArchived || n.lifecycle !== 'archived'; });
             var dims = window.userData.dimensions || [];
-            var CORE_R = 34, RING_GAP = 78;
+            var CORE_R = 36;
+            var FIRST_RING = 118;     // radius of tier 1
+            var RING_GAP_MIN = 76;    // minimum gap between consecutive tier rings
+            var MIN_ARC = 68;         // minimum arc distance between node centers on a ring
 
             // XP per dimension (from activity lifetime XP)
             var xpByDim = {};
@@ -15309,13 +15323,12 @@
                 xpByDim[d.id] = sum;
             });
 
-            // Sector list = dimensions that own at least one visible non-nexus node
+            // Sector list = dimensions that own at least one visible node
             var usedDimIds = [];
             nodes.forEach(function(n) {
                 var id = n.dimensionId || 'uncategorized';
                 if (usedDimIds.indexOf(id) === -1) usedDimIds.push(id);
             });
-            // Keep canonical dimension order where possible
             usedDimIds.sort(function(a, b) {
                 var ia = dims.findIndex(function(d) { return d.id === a; });
                 var ib = dims.findIndex(function(d) { return d.id === b; });
@@ -15338,27 +15351,55 @@
             var maxTier = 1;
             nodes.forEach(function(nd) { maxTier = Math.max(maxTier, nd.tier || 1); });
 
+            // Group nodes per sector per tier
+            var groupsBySector = {};
+            usedDimIds.forEach(function(dimId) {
+                groupsBySector[dimId] = {};
+                for (var t = 1; t <= maxTier; t++) groupsBySector[dimId][t] = [];
+            });
+            nodes.forEach(function(nd) {
+                if (nd.isNexus) return;
+                var dimId = usedDimIds.indexOf(nd.dimensionId) !== -1 ? nd.dimensionId : (nd.dimensionId || 'uncategorized');
+                if (!groupsBySector[dimId]) return;
+                groupsBySector[dimId][nd.tier || 1].push(nd);
+            });
+
+            // Concentric tier rings that GROW as needed: each ring's radius
+            // expands until every sector on it gives its nodes at least
+            // MIN_ARC of arc length — crowded trees get bigger, never denser.
+            // The canvas is pan/zoomable, so size is free and clutter isn't.
+            var ringR = {};
+            var prev = CORE_R;
+            for (var tier = 1; tier <= maxTier; tier++) {
+                var r = Math.max(tier === 1 ? FIRST_RING : 0, prev + RING_GAP_MIN);
+                usedDimIds.forEach(function(dimId) {
+                    var count = groupsBySector[dimId][tier].length;
+                    if (!count) return;
+                    var needed = MIN_ARC * (count + 1) / sectors[dimId].span;
+                    if (needed > r) r = needed;
+                });
+                ringR[tier] = r;
+                prev = r;
+            }
+
             var pos = {};
-            // Regular nodes: per dimension, per tier, spread evenly across sector
             usedDimIds.forEach(function(dimId) {
                 var sector = sectors[dimId];
-                for (var tier = 1; tier <= maxTier; tier++) {
-                    var group = nodes.filter(function(nd) {
-                        return !nd.isNexus && (nd.dimensionId || 'uncategorized') === dimId && (nd.tier || 1) === tier;
-                    });
+                for (var t = 1; t <= maxTier; t++) {
+                    var group = groupsBySector[dimId][t];
                     // Stagger alternate tiers by a half-step so consecutive tiers
-                    // don't stack on the same radial line (reduces label overlap).
-                    var stagger = (tier % 2 === 0 && group.length > 0)
+                    // don't stack on the same radial line.
+                    var stagger = (t % 2 === 0 && group.length > 0)
                         ? sector.span / (2 * (group.length + 1)) : 0;
                     group.forEach(function(nd, i) {
                         var angle = sector.start + sector.span * (i + 1) / (group.length + 1) + stagger;
                         angle = Math.min(sector.start + sector.span - 0.06, angle);
-                        var r = CORE_R + RING_GAP * tier;
-                        pos[nd.id] = { x: Math.cos(angle) * r, y: Math.sin(angle) * r };
+                        pos[nd.id] = { x: Math.cos(angle) * ringR[t], y: Math.sin(angle) * ringR[t] };
                     });
                 }
             });
-            // Nexus nodes: circular mean of their dimensions' sector centers
+            // Nexus nodes: circular mean of their dimensions' sector centers,
+            // nudged outward off the ring so their cross-sector role reads.
             nodes.filter(function(nd) { return nd.isNexus; }).forEach(function(nd, i) {
                 var ids = (nd.nexusDimensionIds && nd.nexusDimensionIds.length) ? nd.nexusDimensionIds : [nd.dimensionId];
                 var sx = 0, sy = 0, hits = 0;
@@ -15367,13 +15408,13 @@
                     if (s) { sx += Math.cos(s.center); sy += Math.sin(s.center); hits++; }
                 });
                 var angle = hits ? Math.atan2(sy, sx) : (i * 2.399);
-                var r = CORE_R + RING_GAP * (nd.tier || 1) + 10;
+                var r = (ringR[nd.tier || 1] || FIRST_RING) + 16;
                 pos[nd.id] = { x: Math.cos(angle) * r, y: Math.sin(angle) * r };
             });
 
             return {
-                nodes: nodes, sectors: sectors, positions: pos,
-                coreR: CORE_R, extent: CORE_R + RING_GAP * maxTier + 88
+                nodes: nodes, sectors: sectors, positions: pos, ringR: ringR, maxTier: maxTier,
+                coreR: CORE_R, extent: (ringR[maxTier] || FIRST_RING) + 96
             };
         }
 
@@ -15385,10 +15426,25 @@
             var CIRC = 2 * Math.PI * NR;
             var svg = '';
 
+            // Shared defs: core gradient + soft glow. Duplicate ids across the
+            // preview and fullscreen SVGs are fine — they resolve identically.
+            svg += '<defs>'
+                + '<radialGradient id="ttCoreGrad">'
+                + '<stop offset="0%" stop-color="rgba(90,159,212,0.45)"/>'
+                + '<stop offset="70%" stop-color="rgba(90,159,212,0.12)"/>'
+                + '<stop offset="100%" stop-color="rgba(90,159,212,0.03)"/>'
+                + '</radialGradient>'
+                + '</defs>';
+
+            // Concentric tier rings — the growth structure of the tree.
+            for (var t = 1; t <= layout.maxTier; t++) {
+                svg += '<circle r="' + layout.ringR[t].toFixed(1) + '" fill="none" stroke="rgba(150,150,170,0.07)" stroke-width="1"/>';
+            }
+
             // Sector wedges: faint tint + a colored arc band at the outer edge
             // carrying the dimension identity ("dimension colors tint, they
             // don't fill" — design brief).
-            var bandR = E - 26;
+            var bandR = (layout.ringR[layout.maxTier] || 118) + 48;
             Object.keys(layout.sectors).forEach(function(dimId) {
                 var s = layout.sectors[dimId];
                 var hex = ttDimHexRaw(dimId);
@@ -15443,8 +15499,9 @@
             });
             (tt.connections || []).forEach(function(c) { edge(c.fromNodeId, c.toNodeId); });
 
-            // Core
-            svg += '<circle cx="0" cy="0" r="' + layout.coreR + '" class="tt-svg-core"/>'
+            // Core — soft radial glow anchoring the whole tree
+            svg += '<circle cx="0" cy="0" r="' + (layout.coreR + 26) + '" fill="url(#ttCoreGrad)"/>'
+                + '<circle cx="0" cy="0" r="' + layout.coreR + '" class="tt-svg-core"/>'
                 + '<text x="0" y="-3" class="tt-svg-core-label" text-anchor="middle">Lv ' + (window.userData.level || 1) + '</text>'
                 + '<text x="0" y="12" class="tt-svg-core-sub" text-anchor="middle">YOU</text>';
 
@@ -15468,7 +15525,10 @@
             }
 
             // Nodes — every state carries its dimension color; mastery is a
-            // proportional ring fill from grey (0%) to full color (100%).
+            // proportional ring fill from grey (0%) to full color (100%),
+            // and a fully mastered node collapses into a small gold star:
+            // earned, permanent, and visually quiet so the frontier stays
+            // the busy part of the tree.
             layout.nodes.forEach(function(n) {
                 var p = layout.positions[n.id];
                 if (!p) return;
@@ -15477,12 +15537,31 @@
                 var e = n.activityId ? ttFindActivity(n.activityId) : null;
                 var prog = e ? ttMasteryProgress(e.activity) : { pct: 0, mastered: false };
                 var isMastered = n.lifecycle === 'active' && prog.mastered;
-                var cls = 'tt-svg-node tt-' + n.lifecycle + (n.isNexus ? ' tt-nexus' : '');
+                var cls = 'tt-svg-node tt-' + n.lifecycle + (n.isNexus ? ' tt-nexus' : '') + (isMastered ? ' tt-mastered' : '');
                 var click = interactive ? ' onclick="ttOpenNode(\'' + n.id + '\')"' : '';
                 svg += '<g class="' + cls + '" transform="translate(' + p.x.toFixed(1) + ',' + p.y.toFixed(1) + ')"' + click + ' style="cursor:pointer;">';
 
+                if (isMastered) {
+                    // Layered gold glow + dimension-colored heart + gold star
+                    svg += '<circle r="16" fill="rgba(245,197,99,0.07)"/>'
+                        + '<circle r="10" fill="rgba(245,197,99,0.13)"/>'
+                        + '<circle r="7" fill="rgba(' + rgb + ',0.9)"/>'
+                        + '<g transform="scale(0.78)">' + glyphStar('#f5c563') + '</g>';
+                    if (n.isNexus) {
+                        svg += '<circle r="12.5" fill="none" stroke="' + hex + '" stroke-width="1" stroke-dasharray="2,4" opacity="0.8"/>';
+                    }
+                    var slabel = n.title.length > 16 ? n.title.slice(0, 15) + '…' : n.title;
+                    svg += '<text y="24" text-anchor="middle" class="tt-svg-label-star">' + escapeHtml(slabel) + '</text>';
+                    svg += '</g>';
+                    return;
+                }
+
+                // Soft dimension halo behind live states
+                if (n.lifecycle === 'active' || n.lifecycle === 'available') {
+                    svg += '<circle r="' + (NR + 8) + '" fill="rgba(' + rgb + ',0.07)"/>';
+                }
+
                 var baseFill = n.lifecycle === 'archived' ? 'rgba(' + rgb + ',0.06)'
-                    : isMastered ? hex
                     : n.lifecycle === 'active' ? 'rgba(' + rgb + ',' + (0.10 + prog.pct * 0.45).toFixed(2) + ')'
                     : n.lifecycle === 'available' ? 'rgba(' + rgb + ',0.15)'
                     : 'rgba(' + rgb + ',0.07)';
@@ -15507,8 +15586,7 @@
                     svg += '<circle r="' + (NR + 4.5) + '" fill="none" stroke="' + hex + '" stroke-width="1.1" stroke-dasharray="2,4" opacity="0.8"/>';
                 }
 
-                if (isMastered) svg += glyphStar('#fff');
-                else if (n.lifecycle === 'active') svg += '<text y="4.5" text-anchor="middle" class="tt-svg-pct">' + Math.round(prog.pct * 100) + '%</text>';
+                if (n.lifecycle === 'active') svg += '<text y="4.5" text-anchor="middle" class="tt-svg-pct">' + Math.round(prog.pct * 100) + '%</text>';
                 else if (n.lifecycle === 'available') svg += glyphPlus(hex);
                 else if (n.lifecycle === 'locked') svg += glyphLock('rgba(' + rgb + ',0.75)');
                 else if (n.lifecycle === 'archived') svg += glyphArchive('rgba(150,150,160,0.7)');
@@ -15626,7 +15704,7 @@
             var container = document.getElementById('techTreeContainer');
             if (!container || !window.userData) return;
             var tt = ensureTechTree();
-            evaluateTechTreeMastery();
+            if (evaluateTechTreeMastery()) debouncedSaveUserData();
 
             // ── Building state ────────────────────────────────────────────
             if (tt.pendingRequest) {
