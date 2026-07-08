@@ -13,13 +13,31 @@ const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 const db = admin.firestore();
 
-// ── Tunables ───────────────────────────────────────────────────────────────
-const MODEL            = process.env.TECH_TREE_MODEL || 'meta/llama-3.3-70b-instruct';
-const NIM_BASE         = 'https://integrate.api.nvidia.com/v1';
-const NIM_ENDPOINT     = NIM_BASE + '/chat/completions';
+// ── Provider selection ─────────────────────────────────────────────────────
+// NVIDIA's hosted NIM endpoint black-holes connections from GitHub-hosted
+// runners (requests hang until timeout), so Groq — same Llama 3.3 70B model,
+// OpenAI-compatible API, free tier that works from Actions — is preferred
+// whenever its key is configured. Both providers speak the chat-completions
+// format, so everything outside this block is provider-agnostic.
 // Secrets pasted into GitHub often carry a trailing newline — an invalid
 // Authorization header makes undici fail with an opaque "fetch failed".
-const NVIDIA_API_KEY   = (process.env.NVIDIA_API_KEY || '').trim();
+const PROVIDERS = [
+    {
+        name: 'groq',
+        key: (process.env.GROQ_API_KEY || '').trim(),
+        base: 'https://api.groq.com/openai/v1',
+        model: process.env.TECH_TREE_MODEL || 'llama-3.3-70b-versatile',
+        keyHint: 'GROQ_API_KEY',
+    },
+    {
+        name: 'nvidia-nim',
+        key: (process.env.NVIDIA_API_KEY || '').trim(),
+        base: 'https://integrate.api.nvidia.com/v1',
+        model: process.env.TECH_TREE_MODEL || 'meta/llama-3.3-70b-instruct',
+        keyHint: 'NVIDIA_API_KEY',
+    },
+];
+const PROVIDER = PROVIDERS.find(p => p.key) || PROVIDERS[0];
 const GENERATE_NODES   = 12;  // spec §9: 10–14
 const REGENERATE_NODES = 6;   // spec §9: 4–8
 const REGEN_FREE_DAYS  = 30;
@@ -234,21 +252,21 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const FETCH_TIMEOUT_MS = 45000;
 
 async function callTechTreeModel(prompt, maxTokens) {
-    if (!NVIDIA_API_KEY) {
-        throw new Error('NVIDIA_API_KEY secret is missing or empty — add it under repo Settings → Secrets and variables → Actions');
+    if (!PROVIDER.key) {
+        throw new Error(PROVIDER.keyHint + ' secret is missing or empty — add it under repo Settings → Secrets and variables → Actions');
     }
 
     async function once(tokens) {
-        const res = await fetch(NIM_ENDPOINT, {
+        const res = await fetch(PROVIDER.base + '/chat/completions', {
             method: 'POST',
             signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
             headers: {
-                'Authorization': 'Bearer ' + NVIDIA_API_KEY,
+                'Authorization': 'Bearer ' + PROVIDER.key,
                 'Content-Type': 'application/json',
                 'Accept': 'application/json',
             },
             body: JSON.stringify({
-                model: MODEL,
+                model: PROVIDER.model,
                 messages: [
                     { role: 'system', content: prompt.system },
                     { role: 'user', content: prompt.user },
@@ -547,26 +565,27 @@ async function processUser(docRef, userData) {
 // separates "network/credentials broken" from "generation logic broken" right
 // in the Actions log.
 async function nimPreflight() {
-    if (!NVIDIA_API_KEY) {
-        console.error('NIM preflight: NVIDIA_API_KEY secret is missing or empty.');
+    if (!PROVIDER.key) {
+        console.error('Preflight: ' + PROVIDER.keyHint + ' secret is missing or empty.');
         return;
     }
     const started = Date.now();
     try {
-        const res = await fetch(NIM_BASE + '/models', {
+        const res = await fetch(PROVIDER.base + '/models', {
             signal: AbortSignal.timeout(15000),
-            headers: { 'Authorization': 'Bearer ' + NVIDIA_API_KEY },
+            headers: { 'Authorization': 'Bearer ' + PROVIDER.key },
         });
-        console.log('NIM preflight: HTTP', res.status, 'in', Date.now() - started, 'ms',
-            res.status === 401 ? '(key rejected — check the NVIDIA_API_KEY secret)' : '');
+        console.log('Preflight [' + PROVIDER.name + ']: HTTP', res.status, 'in', Date.now() - started, 'ms',
+            res.status === 401 ? '(key rejected — check the ' + PROVIDER.keyHint + ' secret)' : '');
     } catch (err) {
-        console.error('NIM preflight failed after', Date.now() - started, 'ms:', describeError(err));
+        console.error('Preflight [' + PROVIDER.name + '] failed after', Date.now() - started, 'ms:', describeError(err));
     }
 }
 
 async function main() {
     console.log('Tech Tree worker run at', new Date().toISOString());
-    console.log('Node', process.version, '| key configured:', NVIDIA_API_KEY ? `yes (${NVIDIA_API_KEY.length} chars)` : 'NO');
+    console.log('Node', process.version, '| provider:', PROVIDER.name, '| model:', PROVIDER.model,
+        '| key configured:', PROVIDER.key ? `yes (${PROVIDER.key.length} chars)` : 'NO — set ' + PROVIDER.keyHint);
     // Full-collection scan + in-code filter, same pattern as send-reminders.js
     // (avoids needing a composite index for a '!=' query on a map field).
     const snapshot = await db.collection('users').get();
