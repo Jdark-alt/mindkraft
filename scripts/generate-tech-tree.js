@@ -15,7 +15,11 @@ const db = admin.firestore();
 
 // ── Tunables ───────────────────────────────────────────────────────────────
 const MODEL            = process.env.TECH_TREE_MODEL || 'meta/llama-3.3-70b-instruct';
-const NIM_ENDPOINT     = 'https://integrate.api.nvidia.com/v1/chat/completions';
+const NIM_BASE         = 'https://integrate.api.nvidia.com/v1';
+const NIM_ENDPOINT     = NIM_BASE + '/chat/completions';
+// Secrets pasted into GitHub often carry a trailing newline — an invalid
+// Authorization header makes undici fail with an opaque "fetch failed".
+const NVIDIA_API_KEY   = (process.env.NVIDIA_API_KEY || '').trim();
 const GENERATE_NODES   = 12;  // spec §9: 10–14
 const REGENERATE_NODES = 6;   // spec §9: 4–8
 const REGEN_FREE_DAYS  = 30;
@@ -201,13 +205,38 @@ still following every rule above.`;
 // ── Model adapter (spec §16) ───────────────────────────────────────────────
 // The ONLY place that knows about NVIDIA NIM's request/response shape. To move
 // to Anthropic/OpenAI/a Cloud Function later, swap this function alone.
+
+// undici buries the real network failure (DNS, TLS, timeout, invalid header)
+// in the .cause chain behind a generic "fetch failed" — unwrap it so both the
+// Actions log and the in-app error say what actually went wrong.
+function describeError(err) {
+    const parts = [];
+    let e = err;
+    for (let i = 0; e && i < 5; i++) {
+        parts.push(e.code ? `${e.message} [${e.code}]` : e.message);
+        e = e.cause;
+    }
+    return parts.join(' ← ');
+}
+
+function isNetworkError(err) {
+    return err && (err.message === 'fetch failed' || (err.cause && err.cause.code));
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
 async function callTechTreeModel(prompt, maxTokens) {
+    if (!NVIDIA_API_KEY) {
+        throw new Error('NVIDIA_API_KEY secret is missing or empty — add it under repo Settings → Secrets and variables → Actions');
+    }
+
     async function once(tokens) {
         const res = await fetch(NIM_ENDPOINT, {
             method: 'POST',
             headers: {
-                'Authorization': 'Bearer ' + process.env.NVIDIA_API_KEY,
+                'Authorization': 'Bearer ' + NVIDIA_API_KEY,
                 'Content-Type': 'application/json',
+                'Accept': 'application/json',
             },
             body: JSON.stringify({
                 model: MODEL,
@@ -230,11 +259,27 @@ async function callTechTreeModel(prompt, maxTokens) {
         return { content: choice.message.content, finishReason: choice.finish_reason };
     }
 
-    let result = await once(maxTokens);
+    // Network-level failures get 3 attempts with backoff before giving up.
+    async function onceWithRetry(tokens) {
+        let lastErr;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+                return await once(tokens);
+            } catch (err) {
+                lastErr = err;
+                if (!isNetworkError(err)) throw err;
+                console.warn(`  Network error (attempt ${attempt}/3): ${describeError(err)}`);
+                if (attempt < 3) await sleep(2000 * attempt);
+            }
+        }
+        throw new Error('Could not reach the model API after 3 attempts: ' + describeError(lastErr));
+    }
+
+    let result = await onceWithRetry(maxTokens);
     if (result.finishReason === 'length') {
         // Truncated JSON is unusable — retry once with a bigger budget (spec §16).
         console.warn('finish_reason=length — retrying with higher max_tokens');
-        result = await once(Math.min(8192, Math.ceil(maxTokens * 2)));
+        result = await onceWithRetry(Math.min(8192, Math.ceil(maxTokens * 2)));
         if (result.finishReason === 'length') throw new Error('Model output truncated twice — giving up this run');
     }
     return result.content;
@@ -489,28 +534,52 @@ async function processUser(docRef, userData) {
 
 // ── Main ───────────────────────────────────────────────────────────────────
 
+// One cheap GET through the exact same transport as the generation call —
+// separates "network/credentials broken" from "generation logic broken" right
+// in the Actions log.
+async function nimPreflight() {
+    if (!NVIDIA_API_KEY) {
+        console.error('NIM preflight: NVIDIA_API_KEY secret is missing or empty.');
+        return;
+    }
+    try {
+        const res = await fetch(NIM_BASE + '/models', {
+            headers: { 'Authorization': 'Bearer ' + NVIDIA_API_KEY },
+        });
+        console.log('NIM preflight: HTTP', res.status, res.status === 401 ? '(key rejected — check the NVIDIA_API_KEY secret)' : '');
+    } catch (err) {
+        console.error('NIM preflight failed:', describeError(err));
+    }
+}
+
 async function main() {
     console.log('Tech Tree worker run at', new Date().toISOString());
+    console.log('Node', process.version, '| key configured:', NVIDIA_API_KEY ? `yes (${NVIDIA_API_KEY.length} chars)` : 'NO');
     // Full-collection scan + in-code filter, same pattern as send-reminders.js
     // (avoids needing a composite index for a '!=' query on a map field).
     const snapshot = await db.collection('users').get();
+    const pending = snapshot.docs.filter(d => {
+        const u = d.data();
+        return u.techTree && u.techTree.pendingRequest;
+    });
     let processed = 0, failed = 0;
 
-    for (const docSnap of snapshot.docs) {
+    if (pending.length) await nimPreflight();
+
+    for (const docSnap of pending) {
         const userData = docSnap.data();
-        if (!userData.techTree || !userData.techTree.pendingRequest) continue;
         try {
             await processUser(docSnap.ref, userData);
             processed++;
         } catch (err) {
             failed++;
-            console.error(`  Error for user ${docSnap.id}:`, err.message);
+            console.error(`  Error for user ${docSnap.id}:`, describeError(err));
             // Clear the flag with a user-visible error so the client doesn't
             // sit in "Building your tree…" forever.
             try {
                 await docSnap.ref.update({
                     'techTree.pendingRequest': admin.firestore.FieldValue.delete(),
-                    'techTree.lastError': 'Generation failed — please try again. (' + String(err.message).slice(0, 140) + ')',
+                    'techTree.lastError': 'Generation failed — ' + describeError(err).slice(0, 200),
                 });
             } catch (e2) {
                 console.error('  Could not write error state:', e2.message);
