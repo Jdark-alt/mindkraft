@@ -88,6 +88,34 @@
                "lifted" cue on dark cards without a visible border. */
             --hairline-top: rgba(255,255,255,0.06);
 
+            /* ── Card-material surface family (v139) ─────────────────────
+               Every card/tile surface in the app resolves through these
+               tokens instead of hardcoded hexes so the whole material
+               system flips with [data-theme-mode]. Dark values match the
+               v110 card recipe exactly. */
+            --surface-card: #22242a;            /* card material at rest */
+            --surface-card-hover: #272a31;      /* card hover lift */
+            --surface-card-deep: #24262c;       /* slightly raised variant */
+            --surface-card-muted: #1d1f24;      /* completed / spent cards */
+            --surface-card-muted-hover: #21232a;
+            --surface-card-multi: #1f242e;      /* multi-complete blue cast */
+            --surface-card-multi-hover: #232936;
+            --surface-recessed: #2a2d33;        /* tiles inside cards */
+            --surface-recessed-hover: #34373e;
+            --surface-skip: #221c20;            /* skipped-state rose cast */
+            /* Card hairline border — edge of light in dark mode, a soft
+               ink line in light mode where the white card needs a rim. */
+            --card-hairline: rgba(255,255,255,0.045);
+
+            /* Recessed surfaces — one level below card material. Dark mode
+               tints with light, light mode tints with ink; four steps of
+               the same ramp plus the 1px inset ring used as their edge. */
+            --recessed-bg:   rgba(255,255,255,0.025);
+            --recessed-bg-2: rgba(255,255,255,0.03);
+            --recessed-bg-3: rgba(255,255,255,0.04);
+            --recessed-bg-4: rgba(255,255,255,0.05);
+            --recessed-ring: rgba(255,255,255,0.05);
+
             color-scheme: dark;
         }
 
@@ -161,6 +189,28 @@
 
             /* Card hairline — invisible on light; light cards lift via shadow */
             --hairline-top: rgba(255,255,255,0);
+
+            /* ── Card-material surface family — light values ─────────────
+               White cards float on the off-white page. Muted/multi/skip
+               states recede toward the page colour or take a soft
+               semantic cast, mirroring the dark-mode value relationships. */
+            --surface-card: #ffffff;
+            --surface-card-hover: #f4f6f9;
+            --surface-card-deep: #f7f8fa;
+            --surface-card-muted: #eef1f4;
+            --surface-card-muted-hover: #e9edf1;
+            --surface-card-multi: #e9f1f8;
+            --surface-card-multi-hover: #dfebf5;
+            --surface-recessed: #f1f3f6;
+            --surface-recessed-hover: #e9ecf0;
+            --surface-skip: #f6edf0;
+            --card-hairline: rgba(15,17,21,0.06);
+
+            --recessed-bg:   rgba(15,17,21,0.03);
+            --recessed-bg-2: rgba(15,17,21,0.035);
+            --recessed-bg-3: rgba(15,17,21,0.045);
+            --recessed-bg-4: rgba(15,17,21,0.055);
+            --recessed-ring: rgba(15,17,21,0.08);
 
             color-scheme: light;
         }
@@ -595,7 +645,7 @@
             width: 100%;
             margin-top: 4px;
             padding: 16px 18px;
-            background: rgba(255,255,255,0.03);
+            background: var(--recessed-bg-2);
             border: 1px solid var(--color-border);
             border-radius: 14px;
             text-align: left;
@@ -739,7 +789,7 @@
                 z-index: 200;
                 margin: 0;
                 border-radius: 20px;
-                border: 1px solid rgba(255,255,255,0.045);
+                border: 1px solid var(--card-hairline);
                 background: rgba(34,36,42,0.85);
                 -webkit-backdrop-filter: blur(18px) saturate(140%);
                 backdrop-filter: blur(18px) saturate(140%);
@@ -929,7 +979,7 @@
         .sticky-header {
             position: sticky;
             top: 0;
-            background: #22242a;
+            background: var(--surface-card);
             border-bottom: none;
             z-index: 100;
             box-shadow:
@@ -1022,6 +1072,16 @@
                 drop-shadow(0 0 5px rgba(245,197,99,0.7))
                 drop-shadow(0 0 10px rgba(245,197,99,0.4));
             opacity: 0;
+        }
+
+        /* Light mode: the pale gold stroke washes out on white, so the
+           trace deepens to a bronze ink (still "earned gold", one shade
+           down) and the glow softens to a warm halo that reads on paper. */
+        [data-theme-mode="light"] .level-svg-trace {
+            stroke: rgba(146,100,16,0.9);
+            filter:
+                drop-shadow(0 0 4px rgba(196,148,44,0.55))
+                drop-shadow(0 0 9px rgba(196,148,44,0.28));
         }
 
         .level-svg-trace.trace-ready {
@@ -1245,7 +1305,7 @@
             gap: 12px;
             padding: 11px 14px;
             border-radius: 10px;
-            background: rgba(255,255,255,0.025);
+            background: var(--recessed-bg);
             border: 1px solid rgba(255,255,255,0.05);
             text-decoration: none;
             color: var(--color-text-secondary);
@@ -1634,7 +1694,7 @@
         }
         .search-box {
             width: 100%; max-width: 560px; margin: 0 14px;
-            background: #22242a;
+            background: var(--surface-card);
             border: 1px solid rgba(255,255,255,0.06);
             border-radius: 16px;
             overflow: hidden;
@@ -1708,8 +1768,8 @@
             gap: 12px;
             padding: 13px 16px;
             margin: 6px 0;
-            background: #22242a;
-            border: 1px solid rgba(255,255,255,0.045);
+            background: var(--surface-card);
+            border: 1px solid var(--card-hairline);
             border-radius: 11px;
             transition: box-shadow 0.18s ease, background 0.18s ease;
             box-shadow:
@@ -1719,7 +1779,7 @@
                 0 4px 12px rgba(0,0,0,0.34);
         }
         .search-result-item:hover {
-            background: #272a31;
+            background: var(--surface-card-hover);
             box-shadow:
                 0 1px 0 rgba(255,255,255,0.085) inset,
                 0 -1px 0 rgba(0,0,0,0.35) inset,
@@ -1737,7 +1797,7 @@
         }
 
         .search-result-item.completed {
-            background: #1d1f24;
+            background: var(--surface-card-muted);
             border-color: rgba(255,255,255,0.035);
             opacity: 0.72;
         }
@@ -1891,13 +1951,13 @@
         .btn-search-do svg { width: 11px; height: 11px; }
 
         .btn-search-undo {
-            background: #2a2d33;
+            background: var(--surface-recessed);
             color: var(--color-text-primary);
             border: 1px solid rgba(255,255,255,0.10);
             box-shadow: 0 1px 3px rgba(0,0,0,0.4);
         }
         .btn-search-undo:hover {
-            background: #34373e;
+            background: var(--surface-recessed-hover);
             border-color: rgba(255,255,255,0.18);
         }
         .btn-search-undo:active { transform: scale(0.96); }
@@ -2058,7 +2118,7 @@
             border: 1px solid currentColor;
             font-size: 11px;
             font-weight: 600;
-            background: rgba(255,255,255,0.04);
+            background: var(--recessed-bg-3);
         }
         .chart-legend-item {
             display: inline-flex;
@@ -2146,8 +2206,8 @@
             position: fixed;
             top: auto;
             left: auto;
-            background: #22242a;
-            border: 1px solid rgba(255,255,255,0.045);
+            background: var(--surface-card);
+            border: 1px solid var(--card-hairline);
             border-radius: 12px;
             min-width: 240px;
             z-index: 3000;
@@ -2219,7 +2279,7 @@
         }
 
         .filter-panel-footer {
-            border-top: 1px solid rgba(255,255,255,0.045);
+            border-top: 1px solid var(--card-hairline);
             padding: 8px 10px;
         }
         [data-theme-mode="light"] .filter-panel-footer {
@@ -2242,7 +2302,7 @@
         }
         .btn-filter-default:hover {
             color: var(--color-text-primary);
-            background: rgba(255,255,255,0.03);
+            background: var(--recessed-bg-2);
             border-color: rgba(255,255,255,0.14);
         }
         [data-theme-mode="light"] .btn-filter-default {
@@ -2429,8 +2489,8 @@
            scoped to .act-group-body so Categories tab stays untouched.
            ────────────────────────────────────────────────────────────── */
         .activity-item {
-            background: #22242a;
-            border: 1px solid rgba(255,255,255,0.045);
+            background: var(--surface-card);
+            border: 1px solid var(--card-hairline);
             border-radius: 11px;
             padding: 12px 11px 12px 9px;
             margin-bottom: 7px;
@@ -2464,11 +2524,11 @@
 
         /* Pending — same default state */
         .activity-item:not(.completed):not(.disabled):not(.permanently-done) {
-            background: #22242a;
+            background: var(--surface-card);
         }
 
         .activity-item:not(.completed):not(.disabled):not(.permanently-done):hover {
-            background: #272a31;
+            background: var(--surface-card-hover);
             box-shadow:
                 0 1px 0 rgba(255,255,255,0.085) inset,
                 0 -1px 0 rgba(0,0,0,0.35) inset,
@@ -2493,7 +2553,7 @@
 
         /* Completed — slightly more muted surface */
         .activity-item.completed {
-            background: #1d1f24;
+            background: var(--surface-card-muted);
             border-color: rgba(255,255,255,0.035);
         }
         [data-theme-mode="light"] .activity-item.completed {
@@ -2501,7 +2561,7 @@
         }
 
         .activity-item.completed:hover {
-            background: #21232a;
+            background: var(--surface-card-muted-hover);
         }
 
         .activity-item.completed .activity-name {
@@ -2516,13 +2576,13 @@
 
         /* Multi-complete — completed at least once but still clickable */
         .activity-item.completed-multi {
-            background: #1f242e;
+            background: var(--surface-card-multi);
         }
         [data-theme-mode="light"] .activity-item.completed-multi {
             background: rgba(74,124,158,0.06);
         }
         .activity-item.completed-multi:hover {
-            background: #232936;
+            background: var(--surface-card-multi-hover);
         }
 
         .card-multi-count {
@@ -2810,7 +2870,7 @@
             height: 36px;
             border-radius: 50%;
             border: 1px solid rgba(255,255,255,0.1);
-            background: rgba(255,255,255,0.04);
+            background: var(--recessed-bg-3);
             color: var(--color-text-secondary);
             font-size: 11px;
             font-weight: 600;
@@ -2839,7 +2899,7 @@
             padding: 10px 8px;
             border-radius: 8px;
             border: 1px solid rgba(255,255,255,0.1);
-            background: rgba(255,255,255,0.04);
+            background: var(--recessed-bg-3);
             color: var(--color-text-secondary);
             font-size: 11px;
             font-weight: 500;
@@ -2910,6 +2970,10 @@
             background: linear-gradient(to left, var(--dim-rgba, rgba(74,124,158,0.15)) 0%, transparent 100%);
             z-index: 0;
         }
+        /* Light mode: the same dimension tint reads far heavier on white
+           cards than on dark — scale the whole overlay down so it stays a
+           pastel cast, not a colour slab. */
+        [data-theme-mode="light"] .act-dim-gradient { opacity: 0.4; }
 
         .act-ring-wrap {
             position: relative;
@@ -3074,7 +3138,7 @@
             justify-content: flex-start;
             gap: 6px;
             padding: 10px 6px 10px;
-            background: rgba(255,255,255,0.025);
+            background: var(--recessed-bg);
             border: 1.5px solid var(--color-border);
             border-radius: 10px;
             cursor: pointer;
@@ -3175,7 +3239,7 @@
             align-items: center;
             gap: 9px;
             padding: 9px 16px 9px 12px;
-            background: #22242a;
+            background: var(--surface-card);
             color: var(--color-text-primary);
             border: 1px solid var(--toast-ring, rgba(90,159,212,0.32));
             border-radius: 999px;
@@ -3217,7 +3281,7 @@
             width: 22px;
             height: 22px;
             border-radius: 50%;
-            background: rgba(255,255,255,0.04);
+            background: var(--recessed-bg-3);
             box-shadow:
                 inset 0 0 0 1px var(--toast-ring, rgba(90,159,212,0.4)),
                 0 0 8px var(--toast-ring, rgba(90,159,212,0.35));
@@ -3518,7 +3582,7 @@
             margin-top: 8px;
             margin-bottom: 16px;
             padding: 10px 12px;
-            background: rgba(255,255,255,0.03);
+            background: var(--recessed-bg-2);
             border: 1px solid var(--color-border);
             border-radius: 8px;
         }
@@ -3540,7 +3604,7 @@
             align-items: center;
             gap: 12px;
             padding: 11px 14px;
-            background: rgba(255,255,255,0.03);
+            background: var(--recessed-bg-2);
             border: 1px solid var(--color-border);
             border-radius: 10px;
             cursor: pointer;
@@ -3548,7 +3612,7 @@
         }
 
         .toggle-row:hover {
-            background: rgba(255,255,255,0.05);
+            background: var(--recessed-bg-4);
             border-color: rgba(255,255,255,0.12);
         }
 
@@ -3618,7 +3682,7 @@
 
         /* Form section inset — for nested options */
         .form-section-inset {
-            background: rgba(255,255,255,0.03);
+            background: var(--recessed-bg-2);
             border: 1px solid rgba(255,255,255,0.08);
             border-radius: 10px;
             padding: 16px;
@@ -3639,7 +3703,7 @@
             width: 100%;
             padding: 14px 16px;
             margin-top: 4px;
-            background: rgba(255,255,255,0.03);
+            background: var(--recessed-bg-2);
             border: 1px solid rgba(255,255,255,0.08);
             border-radius: 10px;
             color: var(--color-text-primary);
@@ -3651,7 +3715,7 @@
             transition: background 0.15s, border-color 0.15s;
         }
         .advanced-toggle-header:hover {
-            background: rgba(255,255,255,0.05);
+            background: var(--recessed-bg-4);
             border-color: rgba(255,255,255,0.14);
         }
         .advanced-toggle-label {
@@ -3684,7 +3748,7 @@
         }
 
         .activity-checklist-item:hover {
-            background: rgba(255,255,255,0.05);
+            background: var(--recessed-bg-4);
         }
 
         .activity-checklist-item input[type="checkbox"] {
@@ -4248,8 +4312,8 @@
         .an-filter-btn {
             display: flex; align-items: center; gap: 6px;
             padding: 7px 14px;
-            background: #22242a;
-            border: 1px solid rgba(255,255,255,0.045);
+            background: var(--surface-card);
+            border: 1px solid var(--card-hairline);
             border-radius: 999px;
             color: var(--color-text-secondary);
             font-size: 12px; font-weight: 600; letter-spacing: -0.01em;
@@ -4264,7 +4328,7 @@
 
         /* ── Filter panel ────────────────────────────────────────────── */
         .an-filter-panel {
-            background: #22242a; border: 1px solid rgba(255,255,255,0.045);
+            background: var(--surface-card); border: 1px solid var(--card-hairline);
             border-radius: 12px; padding: 14px 16px; margin-bottom: 16px;
             display: flex; flex-direction: column; gap: 11px;
             box-shadow: 0 1px 0 rgba(255,255,255,0.06) inset, 0 1px 3px rgba(0,0,0,0.4);
@@ -4281,7 +4345,7 @@
         .filter-pills { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
         .filter-pill {
             padding: 4px 11px;
-            background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+            background: var(--recessed-bg-3); border: 1px solid rgba(255,255,255,0.08);
             border-radius: 999px; color: var(--color-text-secondary);
             font-size: 11.5px; font-weight: 600; letter-spacing: -0.005em;
             cursor: pointer; transition: all 0.15s; white-space: nowrap; font-family: inherit; line-height: 1.5;
@@ -4293,7 +4357,7 @@
 
         /* ── Filter select ───────────────────────────────────────────── */
         .filter-select {
-            padding: 5px 9px; background: rgba(255,255,255,0.04);
+            padding: 5px 9px; background: var(--recessed-bg-3);
             border: 1px solid rgba(255,255,255,0.08); border-radius: 8px;
             color: var(--color-text-primary); font-size: 12px; font-family: inherit;
             cursor: pointer; min-width: 130px;
@@ -4305,7 +4369,7 @@
         .an-stat-grid { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
         .an-stat-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
         .an-stat-card {
-            background: #22242a; border: 1px solid rgba(255,255,255,0.045);
+            background: var(--surface-card); border: 1px solid var(--card-hairline);
             border-radius: 12px; padding: 14px 13px 12px;
             display: flex; flex-direction: column; gap: 3px;
             position: relative; overflow: hidden;
@@ -4327,7 +4391,7 @@
 
         /* ── Analytics card (all cards on page) ──────────────────────── */
         .analytics-card {
-            background: #22242a; border: 1px solid rgba(255,255,255,0.045);
+            background: var(--surface-card); border: 1px solid var(--card-hairline);
             border-radius: 12px; padding: 18px 17px 16px; margin-bottom: 12px;
             box-shadow: 0 1px 0 rgba(255,255,255,0.075) inset, 0 -1px 0 rgba(0,0,0,0.35) inset, 0 1px 2px rgba(0,0,0,0.55), 0 4px 12px rgba(0,0,0,0.34);
         }
@@ -4347,7 +4411,7 @@
         .an-mode-tab.active::after { content: ''; position: absolute; left: 16%; right: 16%; bottom: 2px; height: 2px; background: linear-gradient(90deg, transparent, var(--color-progress) 25%, var(--color-progress) 75%, transparent); box-shadow: 0 0 10px rgba(90,159,212,0.7), 0 0 22px rgba(90,159,212,0.35); border-radius: 1px; }
 
         /* Range selector — segmented strip */
-        .an-range-selector { display: flex; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); border-radius: 999px; padding: 2px; gap: 1px; align-self: flex-start; }
+        .an-range-selector { display: flex; background: var(--recessed-bg-2); border: 1px solid rgba(255,255,255,0.07); border-radius: 999px; padding: 2px; gap: 1px; align-self: flex-start; }
         [data-theme-mode="light"] .an-range-selector { background: rgba(0,0,0,0.04); border-color: var(--color-border); }
         .an-range-btn { padding: 4px 11px; background: transparent; border: none; border-radius: 999px; color: var(--color-text-secondary); font-size: 11px; font-weight: 600; letter-spacing: 0.02em; cursor: pointer; font-family: inherit; transition: background 0.15s, color 0.15s; white-space: nowrap; }
         .an-range-btn:hover { color: var(--color-text-primary); }
@@ -4370,16 +4434,16 @@
         .an-cal-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
         .an-cal-nav { display: flex; align-items: center; gap: 8px; }
         .an-cal-month { font-size: 14px; font-weight: 600; letter-spacing: -0.015em; color: var(--color-text-primary); min-width: 120px; text-align: center; }
-        .an-cal-arrow { width: 27px; height: 27px; display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.07); border-radius: 7px; color: var(--color-text-secondary); cursor: pointer; transition: color 0.15s, border-color 0.15s; }
+        .an-cal-arrow { width: 27px; height: 27px; display: flex; align-items: center; justify-content: center; background: var(--recessed-bg-3); border: 1px solid rgba(255,255,255,0.07); border-radius: 7px; color: var(--color-text-secondary); cursor: pointer; transition: color 0.15s, border-color 0.15s; }
         .an-cal-arrow:hover { color: var(--color-text-primary); border-color: rgba(255,255,255,0.15); }
         .an-cal-controls { display: flex; align-items: center; gap: 6px; }
         .an-cal-select { min-width: 110px; max-width: 180px; flex: 1; }
-        .an-cal-refresh-btn { display: flex; align-items: center; gap: 5px; padding: 5px 11px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; color: var(--color-text-secondary); font-size: 11.5px; font-weight: 600; font-family: inherit; cursor: pointer; white-space: nowrap; transition: color 0.15s, border-color 0.15s; flex-shrink: 0; }
+        .an-cal-refresh-btn { display: flex; align-items: center; gap: 5px; padding: 5px 11px; background: var(--recessed-bg-3); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; color: var(--color-text-secondary); font-size: 11.5px; font-weight: 600; font-family: inherit; cursor: pointer; white-space: nowrap; transition: color 0.15s, border-color 0.15s; flex-shrink: 0; }
         .an-cal-refresh-btn:hover { color: var(--color-text-primary); border-color: rgba(255,255,255,0.18); }
 
         /* ── Collapse pattern ────────────────────────────────────────── */
         .an-collapse-btn { display: flex; align-items: center; gap: 11px; width: 100%; background: none; border: none; cursor: pointer; font-family: inherit; color: var(--color-text-primary); text-align: left; padding: 0; }
-        .an-collapse-icon { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: 8px; background: rgba(255,255,255,0.05); flex-shrink: 0; color: var(--color-text-secondary); }
+        .an-collapse-icon { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: 8px; background: var(--recessed-bg-4); flex-shrink: 0; color: var(--color-text-secondary); }
         .an-icon-gold   { color: #f5c563; background: rgba(245,197,99,0.1); }
         .an-icon-coral  { color: var(--chip-streak-fg); background: var(--chip-streak-bg); }
         .an-icon-blue   { color: var(--color-progress); background: rgba(90,159,212,0.1); }
@@ -4608,8 +4672,8 @@
 
         /* ── Settings card — activity-card material ───────────────────── */
         .settings-card {
-            background: #22242a;
-            border: 1px solid rgba(255,255,255,0.045);
+            background: var(--surface-card);
+            border: 1px solid var(--card-hairline);
             border-radius: 13px;
             padding: 18px 18px 17px;
             margin-bottom: 12px;
@@ -4676,7 +4740,7 @@
             width: 34px; height: 34px;
             display: flex; align-items: center; justify-content: center;
             border-radius: 9px;
-            background: rgba(255,255,255,0.05);
+            background: var(--recessed-bg-4);
             flex-shrink: 0;
             color: var(--color-text-secondary);
         }
@@ -4690,7 +4754,7 @@
         /* Legacy settings-icon kept for any leftover refs */
         .settings-icon {
             width: 34px; height: 34px;
-            background: rgba(255,255,255,0.05);
+            background: var(--recessed-bg-4);
             border-radius: 9px;
             display: flex;
             align-items: center;
@@ -4744,7 +4808,7 @@
         /* Divider used inside settings card collapse body */
         .guide-section-divider {
             height: 1px;
-            background: rgba(255,255,255,0.05);
+            background: var(--recessed-bg-4);
             margin: 14px 0;
         }
 
@@ -5436,7 +5500,7 @@
         .guide-toggle-btn.open .guide-chevron { transform: rotate(180deg); }
 
         .guide-inner-card {
-            background: rgba(255,255,255,0.03);
+            background: var(--recessed-bg-2);
             border: 1px solid rgba(255,255,255,0.05);
             border-radius: 10px;
             padding: 12px 14px;
@@ -5451,7 +5515,7 @@
         }
         .guide-inner-title svg { color: var(--color-progress); flex-shrink: 0; }
 
-        .guide-section-divider { height: 1px; background: rgba(255,255,255,0.05); margin: 12px 0; }
+        .guide-section-divider { height: 1px; background: var(--recessed-bg-4); margin: 12px 0; }
 
         /* Install guide */
         .install-section { padding: 4px 0 8px; }
@@ -5506,8 +5570,8 @@
             align-items: center;
             gap: 11px;
             padding: 10px 12px;
-            background: #22242a;
-            border: 1px solid rgba(255,255,255,0.045);
+            background: var(--surface-card);
+            border: 1px solid var(--card-hairline);
             border-radius: 11px;
             margin-bottom: 7px;
             cursor: pointer;
@@ -5517,7 +5581,7 @@
                 0 1px 2px rgba(0,0,0,0.35);
         }
         .fr-lb-row:hover {
-            background: #272a31;
+            background: var(--surface-card-hover);
             box-shadow:
                 0 1px 0 rgba(255,255,255,0.07) inset,
                 0 2px 6px rgba(0,0,0,0.45);
@@ -5588,7 +5652,7 @@
         .fr-code-input {
             flex: 1;
             min-width: 0;
-            background: rgba(255,255,255,0.05);
+            background: var(--recessed-bg-4);
             border: 1px solid rgba(255,255,255,0.1);
             border-radius: 9px;
             padding: 10px 12px;
@@ -5622,7 +5686,7 @@
         .fr-add-status { font-size: 11.5px; margin-top: 7px; min-height: 16px; color: var(--color-text-secondary); }
 
         /* Divider inside the add card */
-        .fr-divider { height: 1px; background: rgba(255,255,255,0.05); margin: 14px 0; }
+        .fr-divider { height: 1px; background: var(--recessed-bg-4); margin: 14px 0; }
 
         /* My code section */
         .fr-mycode-section { display: flex; flex-direction: column; gap: 6px; }
@@ -5632,7 +5696,7 @@
         }
         .fr-mycode-box {
             display: flex; align-items: center; gap: 10px;
-            background: rgba(255,255,255,0.04);
+            background: var(--recessed-bg-3);
             border: 1px solid rgba(255,255,255,0.07);
             border-radius: 9px;
             padding: 10px 12px;
@@ -5674,8 +5738,8 @@
         .fr-friend-row {
             display: flex; align-items: center; gap: 12px;
             padding: 12px 14px;
-            background: #22242a;
-            border: 1px solid rgba(255,255,255,0.045);
+            background: var(--surface-card);
+            border: 1px solid var(--card-hairline);
             border-radius: 12px;
             margin-bottom: 7px;
             cursor: pointer;
@@ -5685,7 +5749,7 @@
                 0 3px 8px rgba(0,0,0,0.25);
             transition: background 0.15s;
         }
-        .fr-friend-row:hover { background: #272a31; }
+        .fr-friend-row:hover { background: var(--surface-card-hover); }
         [data-theme-mode="light"] .fr-friend-row { background: var(--color-bg-card); border-color: var(--color-border); box-shadow: var(--shadow-card); }
         .fr-friend-info { flex: 1; min-width: 0; }
         .fr-friend-name { font-size: 14px; font-weight: 700; color: var(--color-text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -5862,7 +5926,7 @@
         }
         .ch-search-input {
             width: 100%; padding: 9px 14px; border: none; border-bottom: 1px solid var(--color-border);
-            background: rgba(255,255,255,0.04); color: var(--color-text-primary);
+            background: var(--recessed-bg-3); color: var(--color-text-primary);
             font-size: 13px; outline: none; box-sizing: border-box;
         }
         .ch-search-input::placeholder { color: var(--color-text-secondary); }
@@ -5902,7 +5966,7 @@
             padding: 10px 12px;
             border-radius: 8px;
             border: 1px solid rgba(255,255,255,0.08);
-            background: rgba(255,255,255,0.03);
+            background: var(--recessed-bg-2);
             cursor: pointer;
             transition: all 0.15s;
         }
@@ -5955,7 +6019,7 @@
             height: 30px;
             min-width: 60px;
             padding: 0 12px;
-            background: #2a2d33;
+            background: var(--surface-recessed);
             border: 1px solid rgba(255,255,255,0.10);
             border-radius: 8px;
             color: var(--color-text-primary);
@@ -5976,7 +6040,7 @@
         .btn-undo-activity svg { width: 11px; height: 11px; }
 
         .btn-undo-activity:hover {
-            background: #34373e;
+            background: var(--surface-recessed-hover);
             border-color: rgba(255,255,255,0.18);
         }
 
@@ -6101,8 +6165,8 @@
            Material recipe matches .activity-item (design brief §2 "Card material"):
            #22242a surface, hairline border, inset-top highlight, drop shadow. */
         .grid-card {
-            background: #22242a;
-            border: 1px solid rgba(255,255,255,0.045);
+            background: var(--surface-card);
+            border: 1px solid var(--card-hairline);
             border-radius: 12px;
             overflow: hidden;
             cursor: pointer;
@@ -6128,7 +6192,7 @@
             box-shadow: var(--shadow-card);
         }
         .grid-card:hover:not(.gc-done):not(.gc-disabled) {
-            background: #272a31;
+            background: var(--surface-card-hover);
             box-shadow:
                 0 1px 0 rgba(255,255,255,0.085) inset,
                 0 -1px 0 rgba(0,0,0,0.35) inset,
@@ -6169,6 +6233,8 @@
             border-radius: 0 0 12px 12px;
             background: linear-gradient(to top, var(--dim-rgba) 0%, transparent 100%);
         }
+        /* Light mode: soften the dimension tint — see .act-dim-gradient. */
+        [data-theme-mode="light"] .grid-card .gc-gradient { opacity: 0.4; }
 
         .grid-card:active:not(.gc-done):not(.gc-disabled) {
             transform: scale(0.97);
@@ -6291,7 +6357,7 @@
             height: 26px;
             min-width: 26px;
             padding: 0;
-            background: #2a2d33;
+            background: var(--surface-recessed);
             border: 1px solid rgba(255,255,255,0.10);
             border-radius: 7px;
             color: var(--color-text-primary);
@@ -6318,7 +6384,7 @@
             border-radius: 8px;
         }
         .gc-corner-undo:hover, .gc-corner-undo:active {
-            background: #34373e;
+            background: var(--surface-recessed-hover);
             border-color: rgba(255,255,255,0.18);
         }
         [data-theme-mode="light"] .gc-corner-undo {
@@ -6406,7 +6472,7 @@
             align-items: center;
             gap: 14px;
             padding: 14px 16px;
-            background: rgba(255,255,255,0.03);
+            background: var(--recessed-bg-2);
             border: 1px solid var(--color-border);
             border-radius: 10px;
             color: var(--color-text-primary);
@@ -6436,7 +6502,7 @@
         /* ── Card states ──────────────────────────────────────────────── */
         /* Completed — darker surface, dimmed type. Matches .activity-item.completed. */
         .grid-card.gc-done {
-            background: #1d1f24;
+            background: var(--surface-card-muted);
             border-color: rgba(255,255,255,0.035);
             opacity: 0.62;
             cursor: default;
@@ -6446,13 +6512,13 @@
         }
         .grid-card.gc-done .gc-name { text-decoration: line-through; color: var(--color-text-secondary); }
         .grid-card.gc-done-multi {
-            background: #1f242e;
+            background: var(--surface-card-multi);
         }
         [data-theme-mode="light"] .grid-card.gc-done-multi {
             background: rgba(74,124,158,0.06);
         }
         .grid-card.gc-disabled { opacity: 0.42; cursor: not-allowed; }
-        .grid-card.gc-skip { background: #221c20; }
+        .grid-card.gc-skip { background: var(--surface-skip); }
 
         /* ── Grid card expand overlay ─────────────────────────────────── */
         .grid-card-overlay {
@@ -6602,7 +6668,7 @@
         .planner-cal-btn:hover {
             color: var(--color-text-primary);
             border-color: rgba(255,255,255,0.14);
-            background: rgba(255,255,255,0.03);
+            background: var(--recessed-bg-2);
         }
         .planner-cal-btn-today {
             color: var(--color-progress);
@@ -6874,8 +6940,8 @@
         .planner-card {
             display: flex;
             align-items: stretch;
-            background: #22242a;
-            border: 1px solid rgba(255,255,255,0.045);
+            background: var(--surface-card);
+            border: 1px solid var(--card-hairline);
             border-radius: 11px;
             margin-bottom: 7px;
             cursor: pointer;
@@ -6894,7 +6960,7 @@
             box-shadow: var(--shadow-card);
         }
         .planner-card:hover:not(.planner-done):not(.planner-past) {
-            background: #272a31;
+            background: var(--surface-card-hover);
             box-shadow:
                 0 1px 0 rgba(255,255,255,0.085) inset,
                 0 -1px 0 rgba(0,0,0,0.35) inset,
@@ -6914,7 +6980,7 @@
             cursor: default;
         }
         .planner-card.planner-note:hover {
-            background: #22242a;
+            background: var(--surface-card);
             transform: none;
             box-shadow:
                 0 1px 0 rgba(255,255,255,0.075) inset,
@@ -7014,7 +7080,7 @@
             gap: 4px;
             height: 26px;
             padding: 0 10px;
-            background: #2a2d33;
+            background: var(--surface-recessed);
             border: 1px solid rgba(255,255,255,0.10);
             border-radius: 7px;
             color: var(--color-text-primary);
@@ -7029,7 +7095,7 @@
         }
         .planner-undo svg { display: block; }
         .planner-undo:hover {
-            background: #34373e;
+            background: var(--surface-recessed-hover);
             border-color: rgba(255,255,255,0.18);
         }
         [data-theme-mode="light"] .planner-undo {
@@ -7075,7 +7141,7 @@
 
         /* Done state — darker surface, dimmed text. Matches .activity-item.completed. */
         .planner-card.planner-done {
-            background: #1d1f24;
+            background: var(--surface-card-muted);
             border-color: rgba(255,255,255,0.035);
             opacity: 0.72;
         }
@@ -7096,7 +7162,7 @@
             box-shadow: none;
         }
         .planner-card.planner-done:hover {
-            background: #1d1f24;
+            background: var(--surface-card-muted);
             transform: none;
             box-shadow:
                 0 1px 0 rgba(255,255,255,0.075) inset,
@@ -7123,9 +7189,9 @@
         .planner-empty {
             text-align: center;
             padding: 36px 22px 30px;
-            background: #22242a;
+            background: var(--surface-card);
             border-radius: 14px;
-            border: 1px solid rgba(255,255,255,0.045);
+            border: 1px solid var(--card-hairline);
             box-shadow:
                 0 1px 0 rgba(255,255,255,0.075) inset,
                 0 -1px 0 rgba(0,0,0,0.35) inset,
@@ -7384,8 +7450,8 @@
            ══════════════════════════════════════════════════════════════ */
         .pl-modal {
             max-width: 460px;
-            background: #22242a;
-            border: 1px solid rgba(255,255,255,0.045);
+            background: var(--surface-card);
+            border: 1px solid var(--card-hairline);
             box-shadow:
                 0 1px 0 rgba(255,255,255,0.075) inset,
                 0 -1px 0 rgba(0,0,0,0.35) inset,
@@ -7403,7 +7469,7 @@
             justify-content: space-between;
             gap: 12px;
             padding-bottom: 12px;
-            border-bottom: 1px solid rgba(255,255,255,0.045);
+            border-bottom: 1px solid var(--card-hairline);
         }
         [data-theme-mode="light"] .pl-modal-header {
             border-bottom-color: var(--color-border);
@@ -7441,7 +7507,7 @@
             flex-shrink: 0;
         }
         .pl-modal-close:hover {
-            background: rgba(255,255,255,0.04);
+            background: var(--recessed-bg-3);
             color: var(--color-text-primary);
             border-color: rgba(255,255,255,0.14);
         }
@@ -7528,7 +7594,7 @@
         /* Recessed input (brief §2 "recessed surface") */
         .pl-input {
             width: 100%;
-            background: rgba(255,255,255,0.025);
+            background: var(--recessed-bg);
             border: 1px solid rgba(255,255,255,0.05);
             border-radius: 9px;
             padding: 10px 12px;
@@ -7550,7 +7616,10 @@
             opacity: 0.55;
         }
         [data-theme-mode="light"] .pl-input {
-            background: var(--color-bg-secondary);
+            /* background-color (not the shorthand) — .ay-select layers the
+               dropdown-arrow background-image on top of .pl-input, and the
+               shorthand would reset its no-repeat/position to repeat. */
+            background-color: var(--color-bg-secondary);
             border-color: var(--color-border);
         }
         .pl-input-time {
@@ -7619,7 +7688,7 @@
             margin-top: 10px;
             max-height: 240px;
             overflow-y: auto;
-            border: 1px solid rgba(255,255,255,0.045);
+            border: 1px solid var(--card-hairline);
             background: rgba(255,255,255,0.018);
             border-radius: 10px;
             padding: 4px 0;
@@ -7638,7 +7707,7 @@
             padding: 4px 0;
         }
         .planner-act-group + .planner-act-group {
-            border-top: 1px solid rgba(255,255,255,0.045);
+            border-top: 1px solid var(--card-hairline);
             margin-top: 4px;
         }
         [data-theme-mode="light"] .planner-act-group + .planner-act-group {
@@ -7688,7 +7757,7 @@
         /* Footer */
         .pl-modal-footer {
             padding-top: 14px;
-            border-top: 1px solid rgba(255,255,255,0.045);
+            border-top: 1px solid var(--card-hairline);
             display: flex;
             gap: 8px;
             justify-content: flex-end;
@@ -7715,7 +7784,7 @@
         }
         .pl-btn-secondary:hover {
             color: var(--color-text-primary);
-            background: rgba(255,255,255,0.04);
+            background: var(--recessed-bg-3);
             border-color: rgba(255,255,255,0.16);
         }
         .pl-btn-primary {
@@ -8206,8 +8275,8 @@
            activity card in the app. Dark-mode values; light-mode
            overrides below swap to var(--color-bg-card) + var(--shadow-card). */
         :root {
-            --ob-card-bg:     #22242a;
-            --ob-card-border: rgba(255,255,255,0.045);
+            --ob-card-bg:     var(--surface-card);
+            --ob-card-border: var(--card-hairline);
             --ob-card-shadow:
                 0 1px 0 rgba(255,255,255,0.075) inset,
                 0 -1px 0 rgba(0,0,0,0.40) inset,
@@ -8775,7 +8844,7 @@
             width: 38px; height: 38px;
             display: grid; place-items: center;
             border-radius: 10px;
-            background: rgba(255,255,255,0.04);
+            background: var(--recessed-bg-3);
             color: var(--color-text-secondary);
             border: 1px solid rgba(255,255,255,0.05);
         }
@@ -9680,7 +9749,7 @@
         }
         .level-up-close:hover {
             color: var(--color-text-primary);
-            background: rgba(255,255,255,0.05);
+            background: var(--recessed-bg-4);
             border-color: rgba(255,255,255,0.14);
         }
         [data-theme-mode="light"] .level-up-close {
@@ -9886,7 +9955,7 @@
             align-items: center;
             gap: 5px;
             padding: 5px 10px 5px 8px;
-            background: rgba(255,255,255,0.04);
+            background: var(--recessed-bg-3);
             border: 1px solid rgba(255,255,255,0.06);
             border-radius: 999px;
             font-size: 11px;
@@ -9994,7 +10063,7 @@
     border-radius: 8px;
     gap: 8px;
 }
-.history-entry-row:hover { background: rgba(255,255,255,0.03); }
+.history-entry-row:hover { background: var(--recessed-bg-2); }
 .history-entry-name {
     font-size: 13px;
     color: var(--color-text-primary);
@@ -10034,7 +10103,7 @@
     gap: 8px;
 }
 .retro-picker-item:last-child { border-bottom: none; }
-.retro-picker-item:hover { background: rgba(255,255,255,0.04); }
+.retro-picker-item:hover { background: var(--recessed-bg-3); }
 .retro-picker-name { font-size: 14px; color: var(--color-text-primary); }
 .retro-picker-xp { font-size: 12px; color: var(--color-progress); font-weight: 600; }
 .retro-picker-already { opacity: 0.4; pointer-events: none; cursor: default; }
@@ -10136,7 +10205,7 @@
 }
 .retro-picker-search {
     width: 100%;
-    background: rgba(255,255,255,0.05);
+    background: var(--recessed-bg-4);
     border: 1px solid rgba(255,255,255,0.09);
     border-radius: 10px;
     color: var(--color-text-primary);
@@ -10172,7 +10241,7 @@
     cursor: pointer;
     transition: background 0.12s;
 }
-.rp-item:hover { background: rgba(255,255,255,0.04); }
+.rp-item:hover { background: var(--recessed-bg-3); }
 .rp-item-done { opacity: 0.38; pointer-events: none; cursor: default; }
 .rp-item-left {
     display: flex;
@@ -10272,7 +10341,7 @@
 .group-act-list {
     max-height: 240px;
     overflow-y: auto;
-    border: 1px solid rgba(255,255,255,0.045);
+    border: 1px solid var(--card-hairline);
     border-radius: 10px;
     padding: 4px 0;
     background: rgba(255,255,255,0.018);
@@ -10360,7 +10429,7 @@
     font-size: 10.5px;
     padding: 3px 8px;
     border-radius: 5px;
-    background: rgba(255,255,255,0.04);
+    background: var(--recessed-bg-3);
     color: var(--color-text-secondary);
     font-weight: 600;
     white-space: nowrap;
@@ -10411,7 +10480,7 @@
 }
 .routine-edit-btn:hover {
     opacity: 1;
-    background: rgba(255,255,255,0.04);
+    background: var(--recessed-bg-3);
     color: var(--color-text-primary);
 }
 [data-theme-mode="light"] .routine-edit-btn:hover {
@@ -10534,7 +10603,7 @@
     width: 26px;
     height: 26px;
     border-radius: 50%;
-    background: rgba(255,255,255,0.04);
+    background: var(--recessed-bg-3);
     border: 1px solid rgba(255,255,255,0.06);
     color: var(--color-text-secondary);
     display: inline-flex;
@@ -10575,8 +10644,8 @@
    The edge IS the dimension identity — no badge, no color name needed. */
 .cat-dim-card {
     position: relative;
-    background: #22242a;
-    border: 1px solid rgba(255,255,255,0.045);
+    background: var(--surface-card);
+    border: 1px solid var(--card-hairline);
     border-radius: 12px;
     margin-bottom: 12px;
     box-shadow:
@@ -10617,7 +10686,7 @@
     -webkit-tap-highlight-color: transparent;
 }
 .cat-dim-head:hover {
-    background: rgba(255,255,255,0.025);
+    background: var(--recessed-bg);
 }
 [data-theme-mode="light"] .cat-dim-head:hover {
     background: rgba(15,17,21,0.025);
@@ -10741,7 +10810,7 @@
 
 /* ── Path card — recessed surface inside a dimension (brief §2) ──────── */
 .cat-path-card {
-    background: rgba(255,255,255,0.025);
+    background: var(--recessed-bg);
     border: 1px solid rgba(255,255,255,0.05);
     border-radius: 10px;
     margin-bottom: 8px;
@@ -10765,7 +10834,7 @@
     border-radius: 10px;
 }
 .cat-path-head:hover {
-    background: rgba(255,255,255,0.025);
+    background: var(--recessed-bg);
 }
 [data-theme-mode="light"] .cat-path-head:hover {
     background: rgba(15,17,21,0.025);
@@ -10827,8 +10896,8 @@
    ring/check on the right; undo lives next to it. Edit/Delete behind kebab. */
 .cat-act-card {
     position: relative;
-    background: #22242a;
-    border: 1px solid rgba(255,255,255,0.045);
+    background: var(--surface-card);
+    border: 1px solid var(--card-hairline);
     border-radius: 10px;
     padding: 9px 10px 9px 13px;
     margin-bottom: 6px;
@@ -10865,7 +10934,7 @@
 
 /* Pending hover — lifts slightly. */
 .cat-act-card:not(.cat-act-done):not(.cat-act-disabled):not(.cat-act-permdone):hover {
-    background: #272a31;
+    background: var(--surface-card-hover);
     transform: translateY(-1px);
     box-shadow:
         0 1px 0 rgba(255,255,255,0.085) inset,
@@ -10883,7 +10952,7 @@
 
 /* Done — muted surface, strike-through name, no left accent glow. */
 .cat-act-card.cat-act-done {
-    background: #1d1f24;
+    background: var(--surface-card-muted);
     border-color: rgba(255,255,255,0.035);
     cursor: default;
 }
@@ -10900,7 +10969,7 @@
 
 /* Multi-complete — same as done but stays clickable. */
 .cat-act-card.cat-act-done-multi {
-    background: #1f242e;
+    background: var(--surface-card-multi);
 }
 [data-theme-mode="light"] .cat-act-card.cat-act-done-multi {
     background: rgba(74,124,158,0.06);
@@ -11003,7 +11072,7 @@
 }
 .cat-act-card:hover .cat-act-check {
     opacity: 1;
-    background: rgba(255,255,255,0.04);
+    background: var(--recessed-bg-3);
 }
 .cat-act-card.cat-act-done .cat-act-check,
 .cat-act-card.cat-act-done-multi .cat-act-check {
@@ -11030,7 +11099,7 @@
     width: 24px;
     height: 24px;
     border-radius: 7px;
-    background: rgba(255,255,255,0.04);
+    background: var(--recessed-bg-3);
     border: 1px solid rgba(255,255,255,0.08);
     color: var(--color-text-secondary);
     display: inline-flex;
@@ -11147,7 +11216,7 @@
     display: flex;
     gap: 12px;
     padding: 11px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.045);
+    border-bottom: 1px solid var(--card-hairline);
 }
 .cat-info-row:last-of-type { border-bottom: none; }
 [data-theme-mode="light"] .cat-info-row {
@@ -11394,7 +11463,7 @@
     font-weight: 500;
 }
 .ay-select option {
-    background: #22242a;
+    background: var(--surface-card);
     color: var(--color-text-primary);
 }
 [data-theme-mode="light"] .ay-select option {
@@ -11427,7 +11496,7 @@
     justify-content: center;
     gap: 2px;
     padding: 10px 6px 11px;
-    background: rgba(255,255,255,0.025);
+    background: var(--recessed-bg);
     border: 1px solid rgba(255,255,255,0.06);
     border-radius: 10px;
     color: var(--color-text-secondary);
@@ -11439,7 +11508,7 @@
 }
 .ay-xp-chip:hover {
     color: var(--color-text-primary);
-    background: rgba(255,255,255,0.04);
+    background: var(--recessed-bg-3);
     border-color: rgba(255,255,255,0.10);
 }
 .ay-xp-chip:active { transform: scale(0.97); }
@@ -11525,7 +11594,7 @@
    nested context is obvious. ── */
 .ay-inset {
     background: rgba(255,255,255,0.022);
-    border: 1px solid rgba(255,255,255,0.045);
+    border: 1px solid var(--card-hairline);
     border-radius: 12px;
     padding: 14px;
     display: flex;
@@ -11559,7 +11628,7 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 4px;
-    background: rgba(255,255,255,0.025);
+    background: var(--recessed-bg);
     border: 1px solid rgba(255,255,255,0.05);
     border-radius: 10px;
     padding: 3px;
@@ -11609,7 +11678,7 @@
     aspect-ratio: 1 / 1;
     border-radius: 50%;
     border: 1px solid rgba(255,255,255,0.08);
-    background: rgba(255,255,255,0.03);
+    background: var(--recessed-bg-2);
     color: var(--color-text-secondary);
     font-family: inherit;
     font-size: 11px;
@@ -11651,7 +11720,7 @@
    below it and pushes subsequent content down naturally. ── */
 .ay-accordion {
     background: rgba(255,255,255,0.022);
-    border: 1px solid rgba(255,255,255,0.045);
+    border: 1px solid var(--card-hairline);
     border-radius: 12px;
     overflow: hidden;
     transition: border-color 0.15s;
@@ -11684,7 +11753,7 @@
     -webkit-tap-highlight-color: transparent;
     gap: 2px 12px;
 }
-.ay-accordion-head:hover { background: rgba(255,255,255,0.025); }
+.ay-accordion-head:hover { background: var(--recessed-bg); }
 [data-theme-mode="light"] .ay-accordion-head:hover { background: rgba(15,17,21,0.02); }
 
 .ay-accordion-title {
@@ -11723,7 +11792,7 @@
 /* Body — in-flow, the modal grows. NEVER position:absolute. */
 .ay-accordion-body {
     padding: 4px 14px 14px;
-    border-top: 1px solid rgba(255,255,255,0.045);
+    border-top: 1px solid var(--card-hairline);
     display: none;
     flex-direction: column;
     gap: 14px;
@@ -11739,13 +11808,13 @@
     align-items: center;
     gap: 12px;
     padding: 11px 12px;
-    background: rgba(255,255,255,0.025);
+    background: var(--recessed-bg);
     border: 1px solid rgba(255,255,255,0.05);
     border-radius: 10px;
     transition: background 0.15s, border-color 0.15s;
 }
 .ay-toggle-row:hover {
-    background: rgba(255,255,255,0.04);
+    background: var(--recessed-bg-3);
     border-color: rgba(255,255,255,0.10);
 }
 [data-theme-mode="light"] .ay-toggle-row {
@@ -11884,7 +11953,7 @@
     display: flex;
     gap: 12px;
     padding: 11px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.045);
+    border-bottom: 1px solid var(--card-hairline);
 }
 .ay-info-row:last-of-type { border-bottom: none; }
 [data-theme-mode="light"] .ay-info-row { border-bottom-color: rgba(15,17,21,0.06); }
@@ -12033,7 +12102,7 @@
     font-size: 11px;
     font-weight: 700;
     color: var(--color-text-secondary);
-    background: rgba(255,255,255,0.05);
+    background: var(--recessed-bg-4);
     border-radius: 999px;
     padding: 2px 8px;
     font-variant-numeric: tabular-nums;
@@ -12055,8 +12124,8 @@
 /* ── Card shell — same as v121 ───────────────────────────────────────── */
 .ch-card {
     position: relative;
-    background: #22242a;
-    border: 1px solid rgba(255,255,255,0.045);
+    background: var(--surface-card);
+    border: 1px solid var(--card-hairline);
     border-radius: 14px;
     padding: 16px 16px 14px;
     margin-bottom: 12px;
@@ -12327,7 +12396,7 @@
 .ch-complete:disabled {
     opacity: 0.45;
     cursor: not-allowed;
-    background: rgba(255,255,255,0.03);
+    background: var(--recessed-bg-2);
     border-color: rgba(255,255,255,0.08);
     color: var(--color-text-secondary);
     box-shadow: none;
@@ -12405,7 +12474,7 @@
 }
 .ch-breakdown-btn:hover {
     color: var(--color-text-primary);
-    background: rgba(255,255,255,0.03);
+    background: var(--recessed-bg-2);
 }
 .ch-breakdown-btn:active { transform: scale(0.97); }
 .ch-breakdown-chev {
@@ -12468,7 +12537,7 @@
 .ch-act-bar-v2 {
     width: 100%;
     height: 4px;
-    background: rgba(255,255,255,0.05);
+    background: var(--recessed-bg-4);
     border-radius: 999px;
     overflow: hidden;
 }
@@ -12562,7 +12631,7 @@
 
 /* ── Empty state ────────────────────────────────────────────────────── */
 .ch-empty {
-    background: #22242a;
+    background: var(--surface-card);
     border: 1px dashed rgba(255,255,255,0.10);
     border-radius: 14px;
     padding: 36px 20px;
@@ -12699,8 +12768,8 @@
 .gc-header,
 .gc-progress-section,
 .gc-code-row {
-    background: #22242a;
-    border: 1px solid rgba(255,255,255,0.045);
+    background: var(--surface-card);
+    border: 1px solid var(--card-hairline);
     box-shadow:
         0 1px 0 rgba(255,255,255,0.06) inset,
         0 1px 2px rgba(0,0,0,0.45),
@@ -12725,7 +12794,7 @@
 .gc-icon-btn {
     width: 30px; height: 30px;
     border-radius: 8px;
-    background: rgba(255,255,255,0.04);
+    background: var(--recessed-bg-3);
     border: 1px solid rgba(255,255,255,0.06);
     color: var(--color-text-secondary);
     font-size: 14px;
@@ -12745,8 +12814,8 @@
     color: #e07070;
 }
 .gc-member-card {
-    background: #22242a;
-    border: 1px solid rgba(255,255,255,0.045);
+    background: var(--surface-card);
+    border: 1px solid var(--card-hairline);
     border-radius: 14px;
     padding: 14px;
     box-shadow:
@@ -13029,8 +13098,8 @@
 
 /* — Card material (mirrors .settings-card recipe from the brief) — */
 .pf-card {
-    background: #22242a;
-    border: 1px solid rgba(255,255,255,0.045);
+    background: var(--surface-card);
+    border: 1px solid var(--card-hairline);
     border-radius: 14px;
     padding: 20px;
     margin-bottom: 12px;
@@ -13086,7 +13155,7 @@
     width: 28px;
     height: 28px;
     border-radius: 50%;
-    background: #2a2c33;
+    background: var(--surface-recessed);
     border: 2px solid var(--color-bg-primary);
     display: flex;
     align-items: center;
@@ -13147,7 +13216,7 @@
     margin-bottom: 6px;
 }
 .pf-name-input {
-    background: rgba(255,255,255,0.04);
+    background: var(--recessed-bg-3);
     border: 1.5px solid var(--color-progress);
     border-radius: 10px;
     padding: 8px 12px;
@@ -13210,7 +13279,7 @@
     font-weight: 700;
     letter-spacing: 0.14em;
     color: var(--color-text-primary);
-    background: rgba(255,255,255,0.04);
+    background: var(--recessed-bg-3);
     border: 1px solid rgba(255,255,255,0.06);
     border-radius: 8px;
     padding: 6px 12px;
@@ -13224,7 +13293,7 @@
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    background: rgba(255,255,255,0.04);
+    background: var(--recessed-bg-3);
     border: 1px solid rgba(255,255,255,0.06);
     color: var(--color-text-secondary);
     padding: 6px 12px;
@@ -13375,7 +13444,7 @@
     gap: 8px;
 }
 .pf-stat-tile {
-    background: rgba(255,255,255,0.025);
+    background: var(--recessed-bg);
     border: 1px solid rgba(255,255,255,0.05);
     border-radius: 10px;
     padding: 12px 6px;
@@ -13500,7 +13569,7 @@
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    background: rgba(255,255,255,0.05);
+    background: var(--recessed-bg-4);
     color: var(--color-text-secondary);
 }
 .pf-collapse-icon-coral { color: var(--chip-streak-fg); background: var(--chip-streak-bg); }
@@ -13651,7 +13720,7 @@
 
 .pf-reward-card {
     position: relative;
-    background: rgba(255,255,255,0.025);
+    background: var(--recessed-bg);
     border: 1px solid rgba(255,255,255,0.05);
     border-radius: 12px;
     padding: 14px 16px 14px 18px;
@@ -13768,7 +13837,7 @@
 .pf-reward-action:hover {
     color: var(--color-text-primary);
     border-color: rgba(255,255,255,0.18);
-    background: rgba(255,255,255,0.04);
+    background: var(--recessed-bg-3);
 }
 [data-theme-mode="light"] .pf-reward-action:hover {
     background: rgba(0,0,0,0.04);
@@ -13922,7 +13991,7 @@
 .pf-cfg-dim-header:first-child { padding-top: 0; }
 
 .pf-cfg-row {
-    background: rgba(255,255,255,0.025);
+    background: var(--recessed-bg);
     border: 1px solid rgba(255,255,255,0.05);
     border-radius: 10px;
     padding: 10px 12px;
@@ -14000,7 +14069,7 @@
 }
 .pf-sheet-close:hover {
     color: var(--color-text-primary);
-    background: rgba(255,255,255,0.04);
+    background: var(--recessed-bg-3);
 }
 .pf-sheet-body {
     padding: 20px 20px 0;
@@ -14060,8 +14129,8 @@
 
         /* Card material (same recipe as .settings-card) */
         .tt-card {
-            background: #22242a;
-            border: 1px solid rgba(255,255,255,0.045);
+            background: var(--surface-card);
+            border: 1px solid var(--card-hairline);
             border-radius: 14px;
             padding: 20px 18px;
             margin-bottom: 12px;
@@ -14121,8 +14190,8 @@
             font-size: 12px;
             font-weight: 600;
             color: var(--color-text-secondary);
-            background: rgba(255,255,255,0.025);
-            box-shadow: 0 0 0 1px rgba(255,255,255,0.05) inset;
+            background: var(--recessed-bg);
+            box-shadow: 0 0 0 1px var(--recessed-ring) inset;
             border-radius: 9px;
             padding: 9px 10px;
         }
@@ -14139,8 +14208,8 @@
             padding: 11px 14px;
             margin-top: 8px;
             border-radius: 10px;
-            border: 1px solid rgba(255,255,255,0.045);
-            background: rgba(255,255,255,0.03);
+            border: 1px solid var(--card-hairline);
+            background: var(--recessed-bg-2);
             box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset, 0 1px 2px rgba(0,0,0,0.3);
             color: var(--color-text-primary);
             font-size: 13px;
@@ -14199,8 +14268,8 @@
             padding: 8px 11px;
             border-radius: 9px;
             border: none;
-            background: rgba(255,255,255,0.025);
-            box-shadow: 0 0 0 1px rgba(255,255,255,0.05) inset;
+            background: var(--recessed-bg);
+            box-shadow: 0 0 0 1px var(--recessed-ring) inset;
             color: var(--color-text-secondary);
             font-size: 11.5px;
             font-weight: 600;
@@ -14215,8 +14284,8 @@
             display: flex;
             align-items: center;
             gap: 9px;
-            background: rgba(255,255,255,0.025);
-            box-shadow: 0 0 0 1px rgba(255,255,255,0.05) inset;
+            background: var(--recessed-bg);
+            box-shadow: 0 0 0 1px var(--recessed-ring) inset;
             border-radius: 10px;
             padding: 9px 12px;
             margin-bottom: 10px;
@@ -14251,8 +14320,8 @@
         /* Canvas */
         .tt-canvas-preview {
             position: relative;
-            background: #1d1f24;
-            border: 1px solid rgba(255,255,255,0.045);
+            background: var(--surface-card-muted);
+            border: 1px solid var(--card-hairline);
             border-radius: 14px;
             overflow: hidden;
             cursor: pointer;
@@ -14343,8 +14412,8 @@
             gap: 10px;
             width: 100%;
             text-align: left;
-            background: #22242a;
-            border: 1px solid rgba(255,255,255,0.045);
+            background: var(--surface-card);
+            border: 1px solid var(--card-hairline);
             border-radius: 11px;
             padding: 12px 13px 12px 16px;
             margin-bottom: 6px;
@@ -14411,8 +14480,8 @@
             max-width: 420px;
             max-height: 78vh;
             overflow-y: auto;
-            background: #24262c;
-            border: 1px solid rgba(255,255,255,0.045);
+            background: var(--surface-card-deep);
+            border: 1px solid var(--card-hairline);
             border-radius: 14px;
             padding: 18px;
             box-shadow:
@@ -14451,8 +14520,8 @@
             gap: 9px;
             width: 100%;
             text-align: left;
-            background: rgba(255,255,255,0.025);
-            box-shadow: 0 0 0 1px rgba(255,255,255,0.05) inset;
+            background: var(--recessed-bg);
+            box-shadow: 0 0 0 1px var(--recessed-ring) inset;
             border: none;
             border-radius: 9px;
             padding: 11px;
@@ -14472,7 +14541,7 @@
             text-transform: uppercase;
             letter-spacing: 0.08em;
             color: var(--color-text-secondary);
-            background: rgba(255,255,255,0.05);
+            background: var(--recessed-bg-4);
             border-radius: 999px;
             padding: 1.5px 6px;
         }
@@ -14522,8 +14591,8 @@
             max-width: 480px;
             max-height: 74vh;
             overflow-y: auto;
-            background: #24262c;
-            border: 1px solid rgba(255,255,255,0.045);
+            background: var(--surface-card-deep);
+            border: 1px solid var(--card-hairline);
             border-bottom: none;
             border-radius: 16px 16px 0 0;
             padding: 18px 18px calc(env(safe-area-inset-bottom, 0px) + 18px);
