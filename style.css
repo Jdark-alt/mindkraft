@@ -252,6 +252,11 @@
             background-clip: text;
             margin-bottom: 6px;
         }
+        [data-theme-mode="light"] .lp-brand-name {
+            background: linear-gradient(135deg, #0f1115 25%, var(--color-accent-blue));
+            -webkit-background-clip: text;
+            background-clip: text;
+        }
         .lp-tagline {
             font-size: 15px;
             color: var(--color-text-secondary);
@@ -275,6 +280,10 @@
             color: var(--color-text-secondary);
             letter-spacing: 0.02em;
         }
+        [data-theme-mode="light"] .lp-pill {
+            background: rgba(0,0,0,0.035);
+            border-color: rgba(0,0,0,0.08);
+        }
 
         /* Install card */
         .lp-install-card {
@@ -287,6 +296,10 @@
             padding: 24px 24px 20px;
             box-shadow: var(--shadow-lg);
             text-align: left;
+        }
+        [data-theme-mode="light"] .lp-install-card {
+            background: rgba(255,255,255,0.85);
+            border-color: rgba(0,0,0,0.06);
         }
         .lp-install-card-title {
             font-size: 11px;
@@ -403,6 +416,19 @@
             margin-top: 12px;
             line-height: 1.5;
         }
+        .lp-legal-link {
+            color: rgba(255,255,255,0.38);
+            text-decoration: underline;
+            text-underline-offset: 2px;
+            text-decoration-color: rgba(255,255,255,0.18);
+        }
+        .lp-legal-link:hover { color: rgba(255,255,255,0.6); }
+        [data-theme-mode="light"] .lp-legal { color: rgba(15,17,21,0.35); }
+        [data-theme-mode="light"] .lp-legal-link {
+            color: rgba(15,17,21,0.5);
+            text-decoration-color: rgba(15,17,21,0.2);
+        }
+        [data-theme-mode="light"] .lp-legal-link:hover { color: rgba(15,17,21,0.7); }
 
         /* Standalone mode: minimal centered sign-in */
         .auth-installed .lp-hero { display: none; }
@@ -1202,6 +1228,49 @@
             background: rgba(142,59,95,0.15);
             border-color: var(--color-accent-red);
             color: #e07070;
+        }
+
+        /* ── About & Legal links (Settings) ──────────────────────────────
+           Recessed-surface rows inside the card — same material level as
+           quick-win tiles and search result rows. */
+        .legal-links {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .legal-link {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 11px 14px;
+            border-radius: 10px;
+            background: rgba(255,255,255,0.025);
+            border: 1px solid rgba(255,255,255,0.05);
+            text-decoration: none;
+            color: var(--color-text-secondary);
+            transition: background 0.2s, color 0.2s;
+        }
+        .legal-link:hover {
+            background: var(--color-hover-overlay);
+            color: var(--color-text-primary);
+        }
+        .legal-link-text {
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--color-text-primary);
+        }
+        .legal-link-text span {
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--color-text-secondary);
+        }
+        [data-theme-mode="light"] .legal-link {
+            background: rgba(0,0,0,0.03);
+            border-color: var(--color-border);
         }
 
         /* Main Content */
@@ -4741,11 +4810,10 @@
             font-weight: 500;
         }
 
-        /* ── Locked theme swatches (launch lock) ────────────────────────
-           Other themes ship in the codebase but the picker hides them
-           behind a "Coming soon" lock until each is fully polished. The
-           tile stays present so users see the surface area; the dots dim
-           and a small lock badge replaces interactivity. */
+        /* ── Locked theme swatches ───────────────────────────────────────
+           Only the Custom tile ships locked: it stays visible so users
+           know full customization is coming, but the dots dim and a small
+           lock badge replaces interactivity until it launches. */
         .theme-swatch.theme-swatch-locked {
             position: relative;
             cursor: not-allowed;

@@ -253,7 +253,7 @@
                 </svg>
                 <span id="googleBtnText">Continue with Google</span>
             </button>
-            <p class="lp-legal">By continuing, you agree to Mindkraft's Terms &amp; Privacy</p>
+            <p class="lp-legal">By continuing, you agree to Mindkraft's <a href="terms.html" class="lp-legal-link" target="_blank" rel="noopener">Terms of Service</a> and <a href="privacy.html" class="lp-legal-link" target="_blank" rel="noopener">Privacy Policy</a></p>
         </div>
     </div>
 
@@ -1056,7 +1056,7 @@
 
                         <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Analytics</div><div class="guide-inner-body">The <strong>Analytics</strong> tab shows XP over time. Use <strong>Cumulative</strong> vs <strong>Daily</strong> views, overlay any dimension/path/activity with <strong>Compare</strong>, and toggle <strong>Hide Overall</strong> to compare overlays directly. Below: Activity Calendar, full History, XP &amp; streak leaderboards, frequency charts, dimension progress.</div></div>
 
-                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="10.5" r="2.5"/><circle cx="8.5" cy="7.5" r="2.5"/><circle cx="6.5" cy="12.5" r="2.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>Themes</div><div class="guide-inner-body">Pick a theme preset in Settings — six dark and four light options. <strong>Custom mode</strong> lets you tweak every colour, background glow, and gradient direction. Save up to 3 named templates. Hit <strong>Apply Theme</strong> to persist.</div></div>
+                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="10.5" r="2.5"/><circle cx="8.5" cy="7.5" r="2.5"/><circle cx="6.5" cy="12.5" r="2.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>Themes</div><div class="guide-inner-body">Pick your look in Settings — a focused <strong>Dark</strong> mode or a clean, airy <strong>Light</strong> mode. Hit <strong>Apply Theme</strong> to persist. <strong>Custom theming</strong> — every colour, glow, and gradient under your control — is coming soon.</div></div>
 
                         <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Backup &amp; Data</div><div class="guide-inner-body">Mindkraft auto-creates a cloud backup every time you save. Hit <strong>Backup Now</strong> for an immediate snapshot. Use <strong>Restore Backup</strong> to roll back. <strong>Export</strong> a full JSON file and <strong>Import</strong> it on any device. Works across all your devices.</div></div>
 
@@ -1168,7 +1168,7 @@
                         <span class="st-icon st-icon-purple"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="10.5" r="2.5"/><circle cx="8.5" cy="7.5" r="2.5"/><circle cx="6.5" cy="12.5" r="2.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg></span>
                         <div>
                             <span class="st-card-title">Theme</span>
-                            <p class="settings-card-sub">Pick a vibe or build your own</p>
+                            <p class="settings-card-sub">Dark or light — full customization coming soon</p>
                         </div>
                     </div>
                     <div class="theme-presets" id="themePresets"></div>
@@ -1329,6 +1329,27 @@
                         </div>
                     </div>
                     <button class="btn-logout" onclick="handleLogout()">Logout</button>
+                </div>
+
+                <!-- About & Legal -->
+                <div class="settings-card">
+                    <div class="settings-card-header">
+                        <span class="st-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></span>
+                        <div>
+                            <span class="st-card-title">About &amp; Legal</span>
+                            <p class="settings-card-sub">How Mindkraft handles your data</p>
+                        </div>
+                    </div>
+                    <div class="legal-links">
+                        <a class="legal-link" href="privacy.html" target="_blank" rel="noopener">
+                            <span class="legal-link-text">Privacy Policy<span>What we collect and why</span></span>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                        </a>
+                        <a class="legal-link" href="terms.html" target="_blank" rel="noopener">
+                            <span class="legal-link-text">Terms of Service<span>The rules of using Mindkraft</span></span>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                        </a>
+                    </div>
                 </div>
             </div>
         </div>
