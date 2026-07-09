@@ -131,9 +131,12 @@
            • Shadows do the lifting — resting cards have a 1-2px shadow, hover
              lifts them to 4-12px, modals get a proper 24px+ stack.            */
         [data-theme-mode="light"] {
-            /* ── Text hierarchy ── */
-            --color-text-primary: #0f1115;     /* near-black, not pure */
-            --color-text-secondary: #545860;   /* readable mid-grey */
+            /* ── Text hierarchy ──
+               Soft ink, not near-black: pure blacks read harsh on paper.
+               Secondary is deliberately darker than a classic mid-grey so
+               toolbar icons and labels clear WCAG 3:1 as UI components. */
+            --color-text-primary: #232933;
+            --color-text-secondary: #4c5560;
 
             /* ── Borders & dividers (intentionally subtle) ── */
             --color-border: rgba(0,0,0,0.07);
@@ -157,54 +160,60 @@
             --color-select-arrow-img: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
             --color-calendar-icon-invert: 0;
 
-            /* ── Accent saturation — deeper for legibility on light bg ── */
-            --color-accent-green: #3d5418;
+            /* ── Accent saturation — saturated and legible, not muted ── */
+            --color-accent-green: #2e7d32;
             --color-accent-olive: #555a26;
             --color-accent-red:   #8a2a4d;
 
             /* ── Elevation — the heart of the light-mode hierarchy ── */
-            --shadow-sm:   0 1px 2px rgba(15,17,21,0.04), 0 1px 3px rgba(15,17,21,0.06);
-            --shadow-md:   0 4px 12px rgba(15,17,21,0.06), 0 2px 4px rgba(15,17,21,0.04);
-            --shadow-lg:   0 12px 28px rgba(15,17,21,0.10), 0 6px 12px rgba(15,17,21,0.06);
+            --shadow-sm:   0 1px 2px rgba(15,17,21,0.05), 0 1px 3px rgba(15,17,21,0.07);
+            --shadow-md:   0 4px 12px rgba(15,17,21,0.07), 0 2px 4px rgba(15,17,21,0.05);
+            --shadow-lg:   0 12px 28px rgba(15,17,21,0.11), 0 6px 12px rgba(15,17,21,0.07);
             --shadow-xl:   0 24px 64px rgba(15,17,21,0.16), 0 8px 20px rgba(15,17,21,0.08);
-            --shadow-card: 0 1px 2px rgba(15,17,21,0.04), 0 1px 3px rgba(15,17,21,0.06);
+            /* Resting cards get a real drop shadow so they lift off the
+               tinted page instead of dissolving into it. */
+            --shadow-card: 0 1px 3px rgba(15,17,21,0.08), 0 4px 14px rgba(15,17,21,0.06);
 
             /* ── Hover overlay — dark-on-light feedback ── */
             --color-hover-overlay: rgba(0,0,0,0.035);
             --color-hover-overlay-strong: rgba(0,0,0,0.06);
 
-            /* ── Progress bar track — visible but soft ── */
-            --color-progress-track: rgba(15,17,21,0.08);
+            /* ── Progress bar track — a clearly darker, cooler grey so the
+                 unfilled portion is legible next to its own fill ── */
+            --color-progress-track: rgba(35,45,60,0.16);
 
-            /* ── XP-positive indicator — deeper green on light bg ── */
-            --color-accent-xp-positive: #2f7d44;
+            /* ── XP-positive indicator — true saturated green, not pastel:
+                 the reward hit has to land on white too ── */
+            --color-accent-xp-positive: #15803d;
 
-            /* ── Activity-card chip palette — deeper hues for AA contrast
-                 on light pill backgrounds. Same color jobs as dark mode. */
-            --chip-xp-fg:      #2f7d44;
-            --chip-streak-fg:  #c2410c;
-            --chip-streak-bg:  rgba(251,146,60,0.16);
-            --chip-warn-fg:    #92400e;
-            --chip-warn-bg:    rgba(251,191,36,0.18);
+            /* ── Activity-card chip palette — saturated + slightly dark
+                 instead of the same hue faded: reward colors keep their
+                 energy on light pill backgrounds. Same color jobs. */
+            --chip-xp-fg:      #15803d;
+            --chip-streak-fg:  #dd4a08;
+            --chip-streak-bg:  rgba(234,88,12,0.14);
+            --chip-warn-fg:    #a16207;
+            --chip-warn-bg:    rgba(251,191,36,0.20);
 
             /* Card hairline — invisible on light; light cards lift via shadow */
             --hairline-top: rgba(255,255,255,0);
 
             /* ── Card-material surface family — light values ─────────────
-               White cards float on the off-white page. Muted/multi/skip
-               states recede toward the page colour or take a soft
-               semantic cast, mirroring the dark-mode value relationships. */
-            --surface-card: #ffffff;
-            --surface-card-hover: #f4f6f9;
-            --surface-card-deep: #f7f8fa;
-            --surface-card-muted: #eef1f4;
-            --surface-card-muted-hover: #e9edf1;
-            --surface-card-multi: #e9f1f8;
-            --surface-card-multi-hover: #dfebf5;
-            --surface-recessed: #f1f3f6;
-            --surface-recessed-hover: #e9ecf0;
+               Near-white cards (not pure #fff — full white glares) float
+               on the tinted page. "Done" surfaces take a soft green cast
+               so completion reads as a state, not as fading; multi keeps
+               its blue "go again" cast. */
+            --surface-card: #fbfcfe;
+            --surface-card-hover: #f1f4f9;
+            --surface-card-deep: #f5f7fa;
+            --surface-card-muted: #ecf3ee;
+            --surface-card-muted-hover: #e4eee7;
+            --surface-card-multi: #e7f0f9;
+            --surface-card-multi-hover: #dceaf6;
+            --surface-recessed: #eff1f5;
+            --surface-recessed-hover: #e7eaef;
             --surface-skip: #f6edf0;
-            --card-hairline: rgba(15,17,21,0.06);
+            --card-hairline: rgba(28,36,48,0.08);
 
             --recessed-bg:   rgba(15,17,21,0.03);
             --recessed-bg-2: rgba(15,17,21,0.035);
@@ -769,6 +778,14 @@
             color: #fff;
             font-weight: 600;
         }
+        /* Light mode: gradient + soft glow — the active tab is a hero
+           moment, and flat blue on a pale bar undersells it. */
+        [data-theme-mode="light"] .nav-tab.active {
+            background: linear-gradient(180deg, #3f8ee2, #2b69b5);
+            box-shadow:
+                0 1px 0 rgba(255,255,255,0.30) inset,
+                0 3px 12px rgba(46,111,190,0.35);
+        }
 
         .nav-tab:hover:not(.active) {
             background: rgba(255, 255, 255, 0.05);
@@ -834,6 +851,16 @@
                 color: var(--color-progress);
                 filter: drop-shadow(0 0 6px rgba(90,159,212,0.7))
                         drop-shadow(0 0 14px rgba(90,159,212,0.35));
+            }
+            /* Light glass island: active tab is icon-glow only, so the
+               glow itself carries the state — tuned to the light blue. */
+            [data-theme-mode="light"] .nav-tab.active {
+                background: transparent;
+                box-shadow: none;
+            }
+            [data-theme-mode="light"] .nav-tab.active .nav-icon {
+                filter: drop-shadow(0 0 6px rgba(49,134,221,0.55))
+                        drop-shadow(0 0 14px rgba(49,134,221,0.28));
             }
 
             .main-content {
@@ -1232,6 +1259,11 @@
             border-radius: 99px;
             position: relative;
             min-width: 0;
+        }
+        /* Light mode: soft halo under the fill so the XP bar reads as the
+           energy source of the header, not a flat strip. */
+        [data-theme-mode="light"] .progress-bar {
+            box-shadow: 0 1px 6px rgba(49,134,221,0.35);
         }
 
         .progress-bar::before {
@@ -1657,15 +1689,18 @@
         }
         .act-tb-add-main:active { transform: scale(0.97); }
 
+        /* Light mode: the Add CTA is one of the deliberate "premium"
+           accent moments — vertical gradient + a real blue glow, so the
+           primary action pops the way dark mode's black bg makes it pop. */
         [data-theme-mode="light"] .act-tb-add-main {
-            background: var(--color-accent-blue);
+            background: linear-gradient(180deg, #3f8ee2, #2e6fbe);
             box-shadow:
-                0 1px 0 rgba(255,255,255,0.25) inset,
-                0 2px 8px rgba(74,124,158,0.28),
+                0 1px 0 rgba(255,255,255,0.35) inset,
+                0 3px 12px rgba(46,111,190,0.40),
                 0 1px 2px rgba(15,17,21,0.08);
         }
         [data-theme-mode="light"] .act-tb-add-main:hover {
-            background: #3b6a8a;
+            background: linear-gradient(180deg, #4a97e8, #3579c8);
         }
 
         /* ── Search ──────────────────────────────────────────────────────── */
@@ -2557,7 +2592,8 @@
             border-color: rgba(255,255,255,0.035);
         }
         [data-theme-mode="light"] .activity-item.completed {
-            background: rgba(15,17,21,0.02);
+            background: var(--surface-card-muted);
+            border-color: rgba(21,128,61,0.14);
         }
 
         .activity-item.completed:hover {
@@ -6508,14 +6544,15 @@
             cursor: default;
         }
         [data-theme-mode="light"] .grid-card.gc-done {
-            background: rgba(15,17,21,0.02);
+            background: var(--surface-card-muted);
+            border-color: rgba(21,128,61,0.14);
         }
         .grid-card.gc-done .gc-name { text-decoration: line-through; color: var(--color-text-secondary); }
         .grid-card.gc-done-multi {
             background: var(--surface-card-multi);
         }
         [data-theme-mode="light"] .grid-card.gc-done-multi {
-            background: rgba(74,124,158,0.06);
+            background: var(--surface-card-multi);
         }
         .grid-card.gc-disabled { opacity: 0.42; cursor: not-allowed; }
         .grid-card.gc-skip { background: var(--surface-skip); }
@@ -7146,7 +7183,8 @@
             opacity: 0.72;
         }
         [data-theme-mode="light"] .planner-card.planner-done {
-            background: rgba(15,17,21,0.02);
+            background: var(--surface-card-muted);
+            border-color: rgba(21,128,61,0.14);
         }
         .planner-card.planner-done .planner-card-name {
             text-decoration: line-through;
@@ -12947,12 +12985,26 @@
 /* Completed cards now read as "muted neutral" — the green ring is the
    reward signal; the card surface just dims slightly. */
 [data-theme-mode="light"] .activity-item.completed {
-    background: rgba(15,17,21,0.025);
-    border-color: var(--color-border);
+    /* Deliberate "done" treatment: soft green wash + darker strikethrough
+       text — completion reads as a state, not as a faded/broken row. */
+    background: var(--surface-card-muted);
+    border-color: rgba(21,128,61,0.14);
+}
+[data-theme-mode="light"] .activity-item.completed:hover {
+    background: var(--surface-card-muted-hover);
+}
+[data-theme-mode="light"] .activity-item.completed .activity-name,
+[data-theme-mode="light"] .grid-card.gc-done .gc-name,
+[data-theme-mode="light"] .planner-card.planner-done .planner-card-name {
+    color: #4c5b52;
+    text-decoration-color: rgba(76,91,82,0.55);
+}
+[data-theme-mode="light"] .activity-item.completed .card-xp {
+    color: #4c5b52;
 }
 [data-theme-mode="light"] .activity-item.completed-multi {
-    background: rgba(74,124,158,0.05);
-    border-color: rgba(74,124,158,0.18);
+    background: var(--surface-card-multi);
+    border-color: rgba(46,111,190,0.18);
 }
 [data-theme-mode="light"] .activity-item.permanently-done {
     background: rgba(61,84,24,0.05);
