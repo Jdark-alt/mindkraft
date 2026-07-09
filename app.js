@@ -9854,7 +9854,7 @@
             // borders), and a deeper-saturated blue so the interactive
             // primary keeps AA contrast on pale surfaces.
             { id:'default', name:'Dark',  mode:'dark',  bg:'#181818', card:'#242424', accent:'#4472a0', progress:'#537db8' },
-            { id:'light',   name:'Light', mode:'light', bg:'#e4e7ec', card:'#ffffff', accent:'#2f5d8e', progress:'#3a7eb5' },
+            { id:'light',   name:'Light', mode:'light', bg:'#e3e7ee', card:'#fbfcfe', accent:'#2e6fbe', progress:'#3186dd' },
         ];
 
         // All CSS variables exposed in the custom editor
@@ -10185,6 +10185,23 @@
                 window._pendingTheme = JSON.parse(JSON.stringify(saved));
             }
 
+            // ── Presets are living values ─────────────────────────────────
+            // A saved preset stores a snapshot of its colours, but presets
+            // get retuned (the Light palette had a full design pass after
+            // launch). Anyone on a named preset always gets the preset's
+            // CURRENT colours; stored snapshots only bind custom themes.
+            var presetMatch = THEMES.find(function(t){ return t.id === activeId; });
+            if (presetMatch) {
+                saved = Object.assign({}, saved, {
+                    mode: presetMatch.mode,
+                    bg: presetMatch.bg,
+                    card: presetMatch.card,
+                    secondary: adjustColor(presetMatch.bg, presetMatch.mode === 'light' ? -8 : 20),
+                    accent: presetMatch.accent,
+                    progress: presetMatch.progress
+                });
+            }
+
             if (!presets) return;
 
             // Build preset swatches — both shipped presets are selectable.
@@ -10307,7 +10324,7 @@
             document.documentElement.setAttribute('data-theme-mode', m);
             // Keep the browser/PWA chrome (status bar, title bar) in step
             var meta = document.querySelector('meta[name="theme-color"]');
-            if (meta) meta.setAttribute('content', m === 'light' ? '#e4e7ec' : '#1a1a1a');
+            if (meta) meta.setAttribute('content', m === 'light' ? '#e3e7ee' : '#1a1a1a');
         }
 
         window.applyThemePreset = function(id, el) {
