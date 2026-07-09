@@ -9848,19 +9848,13 @@
         // ── Theme Customizer ──────────────────────────────────────────────
 
         const THEMES = [
-            // Order alternates dark/light by visual mood (cool, warm, earthy,
-            // bright) so the picker doesn't feel like two segregated groups.
-            // Dark stays first as the safe default for new accounts.
-            { id:'default',  name:'Dark',      mode:'dark',  bg:'#181818', card:'#242424', accent:'#4472a0', progress:'#537db8' },
-            { id:'paper',    name:'Paper',     mode:'light', bg:'#ede4d0', card:'#faf5e8', accent:'#2f5d8e', progress:'#3a7eb5' },
-            { id:'midnight', name:'Midnight',  mode:'dark',  bg:'#0e0e1a', card:'#181825', accent:'#6259b8', progress:'#7870cc' },
-            { id:'mint',     name:'Mint',      mode:'light', bg:'#dae6dd', card:'#eff6f1', accent:'#1f5742', progress:'#2d7964' },
-            { id:'forest',   name:'Forest',    mode:'dark',  bg:'#111a11', card:'#192019', accent:'#3d7a46', progress:'#4e8f58' },
-            { id:'sunrise',  name:'Sunrise',   mode:'light', bg:'#f5dac5', card:'#fdf0e1', accent:'#b54023', progress:'#cc5e1e' },
-            { id:'crimson',  name:'Crimson',   mode:'dark',  bg:'#190e0e', card:'#231515', accent:'#8c3535', progress:'#a04545' },
-            { id:'lavender', name:'Lavender',  mode:'light', bg:'#e2d6ed', card:'#f4edfa', accent:'#553991', progress:'#7458ad' },
-            { id:'sand',     name:'Sand',      mode:'dark',  bg:'#191711', card:'#231f17', accent:'#8c7a3d', progress:'#a08f52' },
-            { id:'slate',    name:'Slate',     mode:'dark',  bg:'#111520', card:'#191e2c', accent:'#4d6b9e', progress:'#637fb5' },
+            // Two shipped presets. Dark stays first as the safe default for
+            // new accounts. Light is the design-brief "parallel light" mode:
+            // cool paper background, white cards lifted by shadow (not
+            // borders), and a deeper-saturated blue so the interactive
+            // primary keeps AA contrast on pale surfaces.
+            { id:'default', name:'Dark',  mode:'dark',  bg:'#181818', card:'#242424', accent:'#4472a0', progress:'#537db8' },
+            { id:'light',   name:'Light', mode:'light', bg:'#eef0f4', card:'#ffffff', accent:'#2f5d8e', progress:'#3a7eb5' },
         ];
 
         // All CSS variables exposed in the custom editor
@@ -10171,62 +10165,59 @@
             }
             _applyThemeMode(resolvedMode);
 
-            if (!presets) return;
-
-            // ── Theme lock-down ───────────────────────────────────────────
-            // We're launching with only the Dark preset polished. Other
-            // themes are kept in the codebase (so their color tokens stay
-            // wired up and existing users on them aren't disturbed), but
-            // the picker hides their names and disables the onclick so
-            // new users can't switch into them. A theme stays interactive
-            // ONLY if it's the launch-ready Dark preset OR it's the user's
-            // currently-active theme (migration grace).
-            var LAUNCH_READY_ID = 'default';
-            function _isThemeUnlocked(themeId) {
-                return themeId === LAUNCH_READY_ID || themeId === activeId;
+            // ── Migration: retired presets ────────────────────────────────
+            // Earlier builds shipped extra presets (Paper, Midnight, Mint,
+            // Forest, …) that have since been removed. Accounts still saved
+            // on one of them fall back to the surviving preset of the same
+            // mode, colours included, so nobody is left stranded on a
+            // palette the picker can no longer show.
+            var knownPreset = activeId === 'custom'
+                || THEMES.some(function(t){ return t.id === activeId; });
+            if (!knownPreset) {
+                var fallback = THEMES.find(function(t){ return t.mode === resolvedMode; }) || THEMES[0];
+                activeId = fallback.id;
+                saved = { presetId: fallback.id, mode: fallback.mode,
+                    bg: fallback.bg, card: fallback.card,
+                    secondary: adjustColor(fallback.bg, fallback.mode === 'light' ? -8 : 20),
+                    accent: fallback.accent, progress: fallback.progress };
+                // Seed the pending state so "Apply Theme" persists the
+                // migrated preset even if the user never taps a swatch.
+                window._pendingTheme = JSON.parse(JSON.stringify(saved));
             }
 
-            // Build preset swatches
+            if (!presets) return;
+
+            // Build preset swatches — both shipped presets are selectable.
             var swatchHtml = '';
             THEMES.forEach(function(t) {
                 // Pick a swatch-dot border that's visible against both light and dark
                 // backgrounds: dark themes get a soft mid-grey, light themes get a
                 // darker grey so the white card swatch doesn't blend into the panel.
                 var dotBorder = (t.mode === 'light') ? '#c4c4c4' : '#444';
-                var unlocked = _isThemeUnlocked(t.id);
-                var lockedCls = unlocked ? '' : ' theme-swatch-locked';
-                var clickAttr = unlocked
-                    ? ' onclick="applyThemePreset(\'' + t.id + '\', this)"'
-                    : ' onclick="event.preventDefault();" aria-disabled="true" title="Coming soon"';
-                // Locked tiles hide the real name and show "Coming soon"
-                // instead — keeps the surprise and avoids hinting at what's
-                // arriving. Active locked themes (migrating users) keep
-                // their real name so they recognise what they're on.
-                var displayName = unlocked ? t.name : 'Coming soon';
-                swatchHtml += '<div class="theme-swatch' + (t.id === activeId ? ' active' : '') + lockedCls + '"' + clickAttr + '>'
+                swatchHtml += '<div class="theme-swatch' + (t.id === activeId ? ' active' : '') + '"'
+                    + ' onclick="applyThemePreset(\'' + t.id + '\', this)">'
                     + '<div class="theme-swatch-colors">'
                     + '<div class="theme-swatch-dot" style="background:' + t.bg + ';border:1px solid ' + dotBorder + ';"></div>'
                     + '<div class="theme-swatch-dot" style="background:' + t.accent + ';"></div>'
                     + '<div class="theme-swatch-dot" style="background:' + t.progress + ';"></div>'
                     + '</div>'
-                    + '<span class="theme-swatch-name">' + displayName + '</span>'
-                    + (unlocked ? '' : '<span class="theme-swatch-lock" aria-hidden="true">'
-                        + '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'
-                        + '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>'
-                        + '<path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>')
+                    + '<span class="theme-swatch-name">' + t.name + '</span>'
                     + '</div>';
             });
+            // Custom stays visible as an option but ships locked — it only
+            // unlocks for accounts that already had a custom theme active
+            // before the lock (migration grace).
             var customActive = activeId === 'custom';
-            var customUnlocked = customActive; // never unlocked for new users
+            var customUnlocked = customActive;
             var customClickAttr = customUnlocked
                 ? ' onclick="activateCustomTheme(this)"'
-                : ' onclick="event.preventDefault();" aria-disabled="true" title="Coming soon"';
+                : ' onclick="event.preventDefault();" aria-disabled="true" title="Custom themes — coming soon"';
             var customLockedCls = customUnlocked ? '' : ' theme-swatch-locked';
             swatchHtml += '<div class="theme-swatch' + (customActive ? ' active' : '') + customLockedCls + '" id="customSwatch"' + customClickAttr + '>'
                 + '<div class="theme-swatch-colors">'
                 + '<div class="theme-swatch-dot" style="background:conic-gradient(#e84545,#f7b731,#2ecc71,#4a7c9e,#9b59b6,#e84545);border:none;"></div>'
                 + '</div>'
-                + '<span class="theme-swatch-name">' + (customUnlocked ? 'Custom' : 'Coming soon') + '</span>'
+                + '<span class="theme-swatch-name">Custom</span>'
                 + (customUnlocked ? '' : '<span class="theme-swatch-lock" aria-hidden="true">'
                     + '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'
                     + '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>'
@@ -10314,6 +10305,9 @@
         function _applyThemeMode(mode) {
             var m = (mode === 'light') ? 'light' : 'dark';
             document.documentElement.setAttribute('data-theme-mode', m);
+            // Keep the browser/PWA chrome (status bar, title bar) in step
+            var meta = document.querySelector('meta[name="theme-color"]');
+            if (meta) meta.setAttribute('content', m === 'light' ? '#eef0f4' : '#1a1a1a');
         }
 
         window.applyThemePreset = function(id, el) {
