@@ -9854,7 +9854,7 @@
             // borders), and a deeper-saturated blue so the interactive
             // primary keeps AA contrast on pale surfaces.
             { id:'default', name:'Dark',  mode:'dark',  bg:'#181818', card:'#242424', accent:'#4472a0', progress:'#537db8' },
-            { id:'light',   name:'Light', mode:'light', bg:'#eef0f4', card:'#ffffff', accent:'#2f5d8e', progress:'#3a7eb5' },
+            { id:'light',   name:'Light', mode:'light', bg:'#e4e7ec', card:'#ffffff', accent:'#2f5d8e', progress:'#3a7eb5' },
         ];
 
         // All CSS variables exposed in the custom editor
@@ -10307,7 +10307,7 @@
             document.documentElement.setAttribute('data-theme-mode', m);
             // Keep the browser/PWA chrome (status bar, title bar) in step
             var meta = document.querySelector('meta[name="theme-color"]');
-            if (meta) meta.setAttribute('content', m === 'light' ? '#eef0f4' : '#1a1a1a');
+            if (meta) meta.setAttribute('content', m === 'light' ? '#e4e7ec' : '#1a1a1a');
         }
 
         window.applyThemePreset = function(id, el) {
