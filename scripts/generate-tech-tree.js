@@ -47,7 +47,10 @@ const REGEN_FREE_DAYS  = 30;
 const REVISION_LIMIT   = 2;
 // Planning-quality output is the priority over token cost (owner's call) —
 // budgets sized for multi-goal chains + challenges + vision.
-const MAX_TOKENS       = { generate: 8000, regenerate: 4000, revision: 1500 };
+// First attempt must fit Groq's per-request TPM budget (prompt + max_tokens):
+// Kimi K2 free tier is 10k TPM, Llama 3.3 is 6k — the adapter auto-shrinks
+// on 413, so these are ceilings, not requirements.
+const MAX_TOKENS       = { generate: 6000, regenerate: 3500, revision: 1500 };
 
 // ── Helpers over the user's schema ─────────────────────────────────────────
 
@@ -291,7 +294,9 @@ The replacement must directly address the feedback (not a light rewording of
 the original), while still following every rule above.`;
     }
 
-    return { system, user: 'INPUT:\n' + JSON.stringify(input, null, 2) };
+    // Compact JSON — pretty-printing costs ~30% more prompt tokens, which
+    // matters against Groq's per-request TPM budget (prompt + max_tokens).
+    return { system, user: 'INPUT:\n' + JSON.stringify(input) };
 }
 
 // ── Model adapter (spec §16) ───────────────────────────────────────────────
@@ -360,28 +365,46 @@ async function callTechTreeModel(prompt, maxTokens) {
         return { content: choice.message.content, finishReason: choice.finish_reason };
     }
 
-    // Network-level failures get 3 attempts with backoff before giving up.
-    // An unavailable/decommissioned model id falls back once to the
-    // provider's fallbackModel instead of failing the request.
+    // Self-healing request loop:
+    // - unavailable/decommissioned model id → fall back to fallbackModel
+    // - 413 (request exceeds the tier's TPM budget, which counts prompt +
+    //   max_tokens) → shrink max_tokens and retry until it fits
+    // - 429 (rate limited) → wait and retry
+    // - network errors → up to 3 attempts with backoff
     async function onceWithRetry(tokens) {
         let lastErr;
-        for (let attempt = 1; attempt <= 3; attempt++) {
+        let currentTokens = tokens;
+        let netAttempts = 0;
+        for (let attempt = 1; attempt <= 6; attempt++) {
             try {
-                return await once(tokens);
+                return await once(currentTokens);
             } catch (err) {
                 lastErr = err;
-                const modelProblem = /Model API error (400|404)/.test(err.message || '') && /model/i.test(err.message || '');
+                const msg = err.message || '';
+                const modelProblem = /Model API error (400|404)/.test(msg) && /model/i.test(msg);
                 if (modelProblem && PROVIDER.fallbackModel && (PROVIDER.activeModel || PROVIDER.model) !== PROVIDER.fallbackModel) {
                     console.warn(`  Model '${PROVIDER.activeModel || PROVIDER.model}' unavailable — falling back to '${PROVIDER.fallbackModel}'`);
                     PROVIDER.activeModel = PROVIDER.fallbackModel;
                     continue;
                 }
+                if (/Model API error 413/.test(msg) && currentTokens > 2500) {
+                    currentTokens = Math.max(2500, Math.floor(currentTokens * 0.6));
+                    console.warn(`  413 request-too-large — retrying with max_tokens=${currentTokens}`);
+                    continue;
+                }
+                if (/Model API error 429/.test(msg) && attempt < 6) {
+                    console.warn('  429 rate-limited — waiting 20s');
+                    await sleep(20000);
+                    continue;
+                }
                 if (!isNetworkError(err)) throw err;
-                console.warn(`  Network error (attempt ${attempt}/3): ${describeError(err)}`);
-                if (attempt < 3) await sleep(2000 * attempt);
+                netAttempts++;
+                if (netAttempts >= 3) break;
+                console.warn(`  Network error (attempt ${netAttempts}/3): ${describeError(err)}`);
+                await sleep(2000 * netAttempts);
             }
         }
-        throw new Error('Could not reach the model API after 3 attempts: ' + describeError(lastErr));
+        throw new Error('Model request kept failing: ' + describeError(lastErr));
     }
 
     let result = await onceWithRetry(maxTokens);
