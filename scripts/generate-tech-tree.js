@@ -23,6 +23,18 @@ const db = admin.firestore();
 // Authorization header makes undici fail with an opaque "fetch failed".
 const PROVIDERS = [
     {
+        // Preferred: Gemini's free tier allows 250k tokens/min — Groq's 8k/min
+        // budget can't fit a planning prompt plus a deep multi-goal tree.
+        // Uses Google's OpenAI-compatible endpoint, so the adapter is shared.
+        name: 'gemini',
+        key: (process.env.GEMINI_API_KEY || '').trim(),
+        base: 'https://generativelanguage.googleapis.com/v1beta/openai',
+        model: process.env.TECH_TREE_MODEL || 'gemini-2.5-flash',
+        fallbackModels: ['gemini-2.0-flash'],
+        maxTokens: { generate: 9000, regenerate: 5000, revision: 2000 },
+        keyHint: 'GEMINI_API_KEY',
+    },
+    {
         name: 'groq',
         key: (process.env.GROQ_API_KEY || '').trim(),
         base: 'https://api.groq.com/openai/v1',
@@ -378,7 +390,10 @@ async function callTechTreeModel(prompt, maxTokens) {
                 top_p: 0.9,
                 max_tokens: tokens,
             }, /^openai\/gpt-oss/.test(PROVIDER.activeModel || PROVIDER.model)
-                ? { reasoning_effort: 'medium' } : {})),
+                // low effort: gpt-oss reasoning tokens come out of max_tokens,
+                // and Groq's tight TPM budget leaves no room for both thinking
+                // and a full JSON tree — the prompt already does the thinking.
+                ? { reasoning_effort: 'low' } : {})),
         });
         if (!res.ok) {
             const text = await res.text().catch(() => '');
@@ -703,7 +718,8 @@ async function processUser(docRef, userData) {
         : Math.max(1, flaggedIds.length);
 
     const prompt = buildTechTreePrompt(userData, req, nodeCount);
-    const raw = await callTechTreeModel(prompt, MAX_TOKENS[req.type] || 2000);
+    const budget = (PROVIDER.maxTokens && PROVIDER.maxTokens[req.type]) || MAX_TOKENS[req.type] || 2000;
+    const raw = await callTechTreeModel(prompt, budget);
     const parsed = parseModelJson(raw);
     const { suggested, autoNodes, connections } = materializeNodes(parsed.nodes.slice(0, MAX_NODES), userData);
     const suggestedChallenges = isRevision ? null : validateChallenges(parsed.challenges, userData);
