@@ -26,7 +26,11 @@ const PROVIDERS = [
         name: 'groq',
         key: (process.env.GROQ_API_KEY || '').trim(),
         base: 'https://api.groq.com/openai/v1',
-        model: process.env.TECH_TREE_MODEL || 'llama-3.3-70b-versatile',
+        // Kimi K2: much stronger long-form planning / structured JSON than
+        // Llama 3.3 70B, still on Groq's free tier. If the account can't
+        // access it, the adapter falls back to fallbackModel automatically.
+        model: process.env.TECH_TREE_MODEL || 'moonshotai/kimi-k2-instruct',
+        fallbackModel: 'llama-3.3-70b-versatile',
         keyHint: 'GROQ_API_KEY',
     },
     {
@@ -43,7 +47,7 @@ const REGEN_FREE_DAYS  = 30;
 const REVISION_LIMIT   = 2;
 // Planning-quality output is the priority over token cost (owner's call) —
 // budgets sized for multi-goal chains + challenges + vision.
-const MAX_TOKENS       = { generate: 7000, regenerate: 3500, revision: 1500 };
+const MAX_TOKENS       = { generate: 8000, regenerate: 4000, revision: 1500 };
 
 // ── Helpers over the user's schema ─────────────────────────────────────────
 
@@ -142,31 +146,38 @@ the exciting future it leads to.
 
 PROCESS (do this reasoning silently; output only the JSON):
 1. Read goalText and identify each DISTINCT goal in it (there may be several).
-2. Judge each goal's SCOPE and TIME HORIZON, and size its plan PROPORTIONALLY
-   — goals are NOT equal and must not get equal treatment:
+2. Write the VISION first: 1-2 sentences, second person, vivid and specific —
+   the snapshot of the life these goals reach. Everything else you output
+   must serve it.
+3. Build the COMPLETE ROADMAP that turns that vision into reality. Every
+   claim in the vision must have a chain leading all the way to it — if the
+   vision says "you publish your book", the tree must climb to a capstone
+   like "Submit the manuscript", not stop at "journal daily". Never sell an
+   exciting future and then deliver only warm-up habits; the chain IS the
+   staircase to the vision, stage by stage, with nothing skipped.
+4. Size each goal's plan by SCOPE and TIME HORIZON — goals are NOT equal
+   and must not get equal treatment:
    - SMALL (start this week — e.g. "begin a calisthenics routine"): 1-2
      foundational nodes. Do not pad small goals.
    - MEDIUM (weeks to a few months — e.g. "save for a purchase over 4
-     months"): a short chain of 2-3 tiers, 2-4 nodes.
+     months"): a chain of 2-3 tiers, 3-4 nodes.
    - LARGE (many months to a year+ — e.g. "write a book", "start a YouTube
-     channel"): a real plan — 4-5 tiers and typically 5-8 nodes, including
-     parallel branches that CONVERGE: high-tier nodes should carry heavier
+     channel"): a full plan — 4-5 tiers and 6-9 nodes for this goal alone,
+     with parallel branches that CONVERGE: high-tier nodes carry heavier
      prerequisites, often requiring 2-3 separate tier 2-3 nodes to all be
      mastered (e.g. tier 4 "Complete a full first draft" requires tier 3
      "Finish a chapter a month" AND tier 2 "Weekly plot outlining"). The
      final tier is the CAPSTONE: the activity that means actually living
-     the goal. Weight: the longer the horizon, the deeper and wider the
-     chain, and the heavier the prerequisites near the top.
-3. Anchor chains in what the user already does: when an existing activity
+     the goal. The longer the horizon, the deeper and wider the chain.
+5. Anchor chains in what the user already does: when an existing activity
    genuinely supports a chain's first steps, connect it with an
    activity_mastered prerequisite (by its given activityId).
-4. Additionally propose 1-3 FRESH PICKS: standalone, tier-1, no-prerequisite
+6. Additionally propose 1-3 FRESH PICKS: standalone, tier-1, no-prerequisite
    activities that are NOT part of any goal chain — genuinely new things
    that would complement this user's life given their goals and current
-   activities (e.g. a recovery habit for someone training hard). Mark them
-   by simply giving them an empty prerequisites array and a distinct kind
-   of value; never disguise a chain step as a fresh pick.
-5. Consider proposing milestone CHALLENGES (see CHALLENGES below).
+   activities (e.g. a recovery habit for someone training hard). Never
+   disguise a chain step as a fresh pick.
+7. Consider proposing milestone CHALLENGES (see CHALLENGES below).
 
 NODE RULES:
 1. Output ONLY valid JSON matching the schema below. No prose, no markdown fences.
@@ -176,29 +187,43 @@ NODE RULES:
    "Improve your health", "Stay consistent"). If a draft merely combines or
    rebrands its prerequisites, discard it and propose the NEXT thing those
    habits unlock instead.
-3. Do NOT force connections. A prerequisite must genuinely enable the new
+3. NEVER suggest a "more consistent" or renamed version of an existing
+   activity. If the user already has "Morning workout", "Follow consistent
+   morning exercise" is FORBIDDEN — specify new CONTENT instead: the type,
+   programming, or next level of what they do ("Add two 40s HIIT intervals
+   to the morning workout", "Switch two sessions a week to lower-body
+   strength"). Redundancy is the worst failure mode of this system.
+4. Get increasingly SPECIFIC as tiers rise, especially for common goals.
+   "I want to lose weight" must NOT produce generic exercise nodes — it gets
+   concrete programming that sharpens tier by tier: tier 1 "30-min brisk
+   walk 3x/week" → tier 2 "Two full-body strength sessions weekly" →
+   tier 3 "Track a weekly progressive-overload log" → tier 4 "Complete a
+   12-week cut with weekly weigh-ins". A tier-4 node should read like a
+   coach's prescription, not a poster slogan.
+5. Do NOT force connections. A prerequisite must genuinely enable the new
    activity — never link nodes just to make the tree look connected. Chains
    come from real dependency; small goals stay foundational (empty
    prerequisites). Never cross-link two unrelated goals' chains.
-4. VARY THE KIND of activity across your output — physical, mental, social,
+6. VARY THE KIND of activity across your output — physical, mental, social,
    skill-building, creative, event/milestone. No two nodes may serve nearly
    the same purpose or differ only in intensity/timing.
-5. You may combine activities across Dimensions into a "nexus" node
+7. You may combine activities across Dimensions into a "nexus" node
    (isNexus: true, nexusDimensionIds listing every Dimension involved) when it
    creates a genuinely meaningful new activity.
-6. If a given activity's name and description together are too ambiguous to
+8. If a given activity's name and description together are too ambiguous to
    confidently use, do not reference it in any prerequisite — omit it from
    your reasoning entirely rather than guessing.
-7. For every new node, assign a plausible dimensionId and, if a provided Path
+9. For every new node, assign a plausible dimensionId and, if a provided Path
    plausibly fits, a suggestedPathId — otherwise null.
-8. Suggest frequency (one of: daily, weekly, biweekly, monthly, occasional),
+10. Suggest frequency (one of: daily, weekly, biweekly, monthly, occasional),
    baseXP (integer 1-50), and a short description consistent with the
    style/scale of the user's existing activities.
-9. Total nodes across all goals: at least 3, at most ${nodeCount} — let each
-   goal's scope decide the count; never pad to reach the cap.
-10. Do not repeat or rename anything listed under already-active or
+11. Total nodes: typically 10-18 for multi-goal input (a single LARGE goal
+    alone warrants 6-9), at most ${nodeCount} — let each goal's scope decide
+    the count; never pad small goals to reach the cap.
+12. Do not repeat or rename anything listed under already-active or
     already-archived nodes — propose only genuinely new suggestions.
-11. A node may depend on another node IN YOUR OUTPUT via
+13. A node may depend on another node IN YOUR OUTPUT via
     {"type":"node_mastered","nodeTitle":"<exact title of that other node>"}.
     A node may depend on a real existing activity via
     {"type":"activity_mastered","activityId":"<id from activeActivities>"}.
@@ -315,7 +340,7 @@ async function callTechTreeModel(prompt, maxTokens) {
                 'Accept': 'application/json',
             },
             body: JSON.stringify({
-                model: PROVIDER.model,
+                model: PROVIDER.activeModel || PROVIDER.model,
                 messages: [
                     { role: 'system', content: prompt.system },
                     { role: 'user', content: prompt.user },
@@ -336,6 +361,8 @@ async function callTechTreeModel(prompt, maxTokens) {
     }
 
     // Network-level failures get 3 attempts with backoff before giving up.
+    // An unavailable/decommissioned model id falls back once to the
+    // provider's fallbackModel instead of failing the request.
     async function onceWithRetry(tokens) {
         let lastErr;
         for (let attempt = 1; attempt <= 3; attempt++) {
@@ -343,6 +370,12 @@ async function callTechTreeModel(prompt, maxTokens) {
                 return await once(tokens);
             } catch (err) {
                 lastErr = err;
+                const modelProblem = /Model API error (400|404)/.test(err.message || '') && /model/i.test(err.message || '');
+                if (modelProblem && PROVIDER.fallbackModel && (PROVIDER.activeModel || PROVIDER.model) !== PROVIDER.fallbackModel) {
+                    console.warn(`  Model '${PROVIDER.activeModel || PROVIDER.model}' unavailable — falling back to '${PROVIDER.fallbackModel}'`);
+                    PROVIDER.activeModel = PROVIDER.fallbackModel;
+                    continue;
+                }
                 if (!isNetworkError(err)) throw err;
                 console.warn(`  Network error (attempt ${attempt}/3): ${describeError(err)}`);
                 if (attempt < 3) await sleep(2000 * attempt);

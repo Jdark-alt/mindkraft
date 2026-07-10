@@ -14781,13 +14781,28 @@
             if (tt.pendingRequest) return;
             var cost = ttRegenCost();
             if (cost > 0) {
-                if ((window.userData.currentXP || 0) < cost) {
+                var cur = window.userData.currentXP || 0;
+                var lvl = window.userData.level || 1;
+                var willDemote = cur < cost;
+                if (willDemote && lvl <= 1) {
+                    // Level 1 with insufficient XP — nothing to demote into.
                     showToast('Not enough XP — regenerate costs ' + cost + ' XP (free in ' +
                         Math.ceil(TT_REGEN_FREE_DAYS - (Date.now() - new Date(tt.lastGeneratedAt).getTime()) / 86400000) + ' days)', 'olive');
                     return;
                 }
-                if (!confirm('Regenerate now for ' + cost + ' XP (50% of your current level-up)?\n\nActive nodes are kept; unresolved suggestions are replaced.')) return;
-                window.userData.currentXP = Math.max(0, (window.userData.currentXP || 0) - cost);
+                var msg = willDemote
+                    ? 'Regenerate costs ' + cost + ' XP but you only have ' + cur + ' — paying will drop you back to Level ' + (lvl - 1) + '.\n\nActive nodes are kept; unresolved suggestions are replaced. Continue?'
+                    : 'Regenerate now for ' + cost + ' XP (50% of your current level-up)?\n\nActive nodes are kept; unresolved suggestions are replaced.';
+                if (!confirm(msg)) return;
+                cur -= cost;
+                if (cur < 0) {
+                    // Demote one level and borrow the shortfall from it
+                    window.userData.level = lvl - 1;
+                    cur += calculateXPForLevel(lvl - 1);
+                    if (cur < 0) cur = 0;
+                    showToast('Level ' + (lvl - 1) + ' — spent into the previous level for this regenerate', 'olive');
+                }
+                window.userData.currentXP = cur;
             } else {
                 if (!confirm('Regenerate your Tech Tree?\n\nActive nodes are kept; unresolved suggestions are replaced with a new frontier.')) return;
             }
@@ -15577,7 +15592,10 @@
             var minX = -14, minY = -40;
             var vbW = layout.width - minX + 20;
             var vbH = layout.height - minY + 24;
-            return '<svg class="tt-svg" viewBox="' + minX + ' ' + minY + ' ' + vbW + ' ' + vbH + '" xmlns="http://www.w3.org/2000/svg">' + svg + '</svg>';
+            // Natural (1:1) width/height so the preview renders zoomed-in and
+            // scrolls both axes instead of squeezing the whole tree into the
+            // card. The fullscreen canvas overrides these via CSS and pans.
+            return '<svg class="tt-svg" width="' + vbW + '" height="' + vbH + '" viewBox="' + minX + ' ' + minY + ' ' + vbW + ' ' + vbH + '" xmlns="http://www.w3.org/2000/svg">' + svg + '</svg>';
         }
 
         // ── Fullscreen pan/zoom canvas ───────────────────────────────────
@@ -15607,17 +15625,25 @@
         function ttInitPanZoom(container) {
             var svg = container && container.querySelector('svg');
             if (!svg) return;
-            var vbParts = svg.getAttribute('viewBox').split(' ').map(Number);
-            var vb = { x: vbParts[0], y: vbParts[1], w: vbParts[2], h: vbParts[3] };
-            var baseW = vb.w;
+            var full = svg.getAttribute('viewBox').split(' ').map(Number);
+            var rect0 = container.getBoundingClientRect();
+            var aspect = rect0.height / Math.max(1, rect0.width); // match the screen, not the tree
+            // Open zoomed-in at ~1:1 (one SVG unit ≈ one CSS pixel), anchored
+            // at the left edge and vertically centered on the core — pan for
+            // lanes/tiers, zoom out for the overview.
+            var vb = { w: Math.min(full[2], rect0.width), h: 0, x: full[0], y: 0 };
+            vb.h = vb.w * aspect;
+            vb.y = (full[1] + full[3] / 2) - vb.h / 2;
+            var minW = Math.max(160, rect0.width * 0.35);
+            var maxW = full[2] * 1.25;
             var pointers = {};
             var lastPinchDist = null;
             var moved = false;
 
             function apply() { svg.setAttribute('viewBox', vb.x + ' ' + vb.y + ' ' + vb.w + ' ' + vb.h); }
-            var aspect = vb.h / vb.w; // viewBox is no longer square — keep its ratio
+            apply();
             function scaleAt(factor, cx, cy) {
-                var newW = Math.min(baseW * 3, Math.max(baseW * 0.15, vb.w * factor));
+                var newW = Math.min(maxW, Math.max(minW, vb.w * factor));
                 var ratio = newW / vb.w;
                 var rect = container.getBoundingClientRect();
                 var px = vb.x + (cx - rect.left) / rect.width * vb.w;

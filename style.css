@@ -14483,7 +14483,8 @@
             background: var(--color-bg-card);
             border-color: var(--color-border);
         }
-        .tt-canvas-preview .tt-svg { display: block; width: 100%; height: 360px; }
+        .tt-canvas-preview { max-height: 400px; overflow: auto; -webkit-overflow-scrolling: touch; }
+        .tt-canvas-preview .tt-svg { display: block; }
         .tt-canvas-expand {
             position: absolute;
             right: 10px; bottom: 8px;
