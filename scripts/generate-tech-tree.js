@@ -26,11 +26,12 @@ const PROVIDERS = [
         name: 'groq',
         key: (process.env.GROQ_API_KEY || '').trim(),
         base: 'https://api.groq.com/openai/v1',
-        // Kimi K2: much stronger long-form planning / structured JSON than
-        // Llama 3.3 70B, still on Groq's free tier. If the account can't
-        // access it, the adapter falls back to fallbackModel automatically.
-        model: process.env.TECH_TREE_MODEL || 'moonshotai/kimi-k2-instruct',
-        fallbackModel: 'llama-3.3-70b-versatile',
+        // GPT-OSS-120B: Groq's strongest broadly-available free-tier model —
+        // a reasoning model, much better at multi-goal planning than Llama.
+        // The adapter walks the fallback chain automatically when a model
+        // isn't available to the account.
+        model: process.env.TECH_TREE_MODEL || 'openai/gpt-oss-120b',
+        fallbackModels: ['moonshotai/kimi-k2-instruct', 'llama-3.3-70b-versatile'],
         keyHint: 'GROQ_API_KEY',
     },
     {
@@ -155,9 +156,10 @@ PROCESS (do this reasoning silently; output only the JSON):
 3. Build the COMPLETE ROADMAP that turns that vision into reality. Every
    claim in the vision must have a chain leading all the way to it — if the
    vision says "you publish your book", the tree must climb to a capstone
-   like "Submit the manuscript", not stop at "journal daily". Never sell an
-   exciting future and then deliver only warm-up habits; the chain IS the
-   staircase to the vision, stage by stage, with nothing skipped.
+   practice like "Query one agent or publisher every week", not stop at
+   "journal daily". Never sell an exciting future and then deliver only
+   warm-up habits; the chain IS the staircase to the vision, stage by
+   stage, with nothing skipped.
 4. Size each goal's plan by SCOPE and TIME HORIZON — goals are NOT equal
    and must not get equal treatment:
    - SMALL (start this week — e.g. "begin a calisthenics routine"): 1-2
@@ -184,49 +186,69 @@ PROCESS (do this reasoning silently; output only the JSON):
 
 NODE RULES:
 1. Output ONLY valid JSON matching the schema below. No prose, no markdown fences.
-2. Every node must be a GENUINELY NEW, CONCRETE activity — a specific behavior
-   the user could tick off ("Record a practice video weekly"), never a vague
+2. THE REPEATABILITY TEST — the most important rule. Every node must be a
+   REPEATABLE PRACTICE the user performs again and again (it is mastered by
+   logging ~5-15 completions), NEVER a one-time deliverable, project phase,
+   or milestone. Before emitting any node ask: "does doing this 10 times make
+   sense?" If not, it is not an activity — convert it into the recurring
+   practice that PRODUCES that deliverable.
+   Worked example, goal "write a book in a year":
+   - WRONG (project phases — all fail the test): "Create a book outline",
+     "Write a first draft chapter", "Complete the first draft",
+     "Publish the book".
+   - RIGHT (practices that get the book written):
+     tier 1 "Write 500 words a day", "Research your topic 20 min, 3x/week";
+     tier 2 "Outline one chapter each week", "Discuss your draft with a
+     friend every other week";
+     tier 3 "Edit one completed chapter per week", "Join a writers'
+     workshop";
+     tier 4 (capstone) "Query one agent or publisher every week".
+   Note the capstone is ALSO a recurring practice — the behavior of someone
+   living the goal — never a finish-line event. Deliverables emerge from the
+   practices; they are never nodes themselves.
+3. Every node must be GENUINELY NEW and CONCRETE — a specific behavior the
+   user could tick off ("Record a practice video weekly"), never a vague
    umbrella or a summary of things they already do ("Follow a routine",
    "Improve your health", "Stay consistent"). If a draft merely combines or
    rebrands its prerequisites, discard it and propose the NEXT thing those
    habits unlock instead.
-3. NEVER suggest a "more consistent" or renamed version of an existing
+4. NEVER suggest a "more consistent" or renamed version of an existing
    activity. If the user already has "Morning workout", "Follow consistent
    morning exercise" is FORBIDDEN — specify new CONTENT instead: the type,
    programming, or next level of what they do ("Add two 40s HIIT intervals
    to the morning workout", "Switch two sessions a week to lower-body
    strength"). Redundancy is the worst failure mode of this system.
-4. Get increasingly SPECIFIC as tiers rise, especially for common goals.
+5. Get increasingly SPECIFIC as tiers rise, especially for common goals.
    "I want to lose weight" must NOT produce generic exercise nodes — it gets
    concrete programming that sharpens tier by tier: tier 1 "30-min brisk
    walk 3x/week" → tier 2 "Two full-body strength sessions weekly" →
    tier 3 "Track a weekly progressive-overload log" → tier 4 "Complete a
    12-week cut with weekly weigh-ins". A tier-4 node should read like a
    coach's prescription, not a poster slogan.
-5. Do NOT force connections. A prerequisite must genuinely enable the new
+6. Do NOT force connections. A prerequisite must genuinely enable the new
    activity — never link nodes just to make the tree look connected. Chains
    come from real dependency; small goals stay foundational (empty
    prerequisites). Never cross-link two unrelated goals' chains.
-6. VARY THE KIND of activity across your output — physical, mental, social,
+7. VARY THE KIND of activity across your output — physical, mental, social,
    skill-building, creative, event/milestone. No two nodes may serve nearly
    the same purpose or differ only in intensity/timing.
-7. You may combine activities across Dimensions into a "nexus" node
+8. You may combine activities across Dimensions into a "nexus" node
    (isNexus: true, nexusDimensionIds listing every Dimension involved) when it
    creates a genuinely meaningful new activity.
-8. If a given activity's name and description together are too ambiguous to
+9. If a given activity's name and description together are too ambiguous to
    confidently use, do not reference it in any prerequisite — omit it from
    your reasoning entirely rather than guessing.
-9. For every new node, assign a plausible dimensionId and, if a provided Path
+10. For every new node, assign a plausible dimensionId and, if a provided Path
    plausibly fits, a suggestedPathId — otherwise null.
-10. Suggest frequency (one of: daily, weekly, biweekly, monthly, occasional),
+11. Suggest frequency (one of: daily, weekly, biweekly, monthly, occasional),
    baseXP (integer 1-50), and a short description consistent with the
    style/scale of the user's existing activities.
-11. Total nodes: typically 10-18 for multi-goal input (a single LARGE goal
+12. Total nodes: typically 10-18 for multi-goal input (a single LARGE goal
     alone warrants 6-9), at most ${nodeCount} — let each goal's scope decide
     the count; never pad small goals to reach the cap.
-12. Do not repeat or rename anything listed under already-active or
+13. Do not repeat or rename anything listed under already-active or
     already-archived nodes — propose only genuinely new suggestions.
-13. A node may depend on another node IN YOUR OUTPUT via
+14. A node may depend on another node IN YOUR OUTPUT via
     {"type":"node_mastered","nodeTitle":"<exact title of that other node>"}.
     A node may depend on a real existing activity via
     {"type":"activity_mastered","activityId":"<id from activeActivities>"}.
@@ -344,7 +366,7 @@ async function callTechTreeModel(prompt, maxTokens) {
                 'Content-Type': 'application/json',
                 'Accept': 'application/json',
             },
-            body: JSON.stringify({
+            body: JSON.stringify(Object.assign({
                 model: PROVIDER.activeModel || PROVIDER.model,
                 messages: [
                     { role: 'system', content: prompt.system },
@@ -353,7 +375,8 @@ async function callTechTreeModel(prompt, maxTokens) {
                 temperature: 0.6,
                 top_p: 0.9,
                 max_tokens: tokens,
-            }),
+            }, /^openai\/gpt-oss/.test(PROVIDER.activeModel || PROVIDER.model)
+                ? { reasoning_effort: 'medium' } : {})),
         });
         if (!res.ok) {
             const text = await res.text().catch(() => '');
@@ -382,10 +405,15 @@ async function callTechTreeModel(prompt, maxTokens) {
                 lastErr = err;
                 const msg = err.message || '';
                 const modelProblem = /Model API error (400|404)/.test(msg) && /model/i.test(msg);
-                if (modelProblem && PROVIDER.fallbackModel && (PROVIDER.activeModel || PROVIDER.model) !== PROVIDER.fallbackModel) {
-                    console.warn(`  Model '${PROVIDER.activeModel || PROVIDER.model}' unavailable — falling back to '${PROVIDER.fallbackModel}'`);
-                    PROVIDER.activeModel = PROVIDER.fallbackModel;
-                    continue;
+                const chain = PROVIDER.fallbackModels || (PROVIDER.fallbackModel ? [PROVIDER.fallbackModel] : []);
+                if (modelProblem && chain.length) {
+                    const current = PROVIDER.activeModel || PROVIDER.model;
+                    const next = chain[chain.indexOf(current) + 1] || (current === PROVIDER.model ? chain[0] : null);
+                    if (next) {
+                        console.warn(`  Model '${current}' unavailable — falling back to '${next}'`);
+                        PROVIDER.activeModel = next;
+                        continue;
+                    }
                 }
                 if (/Model API error 413/.test(msg) && currentTokens > 2500) {
                     currentTokens = Math.max(2500, Math.floor(currentTokens * 0.6));
