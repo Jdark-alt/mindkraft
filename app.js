@@ -15479,9 +15479,21 @@
                     + escapeHtml(ttDimName(dimId)) + '</text>';
             });
 
-            // Edges — organic quadratic curves pulled gently toward the core.
-            // Solid + dimension-colored once the source is mastered; a quiet
-            // dashed hairline while the dependency is still open.
+            // Edges — organic quadratic curves pulled gently toward the core,
+            // with a chevron pointing at the node they unlock so the
+            // prerequisite → unlock direction always reads. Solid +
+            // dimension-colored once the source is mastered; a quiet dashed
+            // hairline while the dependency is still open.
+            function qAt(a, c, b, t) {
+                var mt = 1 - t;
+                return { x: mt * mt * a.x + 2 * mt * t * c.x + t * t * b.x,
+                         y: mt * mt * a.y + 2 * mt * t * c.y + t * t * b.y };
+            }
+            function qTan(a, c, b, t) {
+                var mt = 1 - t;
+                return { x: 2 * mt * (c.x - a.x) + 2 * t * (b.x - c.x),
+                         y: 2 * mt * (c.y - a.y) + 2 * t * (b.y - c.y) };
+            }
             var drawnEdges = {};
             function edge(fromId, toId) {
                 var key = fromId + '>' + toId;
@@ -15492,13 +15504,22 @@
                 var from = tt.nodes.find(function(n) { return n.id === fromId; });
                 var met = from ? ttNodeIsMastered(from) : false;
                 var hex = ttDimHexRaw(from && from.dimensionId);
-                var mx = (a.x + b.x) / 2 * 0.78, my = (a.y + b.y) / 2 * 0.78;
+                var c = { x: (a.x + b.x) / 2 * 0.78, y: (a.y + b.y) / 2 * 0.78 };
+                var stroke = met ? hex : 'rgba(150,150,160,0.28)';
                 var d = 'M' + a.x.toFixed(1) + ',' + a.y.toFixed(1)
-                    + ' Q' + mx.toFixed(1) + ',' + my.toFixed(1)
+                    + ' Q' + c.x.toFixed(1) + ',' + c.y.toFixed(1)
                     + ' ' + b.x.toFixed(1) + ',' + b.y.toFixed(1);
-                svg += '<path d="' + d + '" fill="none" stroke="' + (met ? hex : 'rgba(150,150,160,0.22)') + '"'
+                svg += '<path d="' + d + '" fill="none" stroke="' + stroke + '"'
                     + ' stroke-width="' + (met ? 2 : 1.5) + '"'
                     + (met ? ' opacity="0.8"' : ' stroke-dasharray="3,6" stroke-linecap="round"') + '/>';
+                // Direction chevron, placed just before the unlocked node
+                var pt = qAt(a, c, b, 0.78);
+                var tg = qTan(a, c, b, 0.78);
+                var deg = Math.atan2(tg.y, tg.x) * 180 / Math.PI;
+                svg += '<g transform="translate(' + pt.x.toFixed(1) + ',' + pt.y.toFixed(1) + ') rotate(' + deg.toFixed(1) + ')">'
+                    + '<path d="M-4.5,-3.5 L2.5,0 L-4.5,3.5" fill="none" stroke="' + stroke + '"'
+                    + ' stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"'
+                    + (met ? ' opacity="0.9"' : ' opacity="0.7"') + '/></g>';
             }
             var nodeByActivity = {};
             layout.nodes.forEach(function(n) { if (n.activityId) nodeByActivity[n.activityId] = n.id; });
@@ -15776,6 +15797,14 @@
                 + '<span class="tt-goal-text">' + escapeHtml(tt.goalText || 'No goal set') + '</span>'
                 + '<button class="tt-goal-edit" onclick="ttStartGoalEdit()">Edit</button>'
                 + '</div>';
+            // The snapshot of the future this tree leads to — written by the
+            // generation pass, shown quietly above the canvas.
+            if (tt.vision) {
+                html += '<div class="tt-vision">'
+                    + '<div class="tt-vision-kicker">Where this leads</div>'
+                    + '<div class="tt-vision-text">' + escapeHtml(tt.vision) + '</div>'
+                    + '</div>';
+            }
             if (revOpen) {
                 html += '<p class="tt-rev-note"><span class="tt-num">' + revLeft + '</span> revision' + (revLeft === 1 ? '' : 's') + ' left — tap a suggested node to request a targeted fix (24h window).</p>';
             }
@@ -15784,6 +15813,32 @@
                 + ttBuildTreeSVG(window._ttShowArchived, false)
                 + '<div class="tt-canvas-expand">' + ttIcon('expand', 11) + '<span>Tap to explore</span></div>'
                 + '</div>';
+
+            // AI-suggested milestone challenges — one-click add into the
+            // Challenges tab. Only shown once that tab is unlocked.
+            var suggCh = (tt.suggestedChallenges || []).filter(function(c) { return c.status === 'suggested'; });
+            if (suggCh.length && (typeof isTabUnlocked !== 'function' || isTabUnlocked('challenges'))) {
+                html += '<div class="tt-group"><div class="tt-group-label">Suggested challenges</div>'
+                    + suggCh.map(function(c) {
+                        var ids = Object.keys(c.activityTargets || {});
+                        var names = ids.map(function(id) {
+                            var e = ttFindActivity(id);
+                            return e ? e.activity.name : null;
+                        }).filter(Boolean);
+                        var total = ids.reduce(function(s, id) { return s + (c.activityTargets[id] || 0); }, 0);
+                        return '<div class="tt-challenge-card">'
+                            + '<div class="tt-challenge-main">'
+                            + '<div class="tt-challenge-title">' + escapeHtml(c.title) + '</div>'
+                            + (c.description ? '<div class="tt-challenge-desc">' + escapeHtml(c.description) + '</div>' : '')
+                            + '<div class="tt-challenge-meta"><span class="tt-num">' + total + '</span> completions · <span class="tt-num">'
+                            + c.durationDays + '</span> days · ' + escapeHtml(names.join(', ')) + '</div>'
+                            + '</div>'
+                            + '<div class="tt-challenge-actions">'
+                            + '<button class="tt-ch-add" onclick="ttAcceptChallenge(\'' + c.id + '\')">' + ttIcon('plus', 12) + '<span>Add</span></button>'
+                            + '<button class="tt-ch-dismiss" onclick="ttDismissChallenge(\'' + c.id + '\')" aria-label="Dismiss">' + ttIcon('x', 11) + '</button>'
+                            + '</div></div>';
+                    }).join('') + '</div>';
+            }
 
             // Node list — grouped, tappable rows mirroring the canvas.
             // Left-edge dimension bar per the brief's dimension color treatment.
@@ -15843,6 +15898,60 @@
                 + '<button class="tt-btn tt-btn-primary" onclick="window._ttGoalEditConfirm && window._ttGoalEditConfirm()">Save</button>'
                 + '</div></div>'
             );
+        };
+
+        // ── AI-suggested challenges (milestones over existing activities) ──
+        // One click builds a real challenge in the same shape saveChallenge
+        // produces, so the Challenges tab treats it like any hand-made one.
+        window.ttAcceptChallenge = function(chId) {
+            var tt = ensureTechTree();
+            var sug = (tt.suggestedChallenges || []).find(function(c) { return c.id === chId; });
+            if (!sug || sug.status !== 'suggested') return;
+            var targets = {};
+            Object.keys(sug.activityTargets || {}).forEach(function(id) {
+                if (ttFindActivity(id)) targets[id] = sug.activityTargets[id];
+            });
+            var ids = Object.keys(targets);
+            if (!ids.length) { showToast('The activities in this challenge no longer exist', 'olive'); return; }
+            var totalBase = ids.reduce(function(s, id) {
+                var e = ttFindActivity(id);
+                return s + (e.activity.baseXP || 1) * targets[id];
+            }, 0);
+            var progress = {};
+            ids.forEach(function(id) { progress[id] = 0; });
+            var end = new Date(Date.now() + (sug.durationDays || 30) * 86400000);
+            if (!window.userData.challenges) window.userData.challenges = [];
+            window.userData.challenges.push({
+                id: Date.now().toString(),
+                name: sug.title,
+                description: sug.description || '',
+                targetCount: ids.reduce(function(s, id) { return s + targets[id]; }, 0),
+                bonusXP: Math.max(1, Math.round(totalBase * 0.2)),
+                startDate: toLocalDateStr(new Date()),
+                endDate: toLocalDateStr(end),
+                activityIds: ids, activityTargets: targets, activityProgress: progress,
+                activityId: null, currentCount: 0,
+                metricEnabled: false, metricQty: null, metricUnit: null, metricCurrent: 0,
+                activityProgressCollapsed: true,
+                enforceActivities: false, enforceDateRange: false,
+                status: 'active',
+                createdAt: new Date().toISOString(),
+                source: 'tech_tree'
+            });
+            sug.status = 'accepted';
+            saveUserData().catch(function() {});
+            showToast('🏆 Challenge added: ' + sug.title, 'green');
+            updateDashboard();
+            renderTechTree();
+        };
+
+        window.ttDismissChallenge = function(chId) {
+            var tt = ensureTechTree();
+            var sug = (tt.suggestedChallenges || []).find(function(c) { return c.id === chId; });
+            if (!sug) return;
+            sug.status = 'dismissed';
+            saveUserData().catch(function() {});
+            renderTechTree();
         };
 
         // ── Hooks into existing flows ────────────────────────────────────

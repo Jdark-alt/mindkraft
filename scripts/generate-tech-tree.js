@@ -38,11 +38,12 @@ const PROVIDERS = [
     },
 ];
 const PROVIDER = PROVIDERS.find(p => p.key) || PROVIDERS[0];
-const GENERATE_NODES   = 12;  // spec §9: 10–14
-const REGENERATE_NODES = 6;   // spec §9: 4–8
+const MAX_NODES        = 16;  // hard cap across all goals; scope decides the real count
 const REGEN_FREE_DAYS  = 30;
 const REVISION_LIMIT   = 2;
-const MAX_TOKENS       = { generate: 4000, regenerate: 2500, revision: 1200 };
+// Planning-quality output is the priority over token cost (owner's call) —
+// budgets sized for multi-goal chains + challenges + vision.
+const MAX_TOKENS       = { generate: 6000, regenerate: 3500, revision: 1500 };
 
 // ── Helpers over the user's schema ─────────────────────────────────────────
 
@@ -135,66 +136,103 @@ function buildTechTreePrompt(userData, req, nodeCount) {
         .map(n => n.title);
 
     let system = `You are the Tech Tree generation engine for Mindkraft, a life-gamification app.
-Propose new "nodes" — activities the user could add — forming a meaningful,
-personalized path toward their stated goal.
+Your job: turn the user's stated goal(s) into an achievable, actionable plan —
+a tree of unlockable activities plus optional milestone challenges — and paint
+the exciting future it leads to.
 
-RULES:
+PROCESS (do this reasoning silently; output only the JSON):
+1. Read goalText and identify each DISTINCT goal in it (there may be several).
+2. Judge each goal's SCOPE:
+   - SMALL — achievable by simply starting 1-2 concrete habits: propose just
+     those 1-2 activities as foundational nodes. Do not pad small goals.
+   - LARGE — long-term, needs real planning: design a progression CHAIN of
+     3-5 tiers. Each tier is one concrete activity that only makes sense once
+     the tier before it is mastered — chain them with node_mastered
+     prerequisites so the unlock order is explicit. The final tier is the
+     CAPSTONE: the activity that means actually living the goal (e.g. goal
+     "start a YouTube channel" → tier 1 "Curate an idea-bank playlist" →
+     tier 2 "Record a practice video weekly" → tier 3 "Practice visual and
+     verbal storytelling" → tier 4 "Follow a publishing checklist per video").
+     The chain exists to show the user a snapshot of what is possible and the
+     exact staircase to it.
+3. Anchor chains in what the user already does: when an existing activity
+   genuinely supports a chain's first steps, connect it with an
+   activity_mastered prerequisite (by its given activityId).
+4. Consider proposing milestone CHALLENGES (see CHALLENGES below).
+
+NODE RULES:
 1. Output ONLY valid JSON matching the schema below. No prose, no markdown fences.
 2. Every node must be a GENUINELY NEW, CONCRETE activity — a specific behavior
-   the user could tick off ("Meditate 10 minutes after waking", "Join a weekly
-   running club"), never a vague umbrella or a summary of things they already
-   do ("Follow a morning routine", "Improve your health", "Stay consistent").
-   If a draft merely combines or rebrands its prerequisites, discard it and
-   propose the NEXT thing those habits unlock instead.
-3. When an existing activity genuinely enables or enhances a new activity,
-   connect it via an "activity_mastered" prerequisite (by its given
-   activityId). Example: established "Sleep by 11 PM" + "Morning Walk" could
-   unlock "Wake at 6 and journal before screens" — a new behavior made
-   possible by that foundation. This is the preferred kind of node.
-4. Do NOT force connections. A prerequisite must genuinely enable the new
-   activity — never link nodes just to make the tree look connected. When the
-   user's activity list is small, or nothing plausibly supports a compound,
-   propose standalone foundational nodes (empty prerequisites array) — a
-   healthy tree can be up to half foundational. Most nodes should have 0-2
-   prerequisites; three or more only when truly justified.
-5. VARY THE KIND of activity across your output — mix physical, mental,
-   social, skill-building, creative, and event/milestone suggestions (e.g.
-   sign up for a race, take a class). No two nodes in your output may serve
-   nearly the same purpose or differ only in intensity/timing; if two drafts
-   overlap, replace one with a different kind of activity entirely.
-6. You may combine activities across Dimensions into a "nexus" node
+   the user could tick off ("Record a practice video weekly"), never a vague
+   umbrella or a summary of things they already do ("Follow a routine",
+   "Improve your health", "Stay consistent"). If a draft merely combines or
+   rebrands its prerequisites, discard it and propose the NEXT thing those
+   habits unlock instead.
+3. Do NOT force connections. A prerequisite must genuinely enable the new
+   activity — never link nodes just to make the tree look connected. Chains
+   come from real dependency; small goals stay foundational (empty
+   prerequisites). Never cross-link two unrelated goals' chains.
+4. VARY THE KIND of activity across your output — physical, mental, social,
+   skill-building, creative, event/milestone. No two nodes may serve nearly
+   the same purpose or differ only in intensity/timing.
+5. You may combine activities across Dimensions into a "nexus" node
    (isNexus: true, nexusDimensionIds listing every Dimension involved) when it
-   creates a genuinely meaningful new activity. No limit on how many
-   Dimensions a nexus node may span — only include ones that are truly relevant.
-7. If a given activity's name and description together are too ambiguous to
-   confidently use, do not reference it in any prerequisite. Omit it from your
-   reasoning entirely rather than guessing.
-8. For every new node, assign a plausible dimensionId (for placement) and, if
-   a provided Path plausibly fits, a suggestedPathId — otherwise null.
-9. Suggest frequency (one of: daily, weekly, biweekly, monthly, occasional),
+   creates a genuinely meaningful new activity.
+6. If a given activity's name and description together are too ambiguous to
+   confidently use, do not reference it in any prerequisite — omit it from
+   your reasoning entirely rather than guessing.
+7. For every new node, assign a plausible dimensionId and, if a provided Path
+   plausibly fits, a suggestedPathId — otherwise null.
+8. Suggest frequency (one of: daily, weekly, biweekly, monthly, occasional),
    baseXP (integer 1-50), and a short description consistent with the
    style/scale of the user's existing activities.
-10. Generate exactly ${nodeCount} new nodes.
-11. Do not repeat or rename anything listed under already-active or
+9. Total nodes across all goals: at least 3, at most ${nodeCount} — let each
+   goal's scope decide the count; never pad to reach the cap.
+10. Do not repeat or rename anything listed under already-active or
     already-archived nodes — propose only genuinely new suggestions.
-12. A node may depend on another node IN YOUR OUTPUT via
+11. A node may depend on another node IN YOUR OUTPUT via
     {"type":"node_mastered","nodeTitle":"<exact title of that other node>"}.
     A node may depend on a real existing activity via
     {"type":"activity_mastered","activityId":"<id from activeActivities>"}.
-    Foundational nodes have an empty prerequisites array. Never invent IDs.
+    Never invent IDs.
 
-OUTPUT SCHEMA (a JSON array, nothing else):
-[{ "title": string, "description": string, "dimensionId": string,
-   "isNexus": boolean, "nexusDimensionIds": string[],
-   "prerequisites": [{"type":"node_mastered","nodeTitle":string} | {"type":"activity_mastered","activityId":string}],
-   "suggestedActivity": { "name": string, "description": string, "baseXP": number,
-     "frequency": string, "dimensionId": string, "suggestedPathId": string|null } }]`;
+CHALLENGES (milestones, distinct from tree nodes):
+A challenge is a time-boxed milestone tracking completions of EXISTING
+activities only — e.g. "Log 20 runs in 60 days". Where a tree node is a new
+action unlocked by mastering what came before, a challenge paces what the
+user already does toward a goal. Propose 0-3, only when one would genuinely
+kickstart or pace a goal. Reference ONLY activityIds from activeActivities —
+never nodes or invented activities. Use existingChallenges to understand what
+pace this user responds to, and never duplicate one.
+
+VISION:
+Also write "vision": 1-2 sentences, second person, vivid and specific to
+their goals — the snapshot of the life these paths lead to. No generic
+motivation-poster fluff.
+
+OUTPUT SCHEMA (a single JSON object, nothing else):
+{ "vision": string,
+  "nodes": [{ "title": string, "description": string, "dimensionId": string,
+    "isNexus": boolean, "nexusDimensionIds": string[],
+    "prerequisites": [{"type":"node_mastered","nodeTitle":string} | {"type":"activity_mastered","activityId":string}],
+    "suggestedActivity": { "name": string, "description": string, "baseXP": number,
+      "frequency": string, "dimensionId": string, "suggestedPathId": string|null } }],
+  "challenges": [{ "title": string, "description": string, "durationDays": number,
+    "activityTargets": { "<activityId>": number } }] }`;
+
+    const existingChallenges = (userData.challenges || []).map(ch => ({
+        name: ch.name,
+        status: ch.status,
+        activityIds: ch.activityIds || [],
+        activityTargets: ch.activityTargets || {},
+    }));
 
     const input = {
         goalText: techTree.goalText,
         dimensions: dimensionList,
         paths: pathList,
         activeActivities,
+        existingChallenges,
     };
     if (req.type === 'regenerate' || req.type === 'revision') {
         input.activeTreeNodes = activeNodes;
@@ -211,10 +249,11 @@ OUTPUT SCHEMA (a JSON array, nothing else):
         system += `
 
 REVISION MODE: The user flagged the node(s) in "nodesToRevise" with the
-targeted feedback in "userCorrectionNote". Return replacement node(s) ONLY for
-the flagged one(s) — exactly ${nodeCount} node(s). The replacement must
-directly address the feedback (not a light rewording of the original), while
-still following every rule above.`;
+targeted feedback in "userCorrectionNote". Return the same JSON object shape
+with "nodes" containing replacement node(s) ONLY for the flagged one(s) —
+exactly ${nodeCount} node(s) — plus "challenges": [] and "vision": null.
+The replacement must directly address the feedback (not a light rewording of
+the original), while still following every rule above.`;
     }
 
     return { system, user: 'INPUT:\n' + JSON.stringify(input, null, 2) };
@@ -314,14 +353,55 @@ async function callTechTreeModel(prompt, maxTokens) {
 
 // ── Response validation & node materialization ─────────────────────────────
 
+// Returns { vision, nodes, challenges } — tolerates the model answering with
+// either the object schema or a bare node array (older/revision outputs).
 function parseModelJson(raw) {
     let text = String(raw).trim();
-    // Defensive: strip markdown fences and any prose around the array
+    // Defensive: strip markdown fences and any prose around the JSON
     text = text.replace(/^```(?:json)?/m, '').replace(/```\s*$/m, '').trim();
-    const start = text.indexOf('[');
-    const end = text.lastIndexOf(']');
-    if (start === -1 || end === -1 || end < start) throw new Error('No JSON array in model output');
-    return JSON.parse(text.slice(start, end + 1));
+    const objStart = text.indexOf('{');
+    const arrStart = text.indexOf('[');
+    let parsed;
+    if (objStart !== -1 && (arrStart === -1 || objStart < arrStart)) {
+        parsed = JSON.parse(text.slice(objStart, text.lastIndexOf('}') + 1));
+    } else if (arrStart !== -1) {
+        parsed = JSON.parse(text.slice(arrStart, text.lastIndexOf(']') + 1));
+    } else {
+        throw new Error('No JSON in model output');
+    }
+    if (Array.isArray(parsed)) return { vision: null, nodes: parsed, challenges: [] };
+    return {
+        vision: typeof parsed.vision === 'string' ? parsed.vision.trim().slice(0, 300) : null,
+        nodes: Array.isArray(parsed.nodes) ? parsed.nodes : [],
+        challenges: Array.isArray(parsed.challenges) ? parsed.challenges : [],
+    };
+}
+
+// Suggested challenges may only reference real, existing activities (never
+// suggested nodes) — anything else is dropped rather than guessed at.
+function validateChallenges(rawChallenges, userData) {
+    const activityIds = new Set();
+    collectActivities(userData).forEach(({ act }) => activityIds.add(act.id));
+    const out = [];
+    for (const raw of rawChallenges) {
+        if (!raw || typeof raw.title !== 'string' || !raw.title.trim()) continue;
+        const targets = {};
+        Object.entries(raw.activityTargets || {}).forEach(([id, n]) => {
+            if (activityIds.has(id)) targets[id] = Math.min(100, Math.max(1, parseInt(n, 10) || 1));
+        });
+        if (!Object.keys(targets).length) continue;
+        out.push({
+            id: 'ttc_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+            title: String(raw.title).trim().slice(0, 80),
+            description: String(raw.description || '').slice(0, 200),
+            durationDays: Math.min(180, Math.max(7, parseInt(raw.durationDays, 10) || 30)),
+            activityTargets: targets,
+            status: 'suggested',
+            createdAt: new Date().toISOString(),
+        });
+        if (out.length >= 3) break;
+    }
+    return out;
 }
 
 const VALID_FREQUENCIES = ['daily', 'weekly', 'biweekly', 'monthly', 'occasional'];
@@ -501,14 +581,16 @@ async function processUser(docRef, userData) {
 
     const isRevision = req.type === 'revision';
     const flaggedIds = isRevision ? (req.nodeIds || []) : [];
-    const nodeCount = req.type === 'generate' ? GENERATE_NODES
-        : req.type === 'regenerate' ? REGENERATE_NODES
+    // Upper bound only — the model sizes the real count from goal scope.
+    const nodeCount = req.type === 'generate' ? MAX_NODES
+        : req.type === 'regenerate' ? 8
         : Math.max(1, flaggedIds.length);
 
     const prompt = buildTechTreePrompt(userData, req, nodeCount);
     const raw = await callTechTreeModel(prompt, MAX_TOKENS[req.type] || 2000);
     const parsed = parseModelJson(raw);
-    const { suggested, autoNodes, connections } = materializeNodes(parsed, userData);
+    const { suggested, autoNodes, connections } = materializeNodes(parsed.nodes.slice(0, MAX_NODES), userData);
+    const suggestedChallenges = isRevision ? null : validateChallenges(parsed.challenges, userData);
 
     const now = new Date();
     const nowISO = now.toISOString();
@@ -554,9 +636,15 @@ async function processUser(docRef, userData) {
         update['techTree.lastGeneratedAt'] = nowISO;
         update['techTree.revisionsUsedSinceGeneration'] = 0;
         update['techTree.revisionWindowExpiresAt'] = new Date(now.getTime() + 24 * 3600000).toISOString();
+        // Fresh suggestions replace old ones wholesale — accepted challenges
+        // already live in userData.challenges, dismissed ones shouldn't linger.
+        update['techTree.suggestedChallenges'] = suggestedChallenges;
+        if (parsed.vision) update['techTree.vision'] = parsed.vision;
     }
     await docRef.update(update);
-    console.log(`  Done — ${suggested.length} new node(s), ${autoNodes.length} auto-referenced`);
+    console.log(`  Done — ${suggested.length} new node(s), ${autoNodes.length} auto-referenced, `
+        + (suggestedChallenges ? suggestedChallenges.length : 0) + ' challenge(s)'
+        + (parsed.vision ? ', vision set' : ''));
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────
