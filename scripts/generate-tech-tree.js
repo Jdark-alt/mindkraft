@@ -48,10 +48,10 @@ const REGEN_FREE_DAYS  = 30;
 const REVISION_LIMIT   = 2;
 // Planning-quality output is the priority over token cost (owner's call) —
 // budgets sized for multi-goal chains + challenges + vision.
-// First attempt must fit Groq's per-request TPM budget (prompt + max_tokens):
-// Kimi K2 free tier is 10k TPM, Llama 3.3 is 6k — the adapter auto-shrinks
-// on 413, so these are ceilings, not requirements.
-const MAX_TOKENS       = { generate: 6000, regenerate: 3500, revision: 1500 };
+// First attempt should fit Groq's per-request TPM budget (prompt + max_tokens;
+// this org's gpt-oss-120b limit is 8k/min) — on 413 the adapter computes the
+// exact budget that fits from Groq's error numbers, so these are ceilings.
+const MAX_TOKENS       = { generate: 5200, regenerate: 3200, revision: 1500 };
 
 // ── Helpers over the user's schema ─────────────────────────────────────────
 
@@ -122,12 +122,14 @@ function buildTechTreePrompt(userData, req, nodeCount) {
     (userData.dimensions || []).forEach(d =>
         (d.paths || []).forEach(p => pathList.push({ pathId: p.id, name: p.name, dimensionId: d.id })));
 
-    const activeActivities = activities.map(({ act, dim }) => {
+    // Keep the prompt lean — every input token comes out of the completion
+    // budget under Groq's per-request TPM accounting.
+    const activeActivities = activities.slice(0, 60).map(({ act, dim }) => {
         const threshold = masteryThresholdFor(act);
         return {
             activityId: act.id,
             name: act.name,
-            description: act.description || '',
+            description: (act.description || '').slice(0, 120),
             dimensionId: dim.id,
             frequency: act.frequency,
             totalCompletions: act.completionCount || 0,
@@ -138,10 +140,10 @@ function buildTechTreePrompt(userData, req, nodeCount) {
 
     const activeNodes = (techTree.nodes || [])
         .filter(n => n.lifecycle === 'active')
-        .map(n => n.title);
+        .slice(0, 30).map(n => n.title);
     const archivedNodes = (techTree.nodes || [])
         .filter(n => n.lifecycle === 'archived')
-        .map(n => n.title);
+        .slice(0, 15).map(n => n.title);
 
     let system = `You are the Tech Tree generation engine for Mindkraft, a life-gamification app.
 Your job: turn the user's stated goal(s) into an achievable, actionable plan —
@@ -415,10 +417,30 @@ async function callTechTreeModel(prompt, maxTokens) {
                         continue;
                     }
                 }
-                if (/Model API error 413/.test(msg) && currentTokens > 2500) {
-                    currentTokens = Math.max(2500, Math.floor(currentTokens * 0.6));
-                    console.warn(`  413 request-too-large — retrying with max_tokens=${currentTokens}`);
-                    continue;
+                if (/Model API error 413/.test(msg)) {
+                    // Groq reports the exact numbers — compute the completion
+                    // budget that fits instead of guessing: the request cost is
+                    // promptTokens + max_tokens, so allowed = limit - prompt.
+                    const fit = msg.match(/Limit (\d+), Requested (\d+)/);
+                    let next;
+                    if (fit) {
+                        const promptCost = parseInt(fit[2], 10) - currentTokens;
+                        next = parseInt(fit[1], 10) - promptCost - 200;
+                    } else {
+                        next = Math.floor(currentTokens * 0.6);
+                    }
+                    if (next >= 900 && next < currentTokens) {
+                        currentTokens = next;
+                        console.warn(`  413 request-too-large — retrying with max_tokens=${currentTokens}`);
+                        continue;
+                    }
+                    if (attempt < 6) {
+                        // Budget likely consumed by an earlier request in this
+                        // same minute — wait for the TPM window to roll over.
+                        console.warn('  413 with no room left this minute — waiting 30s');
+                        await sleep(30000);
+                        continue;
+                    }
                 }
                 if (/Model API error 429/.test(msg) && attempt < 6) {
                     console.warn('  429 rate-limited — waiting 20s');
