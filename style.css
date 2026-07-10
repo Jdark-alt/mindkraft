@@ -14507,6 +14507,7 @@
         .tt-svg-label { font-size: 10px; font-weight: 600; fill: var(--color-text-primary); opacity: 0.85; }
         .tt-svg-label-dim { fill: var(--color-text-secondary); opacity: 0.6; }
         .tt-svg-label-star { font-size: 8.5px; font-weight: 600; fill: var(--color-text-secondary); opacity: 0.75; }
+        .tt-svg-tier-label { font-size: 10px; font-weight: 700; fill: var(--color-text-secondary); letter-spacing: 0.14em; opacity: 0.6; }
         .tt-svg-pct { font-size: 10px; font-weight: 800; fill: var(--color-text-primary); font-variant-numeric: tabular-nums; }
         .tt-svg-node.tt-locked { opacity: 0.62; }
         .tt-svg-node.tt-archived { opacity: 0.38; }

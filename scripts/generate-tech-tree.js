@@ -38,12 +38,12 @@ const PROVIDERS = [
     },
 ];
 const PROVIDER = PROVIDERS.find(p => p.key) || PROVIDERS[0];
-const MAX_NODES        = 16;  // hard cap across all goals; scope decides the real count
+const MAX_NODES        = 20;  // hard cap across all goals; scope decides the real count
 const REGEN_FREE_DAYS  = 30;
 const REVISION_LIMIT   = 2;
 // Planning-quality output is the priority over token cost (owner's call) —
 // budgets sized for multi-goal chains + challenges + vision.
-const MAX_TOKENS       = { generate: 6000, regenerate: 3500, revision: 1500 };
+const MAX_TOKENS       = { generate: 7000, regenerate: 3500, revision: 1500 };
 
 // ── Helpers over the user's schema ─────────────────────────────────────────
 
@@ -142,23 +142,31 @@ the exciting future it leads to.
 
 PROCESS (do this reasoning silently; output only the JSON):
 1. Read goalText and identify each DISTINCT goal in it (there may be several).
-2. Judge each goal's SCOPE:
-   - SMALL — achievable by simply starting 1-2 concrete habits: propose just
-     those 1-2 activities as foundational nodes. Do not pad small goals.
-   - LARGE — long-term, needs real planning: design a progression CHAIN of
-     3-5 tiers. Each tier is one concrete activity that only makes sense once
-     the tier before it is mastered — chain them with node_mastered
-     prerequisites so the unlock order is explicit. The final tier is the
-     CAPSTONE: the activity that means actually living the goal (e.g. goal
-     "start a YouTube channel" → tier 1 "Curate an idea-bank playlist" →
-     tier 2 "Record a practice video weekly" → tier 3 "Practice visual and
-     verbal storytelling" → tier 4 "Follow a publishing checklist per video").
-     The chain exists to show the user a snapshot of what is possible and the
-     exact staircase to it.
+2. Judge each goal's SCOPE and TIME HORIZON, and size its plan PROPORTIONALLY
+   — goals are NOT equal and must not get equal treatment:
+   - SMALL (start this week — e.g. "begin a calisthenics routine"): 1-2
+     foundational nodes. Do not pad small goals.
+   - MEDIUM (weeks to a few months — e.g. "save for a purchase over 4
+     months"): a short chain of 2-3 tiers, 2-4 nodes.
+   - LARGE (many months to a year+ — e.g. "write a book", "start a YouTube
+     channel"): a real plan — 4-5 tiers and typically 5-8 nodes, including
+     parallel branches that CONVERGE: high-tier nodes should carry heavier
+     prerequisites, often requiring 2-3 separate tier 2-3 nodes to all be
+     mastered (e.g. tier 4 "Complete a full first draft" requires tier 3
+     "Finish a chapter a month" AND tier 2 "Weekly plot outlining"). The
+     final tier is the CAPSTONE: the activity that means actually living
+     the goal. Weight: the longer the horizon, the deeper and wider the
+     chain, and the heavier the prerequisites near the top.
 3. Anchor chains in what the user already does: when an existing activity
    genuinely supports a chain's first steps, connect it with an
    activity_mastered prerequisite (by its given activityId).
-4. Consider proposing milestone CHALLENGES (see CHALLENGES below).
+4. Additionally propose 1-3 FRESH PICKS: standalone, tier-1, no-prerequisite
+   activities that are NOT part of any goal chain — genuinely new things
+   that would complement this user's life given their goals and current
+   activities (e.g. a recovery habit for someone training hard). Mark them
+   by simply giving them an empty prerequisites array and a distinct kind
+   of value; never disguise a chain step as a fresh pick.
+5. Consider proposing milestone CHALLENGES (see CHALLENGES below).
 
 NODE RULES:
 1. Output ONLY valid JSON matching the schema below. No prose, no markdown fences.
@@ -200,10 +208,12 @@ CHALLENGES (milestones, distinct from tree nodes):
 A challenge is a time-boxed milestone tracking completions of EXISTING
 activities only — e.g. "Log 20 runs in 60 days". Where a tree node is a new
 action unlocked by mastering what came before, a challenge paces what the
-user already does toward a goal. Propose 0-3, only when one would genuinely
-kickstart or pace a goal. Reference ONLY activityIds from activeActivities —
-never nodes or invented activities. Use existingChallenges to understand what
-pace this user responds to, and never duplicate one.
+user already does toward a goal. Propose 0-3 TOTAL — and only where a goal
+genuinely has scope for one (a pace-able, repetition-driven goal). Many goals
+deserve none; NEVER hand one challenge to each goal just to be even-handed.
+Reference ONLY activityIds from activeActivities — never nodes or invented
+activities. Use existingChallenges to understand what pace this user responds
+to, and never duplicate one.
 
 VISION:
 Also write "vision": 1-2 sentences, second person, vivid and specific to

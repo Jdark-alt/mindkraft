@@ -15314,27 +15314,20 @@
             if (el) el.style.display = 'none';
         };
 
-        // ── Radial layout (spec §8) ──────────────────────────────────────
-        // Sectors sized by each Dimension's share of totalXP with a 15° floor;
-        // tiers radiate outward; nexus nodes sit between their dimensions.
+        // ── Horizontal layout ────────────────────────────────────────────
+        // Left-to-right skill tree: columns are tiers (unlock order reads as
+        // time flowing right), horizontal lanes are dimensions. Crowded trees
+        // grow taller/wider — the canvas pans and zooms, so size is free.
         function ttComputeLayout(showArchived) {
             var tt = ensureTechTree();
             var nodes = tt.nodes.filter(function(n) { return showArchived || n.lifecycle !== 'archived'; });
             var dims = window.userData.dimensions || [];
-            var CORE_R = 36;
-            var FIRST_RING = 118;     // radius of tier 1
-            var RING_GAP_MIN = 76;    // minimum gap between consecutive tier rings
-            var MIN_ARC = 68;         // minimum arc distance between node centers on a ring
+            var COL_W = 172;    // horizontal distance between tiers
+            var ROW_H = 92;     // vertical distance between nodes in a column
+            var LANE_PAD = 34;  // breathing room inside each dimension lane
+            var LANE_X = 64;    // where lanes begin (left of tier 1)
+            var TIER1_X = 176;  // x of tier 1 column
 
-            // XP per dimension (from activity lifetime XP)
-            var xpByDim = {};
-            dims.forEach(function(d) {
-                var sum = 0;
-                (d.paths || []).forEach(function(p) { (p.activities || []).forEach(function(a) { sum += Math.max(0, a.totalXP || 0); }); });
-                xpByDim[d.id] = sum;
-            });
-
-            // Sector list = dimensions that own at least one visible node
             var usedDimIds = [];
             nodes.forEach(function(n) {
                 var id = n.dimensionId || 'uncategorized';
@@ -15346,99 +15339,63 @@
                 return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
             });
 
-            var FLOOR = 15 * Math.PI / 180;
-            var n = usedDimIds.length || 1;
-            var totalXP = usedDimIds.reduce(function(s, id) { return s + (xpByDim[id] || 0); }, 0);
-            var flexible = Math.max(0, 2 * Math.PI - n * FLOOR);
-            var sectors = {};
-            var cursor = -Math.PI / 2;
-            usedDimIds.forEach(function(id) {
-                var share = totalXP > 0 ? (xpByDim[id] || 0) / totalXP : 1 / n;
-                var span = FLOOR + flexible * share;
-                sectors[id] = { start: cursor, span: span, center: cursor + span / 2, dimId: id };
-                cursor += span;
-            });
-
             var maxTier = 1;
             nodes.forEach(function(nd) { maxTier = Math.max(maxTier, nd.tier || 1); });
 
-            // Group nodes per sector per tier
-            var groupsBySector = {};
+            // Rows per lane per tier (nexus nodes live in their primary lane)
+            var rows = {};
             usedDimIds.forEach(function(dimId) {
-                groupsBySector[dimId] = {};
-                for (var t = 1; t <= maxTier; t++) groupsBySector[dimId][t] = [];
+                rows[dimId] = {};
+                for (var t = 1; t <= maxTier; t++) rows[dimId][t] = [];
             });
             nodes.forEach(function(nd) {
-                if (nd.isNexus) return;
-                var dimId = usedDimIds.indexOf(nd.dimensionId) !== -1 ? nd.dimensionId : (nd.dimensionId || 'uncategorized');
-                if (!groupsBySector[dimId]) return;
-                groupsBySector[dimId][nd.tier || 1].push(nd);
+                var dimId = rows[nd.dimensionId] ? nd.dimensionId : usedDimIds[0];
+                rows[dimId][nd.tier || 1].push(nd);
             });
 
-            // Concentric tier rings that GROW as needed: each ring's radius
-            // expands until every sector on it gives its nodes at least
-            // MIN_ARC of arc length — crowded trees get bigger, never denser.
-            // The canvas is pan/zoomable, so size is free and clutter isn't.
-            var ringR = {};
-            var prev = CORE_R;
-            for (var tier = 1; tier <= maxTier; tier++) {
-                var r = Math.max(tier === 1 ? FIRST_RING : 0, prev + RING_GAP_MIN);
-                usedDimIds.forEach(function(dimId) {
-                    var count = groupsBySector[dimId][tier].length;
-                    if (!count) return;
-                    var needed = MIN_ARC * (count + 1) / sectors[dimId].span;
-                    if (needed > r) r = needed;
-                });
-                ringR[tier] = r;
-                prev = r;
-            }
+            var tierXs = {};
+            for (var t = 1; t <= maxTier; t++) tierXs[t] = TIER1_X + (t - 1) * COL_W;
 
+            var lanes = [];
             var pos = {};
+            var cursorY = 0;
             usedDimIds.forEach(function(dimId) {
-                var sector = sectors[dimId];
-                for (var t = 1; t <= maxTier; t++) {
-                    var group = groupsBySector[dimId][t];
-                    // Stagger alternate tiers by a half-step so consecutive tiers
-                    // don't stack on the same radial line.
-                    var stagger = (t % 2 === 0 && group.length > 0)
-                        ? sector.span / (2 * (group.length + 1)) : 0;
+                var laneRows = 1;
+                for (var t = 1; t <= maxTier; t++) laneRows = Math.max(laneRows, rows[dimId][t].length);
+                var laneHeight = laneRows * ROW_H + LANE_PAD;
+                for (var t2 = 1; t2 <= maxTier; t2++) {
+                    var group = rows[dimId][t2];
+                    // center a short column vertically within the lane
+                    var offset = (laneRows - group.length) * ROW_H / 2;
                     group.forEach(function(nd, i) {
-                        var angle = sector.start + sector.span * (i + 1) / (group.length + 1) + stagger;
-                        angle = Math.min(sector.start + sector.span - 0.06, angle);
-                        pos[nd.id] = { x: Math.cos(angle) * ringR[t], y: Math.sin(angle) * ringR[t] };
+                        pos[nd.id] = {
+                            x: tierXs[t2],
+                            y: cursorY + LANE_PAD / 2 + offset + (i + 0.5) * ROW_H
+                        };
                     });
                 }
-            });
-            // Nexus nodes: circular mean of their dimensions' sector centers,
-            // nudged outward off the ring so their cross-sector role reads.
-            nodes.filter(function(nd) { return nd.isNexus; }).forEach(function(nd, i) {
-                var ids = (nd.nexusDimensionIds && nd.nexusDimensionIds.length) ? nd.nexusDimensionIds : [nd.dimensionId];
-                var sx = 0, sy = 0, hits = 0;
-                ids.forEach(function(id) {
-                    var s = sectors[id];
-                    if (s) { sx += Math.cos(s.center); sy += Math.sin(s.center); hits++; }
-                });
-                var angle = hits ? Math.atan2(sy, sx) : (i * 2.399);
-                var r = (ringR[nd.tier || 1] || FIRST_RING) + 16;
-                pos[nd.id] = { x: Math.cos(angle) * r, y: Math.sin(angle) * r };
+                lanes.push({ dimId: dimId, top: cursorY, height: laneHeight });
+                cursorY += laneHeight;
             });
 
+            var totalH = Math.max(cursorY, 200);
             return {
-                nodes: nodes, sectors: sectors, positions: pos, ringR: ringR, maxTier: maxTier,
-                coreR: CORE_R, extent: (ringR[maxTier] || FIRST_RING) + 96
+                nodes: nodes, lanes: lanes, positions: pos, tierXs: tierXs, maxTier: maxTier,
+                laneX: LANE_X, coreX: 36, coreY: totalH / 2, coreR: 34,
+                width: TIER1_X + (maxTier - 1) * COL_W + 130,
+                height: totalH
             };
         }
 
         function ttBuildTreeSVG(showArchived, interactive) {
             var layout = ttComputeLayout(showArchived);
             var tt = ensureTechTree();
-            var E = layout.extent;
             var NR = 20; // node radius
             var CIRC = 2 * Math.PI * NR;
             var svg = '';
 
-            // Shared defs: core gradient + soft glow. Duplicate ids across the
-            // preview and fullscreen SVGs are fine — they resolve identically.
+            // Shared defs: core gradient. Duplicate ids across the preview and
+            // fullscreen SVGs are fine — they resolve identically.
             svg += '<defs>'
                 + '<radialGradient id="ttCoreGrad">'
                 + '<stop offset="0%" stop-color="rgba(90,159,212,0.45)"/>'
@@ -15447,52 +15404,42 @@
                 + '</radialGradient>'
                 + '</defs>';
 
-            // Concentric tier rings — the growth structure of the tree.
-            for (var t = 1; t <= layout.maxTier; t++) {
-                svg += '<circle r="' + layout.ringR[t].toFixed(1) + '" fill="none" stroke="rgba(150,150,170,0.07)" stroke-width="1"/>';
-            }
-
-            // Sector wedges: faint tint + a colored arc band at the outer edge
-            // carrying the dimension identity ("dimension colors tint, they
-            // don't fill" — design brief).
-            var bandR = (layout.ringR[layout.maxTier] || 118) + 48;
-            Object.keys(layout.sectors).forEach(function(dimId) {
-                var s = layout.sectors[dimId];
-                var hex = ttDimHexRaw(dimId);
-                var pad = 0.02; // radians of breathing room between bands
-                var a0 = s.start + pad, a1 = s.start + s.span - pad;
-                var large = (a1 - a0) > Math.PI ? 1 : 0;
-                var x1 = Math.cos(a0) * bandR, y1 = Math.sin(a0) * bandR;
-                var x2 = Math.cos(a1) * bandR, y2 = Math.sin(a1) * bandR;
-                // wedge tint
-                svg += '<path d="M0,0 L' + (Math.cos(s.start) * bandR).toFixed(1) + ',' + (Math.sin(s.start) * bandR).toFixed(1)
-                    + ' A' + bandR + ',' + bandR + ' 0 ' + (s.span > Math.PI ? 1 : 0) + ',1 '
-                    + (Math.cos(s.start + s.span) * bandR).toFixed(1) + ',' + (Math.sin(s.start + s.span) * bandR).toFixed(1)
-                    + ' Z" fill="' + hex + '" opacity="0.05"/>';
-                // colored identity band
-                svg += '<path d="M' + x1.toFixed(1) + ',' + y1.toFixed(1)
-                    + ' A' + bandR + ',' + bandR + ' 0 ' + large + ',1 ' + x2.toFixed(1) + ',' + y2.toFixed(1)
-                    + '" fill="none" stroke="' + hex + '" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>';
-                // label just outside the band, upright
-                var lx = Math.cos(s.center) * (bandR + 14), ly = Math.sin(s.center) * (bandR + 14);
-                svg += '<text x="' + lx.toFixed(1) + '" y="' + (ly + 4).toFixed(1) + '" class="tt-svg-sector-label" fill="' + hex + '" text-anchor="middle">'
-                    + escapeHtml(ttDimName(dimId)) + '</text>';
+            // Dimension lanes — tinted horizontal bands with a glowing left
+            // accent and the dimension name ("tint, don't fill").
+            layout.lanes.forEach(function(lane) {
+                var hex = ttDimHexRaw(lane.dimId);
+                var y0 = lane.top + 3, h = lane.height - 6;
+                svg += '<rect x="' + layout.laneX + '" y="' + y0 + '" width="' + (layout.width - layout.laneX) + '" height="' + h
+                    + '" rx="12" fill="' + hex + '" opacity="0.045"/>';
+                svg += '<rect x="' + layout.laneX + '" y="' + y0 + '" width="3" height="' + h + '" rx="1.5" fill="' + hex + '" opacity="0.7"/>';
+                svg += '<text x="' + (layout.laneX + 12) + '" y="' + (y0 + 16) + '" class="tt-svg-sector-label" fill="' + hex + '">'
+                    + escapeHtml(ttDimName(lane.dimId)) + '</text>';
             });
 
-            // Edges — organic quadratic curves pulled gently toward the core,
-            // with a chevron pointing at the node they unlock so the
-            // prerequisite → unlock direction always reads. Solid +
-            // dimension-colored once the source is mastered; a quiet dashed
-            // hairline while the dependency is still open.
-            function qAt(a, c, b, t) {
-                var mt = 1 - t;
-                return { x: mt * mt * a.x + 2 * mt * t * c.x + t * t * b.x,
-                         y: mt * mt * a.y + 2 * mt * t * c.y + t * t * b.y };
+            // Tier column guides + labels
+            for (var t = 1; t <= layout.maxTier; t++) {
+                var tx = layout.tierXs[t];
+                svg += '<line x1="' + tx + '" y1="-6" x2="' + tx + '" y2="' + layout.height
+                    + '" stroke="rgba(150,150,170,0.06)" stroke-width="1"/>';
+                svg += '<text x="' + tx + '" y="-16" text-anchor="middle" class="tt-svg-tier-label">TIER ' + t + '</text>';
             }
-            function qTan(a, c, b, t) {
+
+            // Edges — horizontal S-curves with a chevron pointing at the node
+            // they unlock. Solid + dimension-colored once the source is
+            // mastered; a quiet dashed hairline while the dependency is open.
+            function cAt(a, c1, c2, b, t) {
                 var mt = 1 - t;
-                return { x: 2 * mt * (c.x - a.x) + 2 * t * (b.x - c.x),
-                         y: 2 * mt * (c.y - a.y) + 2 * t * (b.y - c.y) };
+                return {
+                    x: mt * mt * mt * a.x + 3 * mt * mt * t * c1.x + 3 * mt * t * t * c2.x + t * t * t * b.x,
+                    y: mt * mt * mt * a.y + 3 * mt * mt * t * c1.y + 3 * mt * t * t * c2.y + t * t * t * b.y
+                };
+            }
+            function cTan(a, c1, c2, b, t) {
+                var mt = 1 - t;
+                return {
+                    x: 3 * mt * mt * (c1.x - a.x) + 6 * mt * t * (c2.x - c1.x) + 3 * t * t * (b.x - c2.x),
+                    y: 3 * mt * mt * (c1.y - a.y) + 6 * mt * t * (c2.y - c1.y) + 3 * t * t * (b.y - c2.y)
+                };
             }
             var drawnEdges = {};
             function edge(fromId, toId) {
@@ -15504,17 +15451,19 @@
                 var from = tt.nodes.find(function(n) { return n.id === fromId; });
                 var met = from ? ttNodeIsMastered(from) : false;
                 var hex = ttDimHexRaw(from && from.dimensionId);
-                var c = { x: (a.x + b.x) / 2 * 0.78, y: (a.y + b.y) / 2 * 0.78 };
                 var stroke = met ? hex : 'rgba(150,150,160,0.28)';
-                var d = 'M' + a.x.toFixed(1) + ',' + a.y.toFixed(1)
-                    + ' Q' + c.x.toFixed(1) + ',' + c.y.toFixed(1)
-                    + ' ' + b.x.toFixed(1) + ',' + b.y.toFixed(1);
-                svg += '<path d="' + d + '" fill="none" stroke="' + stroke + '"'
+                var bend = Math.max(36, Math.abs(b.x - a.x) * 0.45);
+                var c1 = { x: a.x + bend, y: a.y };
+                var c2 = { x: b.x - bend, y: b.y };
+                svg += '<path d="M' + a.x.toFixed(1) + ',' + a.y.toFixed(1)
+                    + ' C' + c1.x.toFixed(1) + ',' + c1.y.toFixed(1)
+                    + ' ' + c2.x.toFixed(1) + ',' + c2.y.toFixed(1)
+                    + ' ' + b.x.toFixed(1) + ',' + b.y.toFixed(1)
+                    + '" fill="none" stroke="' + stroke + '"'
                     + ' stroke-width="' + (met ? 2 : 1.5) + '"'
                     + (met ? ' opacity="0.8"' : ' stroke-dasharray="3,6" stroke-linecap="round"') + '/>';
-                // Direction chevron, placed just before the unlocked node
-                var pt = qAt(a, c, b, 0.78);
-                var tg = qTan(a, c, b, 0.78);
+                var pt = cAt(a, c1, c2, b, 0.8);
+                var tg = cTan(a, c1, c2, b, 0.8);
                 var deg = Math.atan2(tg.y, tg.x) * 180 / Math.PI;
                 svg += '<g transform="translate(' + pt.x.toFixed(1) + ',' + pt.y.toFixed(1) + ') rotate(' + deg.toFixed(1) + ')">'
                     + '<path d="M-4.5,-3.5 L2.5,0 L-4.5,3.5" fill="none" stroke="' + stroke + '"'
@@ -15531,11 +15480,11 @@
             });
             (tt.connections || []).forEach(function(c) { edge(c.fromNodeId, c.toNodeId); });
 
-            // Core — soft radial glow anchoring the whole tree
-            svg += '<circle cx="0" cy="0" r="' + (layout.coreR + 26) + '" fill="url(#ttCoreGrad)"/>'
-                + '<circle cx="0" cy="0" r="' + layout.coreR + '" class="tt-svg-core"/>'
-                + '<text x="0" y="-3" class="tt-svg-core-label" text-anchor="middle">Lv ' + (window.userData.level || 1) + '</text>'
-                + '<text x="0" y="12" class="tt-svg-core-sub" text-anchor="middle">YOU</text>';
+            // Core — anchors the tree at the left
+            svg += '<circle cx="' + layout.coreX + '" cy="' + layout.coreY.toFixed(1) + '" r="' + (layout.coreR + 24) + '" fill="url(#ttCoreGrad)"/>'
+                + '<circle cx="' + layout.coreX + '" cy="' + layout.coreY.toFixed(1) + '" r="' + layout.coreR + '" class="tt-svg-core"/>'
+                + '<text x="' + layout.coreX + '" y="' + (layout.coreY - 3).toFixed(1) + '" class="tt-svg-core-label" text-anchor="middle">Lv ' + (window.userData.level || 1) + '</text>'
+                + '<text x="' + layout.coreX + '" y="' + (layout.coreY + 12).toFixed(1) + '" class="tt-svg-core-sub" text-anchor="middle">YOU</text>';
 
             // Small stroked glyphs drawn in SVG (no emoji — design brief)
             function glyphLock(color) {
@@ -15558,9 +15507,7 @@
 
             // Nodes — every state carries its dimension color; mastery is a
             // proportional ring fill from grey (0%) to full color (100%),
-            // and a fully mastered node collapses into a small gold star:
-            // earned, permanent, and visually quiet so the frontier stays
-            // the busy part of the tree.
+            // and a fully mastered node collapses into a small gold star.
             layout.nodes.forEach(function(n) {
                 var p = layout.positions[n.id];
                 if (!p) return;
@@ -15574,7 +15521,6 @@
                 svg += '<g class="' + cls + '" transform="translate(' + p.x.toFixed(1) + ',' + p.y.toFixed(1) + ')"' + click + ' style="cursor:pointer;">';
 
                 if (isMastered) {
-                    // Layered gold glow + dimension-colored heart + gold star
                     svg += '<circle r="16" fill="rgba(245,197,99,0.07)"/>'
                         + '<circle r="10" fill="rgba(245,197,99,0.13)"/>'
                         + '<circle r="7" fill="rgba(' + rgb + ',0.9)"/>'
@@ -15588,7 +15534,6 @@
                     return;
                 }
 
-                // Soft dimension halo behind live states
                 if (n.lifecycle === 'active' || n.lifecycle === 'available') {
                     svg += '<circle r="' + (NR + 8) + '" fill="rgba(' + rgb + ',0.07)"/>';
                 }
@@ -15600,7 +15545,6 @@
                 svg += '<circle r="' + NR + '" fill="' + baseFill + '"/>';
 
                 if (n.lifecycle === 'active') {
-                    // grey track + colored proportional arc
                     svg += '<circle r="' + NR + '" fill="none" stroke="rgba(150,150,160,0.25)" stroke-width="3"/>';
                     if (prog.pct > 0) {
                         svg += '<circle r="' + NR + '" fill="none" stroke="' + hex + '" stroke-width="3" stroke-linecap="round"'
@@ -15630,7 +15574,10 @@
                 svg += '</g>';
             });
 
-            return '<svg class="tt-svg" viewBox="' + (-E) + ' ' + (-E) + ' ' + (2 * E) + ' ' + (2 * E) + '" xmlns="http://www.w3.org/2000/svg">' + svg + '</svg>';
+            var minX = -14, minY = -40;
+            var vbW = layout.width - minX + 20;
+            var vbH = layout.height - minY + 24;
+            return '<svg class="tt-svg" viewBox="' + minX + ' ' + minY + ' ' + vbW + ' ' + vbH + '" xmlns="http://www.w3.org/2000/svg">' + svg + '</svg>';
         }
 
         // ── Fullscreen pan/zoom canvas ───────────────────────────────────
@@ -15668,6 +15615,7 @@
             var moved = false;
 
             function apply() { svg.setAttribute('viewBox', vb.x + ' ' + vb.y + ' ' + vb.w + ' ' + vb.h); }
+            var aspect = vb.h / vb.w; // viewBox is no longer square — keep its ratio
             function scaleAt(factor, cx, cy) {
                 var newW = Math.min(baseW * 3, Math.max(baseW * 0.15, vb.w * factor));
                 var ratio = newW / vb.w;
@@ -15676,7 +15624,7 @@
                 var py = vb.y + (cy - rect.top) / rect.height * vb.h;
                 vb.x = px - (px - vb.x) * ratio;
                 vb.y = py - (py - vb.y) * ratio;
-                vb.w = newW; vb.h = newW;
+                vb.w = newW; vb.h = newW * aspect;
                 apply();
             }
 
