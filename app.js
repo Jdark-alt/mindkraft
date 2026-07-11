@@ -1738,8 +1738,9 @@
                 container.innerHTML = html;
 
             } else {
+                var sorted = allActivities.slice();
                 if (sort === 'streak-high') {
-                    sorted.sort((a, b) => (b.streak || 0) - (a.streak || 0));
+                    sorted.sort((a, b) => (b._streak || 0) - (a._streak || 0));
                 }
                 const sortLabel = SORT_OPTIONS.find(o => o.id === sort)?.label || '';
                 container.innerHTML = `
