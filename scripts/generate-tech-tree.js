@@ -23,8 +23,22 @@ const db = admin.firestore();
 // Authorization header makes undici fail with an opaque "fetch failed".
 const PROVIDERS = [
     {
-        // Preferred: Gemini's free tier allows 250k tokens/min — Groq's 8k/min
-        // budget can't fit a planning prompt plus a deep multi-goal tree.
+        // Most reliable: paid pay-as-you-go, no TPM/RPD ceilings that matter
+        // at this volume (~1-2 cents per generation on Haiku 4.5). Preferred
+        // whenever the ANTHROPIC_API_KEY secret is present.
+        name: 'anthropic',
+        kind: 'anthropic', // native Messages API, not OpenAI-compatible
+        key: (process.env.ANTHROPIC_API_KEY || '').trim(),
+        base: 'https://api.anthropic.com',
+        model: process.env.TECH_TREE_MODEL || 'claude-haiku-4-5',
+        fallbackModels: [],
+        maxTokens: { generate: 8000, regenerate: 5000, revision: 2000 },
+        keyHint: 'ANTHROPIC_API_KEY',
+    },
+    {
+        // Free preference: Gemini's free tier allows 250k tokens/min — but
+        // per-model daily request quotas differ (2.5-flash is small, 2.0-flash
+        // is generous), so quota-429s walk the model chain automatically.
         // Uses Google's OpenAI-compatible endpoint, so the adapter is shared.
         name: 'gemini',
         key: (process.env.GEMINI_API_KEY || '').trim(),
@@ -54,7 +68,22 @@ const PROVIDERS = [
         keyHint: 'NVIDIA_API_KEY',
     },
 ];
-const PROVIDER = PROVIDERS.find(p => p.key) || PROVIDERS[0];
+let _providerIdx = PROVIDERS.findIndex(p => p.key);
+if (_providerIdx === -1) _providerIdx = 0;
+let PROVIDER = PROVIDERS[_providerIdx];
+// When a provider's quota is exhausted (not just rate-limited), move to the
+// next configured provider in the chain instead of failing the request.
+function advanceProvider() {
+    for (let i = _providerIdx + 1; i < PROVIDERS.length; i++) {
+        if (PROVIDERS[i].key) {
+            _providerIdx = i;
+            PROVIDER = PROVIDERS[i];
+            console.warn(`  Switching provider to '${PROVIDER.name}' (${PROVIDER.activeModel || PROVIDER.model})`);
+            return true;
+        }
+    }
+    return false;
+}
 const MAX_NODES        = 20;  // hard cap across all goals; scope decides the real count
 const REGEN_FREE_DAYS  = 30;
 const REVISION_LIMIT   = 2;
@@ -372,6 +401,33 @@ async function callTechTreeModel(prompt, maxTokens) {
     }
 
     async function once(tokens) {
+        if (PROVIDER.kind === 'anthropic') {
+            const res = await fetch(PROVIDER.base + '/v1/messages', {
+                method: 'POST',
+                signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+                headers: {
+                    'x-api-key': PROVIDER.key,
+                    'anthropic-version': '2023-06-01',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    model: PROVIDER.activeModel || PROVIDER.model,
+                    max_tokens: tokens,
+                    temperature: 0.6,
+                    system: prompt.system,
+                    messages: [{ role: 'user', content: prompt.user }],
+                }),
+            });
+            if (!res.ok) {
+                const text = await res.text().catch(() => '');
+                throw new Error(`Model API error ${res.status}: ${text.slice(0, 300)}`);
+            }
+            const data = await res.json();
+            const text = (data.content || []).map(c => c.text || '').join('');
+            if (!text) throw new Error('Model returned no content');
+            return { content: text, finishReason: data.stop_reason === 'max_tokens' ? 'length' : data.stop_reason };
+        }
+
         const res = await fetch(PROVIDER.base + '/chat/completions', {
             method: 'POST',
             signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
@@ -422,15 +478,21 @@ async function callTechTreeModel(prompt, maxTokens) {
                 lastErr = err;
                 const msg = err.message || '';
                 const modelProblem = /Model API error (400|404)/.test(msg) && /model/i.test(msg);
-                const chain = PROVIDER.fallbackModels || (PROVIDER.fallbackModel ? [PROVIDER.fallbackModel] : []);
-                if (modelProblem && chain.length) {
+                // "Quota exceeded / check billing" 429s are exhausted budgets
+                // (often daily) — waiting won't help; walk the model chain,
+                // then the provider chain.
+                const quotaProblem = /Model API error 429/.test(msg) && /quota|billing/i.test(msg);
+                if (modelProblem || quotaProblem) {
+                    const chain = PROVIDER.fallbackModels || (PROVIDER.fallbackModel ? [PROVIDER.fallbackModel] : []);
                     const current = PROVIDER.activeModel || PROVIDER.model;
                     const next = chain[chain.indexOf(current) + 1] || (current === PROVIDER.model ? chain[0] : null);
                     if (next) {
-                        console.warn(`  Model '${current}' unavailable — falling back to '${next}'`);
+                        console.warn(`  Model '${current}' ${quotaProblem ? 'out of quota' : 'unavailable'} — falling back to '${next}'`);
                         PROVIDER.activeModel = next;
                         continue;
                     }
+                    if (advanceProvider()) continue;
+                    if (quotaProblem) throw new Error('All configured model providers are out of quota — try again later or add a paid key. ' + describeError(err));
                 }
                 if (/Model API error 413/.test(msg)) {
                     // Groq reports the exact numbers — compute the completion
@@ -791,10 +853,14 @@ async function nimPreflight() {
     }
     const started = Date.now();
     try {
-        const res = await fetch(PROVIDER.base + '/models', {
-            signal: AbortSignal.timeout(15000),
-            headers: { 'Authorization': 'Bearer ' + PROVIDER.key },
-        });
+        const res = await fetch(
+            PROVIDER.kind === 'anthropic' ? PROVIDER.base + '/v1/models' : PROVIDER.base + '/models',
+            {
+                signal: AbortSignal.timeout(15000),
+                headers: PROVIDER.kind === 'anthropic'
+                    ? { 'x-api-key': PROVIDER.key, 'anthropic-version': '2023-06-01' }
+                    : { 'Authorization': 'Bearer ' + PROVIDER.key },
+            });
         console.log('Preflight [' + PROVIDER.name + ']: HTTP', res.status, 'in', Date.now() - started, 'ms',
             res.status === 401 ? '(key rejected — check the ' + PROVIDER.keyHint + ' secret)' : '');
     } catch (err) {
