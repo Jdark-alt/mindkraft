@@ -2609,6 +2609,48 @@
         </div>
     </div>
 
+    <!-- ── Challenge Race: friend picker ──────────────────────────────── -->
+    <div id="challengeFriendPickerModal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title">Challenge a Friend</h3>
+            </div>
+            <div class="modal-body">
+                <p style="font-size:13px;color:var(--color-text-secondary);margin:0 0 12px;">They get your challenge and its activities — first to finish wins.</p>
+                <div id="challengeFriendPickerList"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-secondary" onclick="closeChallengeFriendPicker()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Challenge Race: "You've been Challenged!" (fires on login) ── -->
+    <div id="challengeInviteModal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title">⚔ You've been Challenged!</h3>
+            </div>
+            <div class="modal-body">
+                <p id="raceInviterLine" style="font-size:13px;font-weight:600;color:var(--color-text-primary);margin:0 0 10px;"></p>
+                <div class="race-challenge-panel">
+                    <div id="raceChallengeName" class="race-challenge-name"></div>
+                    <p id="raceChallengeDesc" class="race-challenge-desc"></p>
+                    <div id="raceChallengeMeta" class="race-challenge-meta"></div>
+                </div>
+                <div class="form-group" style="margin-top:14px;">
+                    <label>Activities in this challenge</label>
+                    <div id="raceActivityList" style="margin-top:8px;"></div>
+                </div>
+                <p style="font-size:11px;color:var(--color-text-secondary);margin:10px 0 0;">Accepting adds these to your activities (Uncategorized). Already do one of them? Map it instead — no duplicates.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-secondary" onclick="declineChallengeInvite()">Decline</button>
+                <button type="button" class="btn-primary" onclick="acceptChallengeInvite()">Accept the Race</button>
+            </div>
+        </div>
+    </div>
+
     <!-- ── Tutorial Overlay ─────────────────────────────────────────────
          The first-activity tutorial card — uses the canonical activity-
          card material recipe (#22242a + hairline + inset highlight +

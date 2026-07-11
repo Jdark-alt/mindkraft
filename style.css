@@ -15120,3 +15120,103 @@
     padding: 12px 0 4px;
     font-variant-numeric: tabular-nums;
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   Challenge Races — friend-vs-friend competition
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* vs badge — blue counter-chip job */
+.race-vs-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    background: rgba(90,159,212,0.14);
+    color: var(--color-progress);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.race-invite-btn { white-space: nowrap; }
+
+/* Invite modal — challenge summary panel (recessed surface) */
+.race-challenge-panel {
+    background: rgba(255,255,255,0.025);
+    border-top: 1px solid rgba(255,255,255,0.05);
+    border-radius: 10px;
+    padding: 12px 14px;
+}
+.race-challenge-name {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    color: var(--color-text-primary);
+}
+.race-challenge-desc {
+    font-size: 12px;
+    color: var(--color-text-secondary);
+    margin: 4px 0 0;
+}
+.race-challenge-meta {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    margin-top: 6px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Per-activity rows with the "I already do this" mapping action */
+.race-act-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 10px;
+    background: rgba(255,255,255,0.025);
+    border-top: 1px solid rgba(255,255,255,0.05);
+    border-radius: 10px;
+    margin-bottom: 6px;
+}
+.race-act-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+.race-act-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--color-text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.race-act-target {
+    font-size: 11px;
+    color: var(--color-text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+.race-act-sub {
+    font-size: 10.5px;
+    color: var(--color-text-secondary);
+}
+.race-map-btn {
+    flex-shrink: 0;
+    background: none;
+    border: 1px solid rgba(90,159,212,0.4);
+    border-radius: 999px;
+    color: var(--color-progress);
+    font-size: 10.5px;
+    font-weight: 600;
+    font-family: inherit;
+    padding: 5px 10px;
+    cursor: pointer;
+    transition: background 0.12s;
+}
+.race-map-btn:hover { background: rgba(90,159,212,0.10); }
+.race-map-btn.mapped {
+    background: rgba(90,159,212,0.14);
+    border-color: transparent;
+}

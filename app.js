@@ -1011,6 +1011,11 @@
                             setTimeout(() => checkPendingTabUnlocks(), 800);
                             // Categorization nudge disabled — progressive
                             // notifications will be designed later.
+                            // Race invites fire after the unlock popups have
+                            // had their window (internal guard prevents overlap)
+                            setTimeout(() => checkPendingChallengeInvites(), 2000);
+                            // Pull/push race progress once per login
+                            setTimeout(() => syncChallengeRaceProgress().catch(() => {}), 3000);
                         }
                     }
                 } else {
@@ -1949,6 +1954,7 @@
                 }
                 // Note: challenges only complete via the "Complete" button — never auto-complete here
             });
+            raceSyncSoon();
         }
 
         // Reverse one completion unit for a given activity across all active challenges
@@ -1976,6 +1982,7 @@
                     challenge.currentCount = Math.max(0, (challenge.currentCount || 0) - 1);
                 }
             });
+            raceSyncSoon();
         }
 
         function showChallengeCompleteToast(challengeName, bonusXP) {
@@ -4108,8 +4115,9 @@
         };
 
         // Thin activity picker — same overlay as the tech tree's, minus the
-        // mastery-goal prompt detour (irrelevant for quest linking).
-        function questOpenActivityPicker(onPick) {
+        // mastery-goal prompt detour. Shared by quest linking and the
+        // challenge-race "I already do this" mapping.
+        function questOpenActivityPicker(onPick, title, subtitle) {
             window._questPickerOnPick = onPick;
             var rows = ttAllActivities().map(function(e) {
                 return '<button class="tt-picker-row" onclick="questPickerSelect(\'' + e.activity.id + '\')">'
@@ -4120,8 +4128,8 @@
             }).join('') || '<p class="tt-muted">No activities yet — create some first.</p>';
             ttShowOverlay(
                 '<div class="tt-form">'
-                + '<h3 class="tt-form-title">Link a practice</h3>'
-                + '<p class="tt-muted">Completing it will check this quest step automatically.</p>'
+                + '<h3 class="tt-form-title">' + escapeHtml(title || 'Link a practice') + '</h3>'
+                + '<p class="tt-muted">' + escapeHtml(subtitle || 'Completing it will check this quest step automatically.') + '</p>'
                 + '<div class="tt-picker-list">' + rows + '</div>'
                 + '<div class="tt-form-actions"><button class="tt-btn tt-btn-ghost" onclick="ttCloseOverlay()">Cancel</button></div>'
                 + '</div>'
@@ -4511,6 +4519,13 @@
 
             const metaParts = [];
             metaParts.push(`<span class="ch-meta-xp">+${challenge.bonusXP} XP</span>`);
+            // Friend-race badge — blue counter chip with opponent progress
+            if (challenge.race && challenge.race.inviteId) {
+                const opp = challenge.race.lastOpponent;
+                const oppProgress = opp ? ` · ${opp.currentCount || 0}/${opp.targetCount || challenge.targetCount || 0}` : '';
+                metaParts.push(`<span class="ch-meta-sep">·</span>`);
+                metaParts.push(`<span class="race-vs-chip" title="Racing ${escapeHtml(challenge.race.withName || 'a friend')} — first to finish wins">⚔ vs ${escapeHtml(challenge.race.withName || 'friend')}${oppProgress}</span>`);
+            }
             if (isActive) {
                 metaParts.push(`<span class="ch-meta-sep">·</span>`);
                 metaParts.push(`<span>${daysLeft > 0 ? daysLeft + ' days left' : (daysLeft === 0 ? 'Ends today' : 'Ended ' + Math.abs(daysLeft) + 'd ago')}</span>`);
@@ -4555,6 +4570,10 @@
 
                     <div class="ch-action-row">
                         ${primaryBtn}
+                        ${isActive && !(challenge.race && challenge.race.inviteId) ? `
+                        <button class="ch-breakdown-btn race-invite-btn" type="button" onclick="openChallengeFriendPicker(${index})" title="Race a friend — first to finish wins">
+                            <span>⚔ Challenge a friend</span>
+                        </button>` : ''}
                         ${breakdownBtnHtml}
                     </div>
                     ${breakdownBodyHtml}
@@ -15254,6 +15273,440 @@
                 }
             } catch(e) {}
         }
+
+        // ════════════════════════════════════════════════════════════════════
+        // ── CHALLENGE RACES — friend-vs-friend competition ──────────────────
+        // A personal challenge can be sent to ONE friend. On accept, its
+        // activities are ported into the friend's system (uncategorized, or
+        // mapped to activities they already do) and both race to finish
+        // first. Shared state lives in the `challengeInvites` collection
+        // (deterministic id `${inviteeUid}_${inviterUid}_${challengeId}`);
+        // the doc carries a full challenge SNAPSHOT so it survives the
+        // inviter deleting their copy, plus a per-uid `race` progress map
+        // synced like gcSyncProgress. The group-challenge system is untouched.
+        // ════════════════════════════════════════════════════════════════════
+
+        const RACE_COL = 'challengeInvites';
+
+        function raceMyName() {
+            return (window.userData.profile?.username) || window.currentUser?.displayName || 'A friend';
+        }
+        // Capped aggregate progress — same math the challenge card shows.
+        function raceChallengeCurrent(ch) {
+            const ids = ch.activityIds && ch.activityIds.length ? ch.activityIds : (ch.activityId ? [ch.activityId] : []);
+            if (ids.length && ch.activityTargets) {
+                return ids.reduce((s, id) => s + Math.min((ch.activityProgress || {})[id] || 0, ch.activityTargets[id] || 1), 0);
+            }
+            return ch.currentCount || 0;
+        }
+
+        // ── Send ──────────────────────────────────────────────────────────
+        window.openChallengeFriendPicker = async function(challengeIndex) {
+            const ch = window.userData.challenges[challengeIndex];
+            const myUID = window.currentUser?.uid;
+            if (!ch || !myUID) return;
+            const friends = window.userData.friends || [];
+            window._racePickerChallengeIndex = challengeIndex;
+            const list = document.getElementById('challengeFriendPickerList');
+            if (!friends.length) {
+                list.innerHTML = '<p style="color:var(--color-text-secondary);font-size:13px;">No friends yet — add friends in the Friends tab first.</p>';
+            } else {
+                list.innerHTML = '<p style="color:var(--color-text-secondary);font-size:12px;">Loading friends…</p>';
+                const rows = await Promise.all(friends.map(async uid => {
+                    try {
+                        const pSnap = await getDoc(doc(db, 'publicProfiles', uid));
+                        return { uid, name: pSnap.exists() ? (pSnap.data().displayName || 'Friend') : 'Friend' };
+                    } catch (e) { return { uid, name: 'Friend' }; }
+                }));
+                list.innerHTML = rows.map(r => `
+                    <div class="gc-friend-invite-row">
+                        <span class="gc-friend-invite-name">${escapeHtml(r.name)}</span>
+                        <button class="gc-friend-invite-btn" onclick="sendChallengeRaceInvite('${r.uid}','${escapeHtml(r.name).replace(/'/g, '&#39;')}')">Challenge</button>
+                    </div>`).join('');
+            }
+            document.getElementById('challengeFriendPickerModal').classList.add('active');
+        };
+        window.closeChallengeFriendPicker = function() {
+            document.getElementById('challengeFriendPickerModal').classList.remove('active');
+        };
+
+        window.sendChallengeRaceInvite = async function(inviteeUid, inviteeName) {
+            const myUID = window.currentUser?.uid;
+            const idx = window._racePickerChallengeIndex;
+            const ch = (idx !== undefined && idx !== null) ? window.userData.challenges[idx] : null;
+            if (!myUID || !ch) return;
+            // Snapshot the challenge + its activities so the invite is
+            // self-contained: display, port-in, and race all read from it.
+            const ids = ch.activityIds && ch.activityIds.length ? ch.activityIds : (ch.activityId ? [ch.activityId] : []);
+            const actSnapshots = ids.map(id => {
+                const a = findActivityById(id);
+                return {
+                    id: id,
+                    name: a ? a.name : 'Activity',
+                    description: (a && a.description) || '',
+                    frequency: (a && a.frequency) || 'daily',
+                    baseXP: (a && a.baseXP) || 10,
+                    target: (ch.activityTargets && ch.activityTargets[id]) || 1
+                };
+            });
+            const inviteId = `${inviteeUid}_${myUID}_${ch.id}`;
+            try {
+                await setDoc(doc(db, RACE_COL, inviteId), {
+                    inviteeUid, inviterUid: myUID,
+                    inviterName: raceMyName(),
+                    challengeId: ch.id,
+                    challenge: {
+                        name: ch.name || '',
+                        description: ch.description || '',
+                        endDate: ch.endDate || null,
+                        bonusXP: ch.bonusXP || 0,
+                        targetCount: ch.targetCount || 0,
+                        activities: actSnapshots
+                    },
+                    status: 'pending',
+                    race: {
+                        [myUID]: {
+                            name: raceMyName(),
+                            currentCount: raceChallengeCurrent(ch),
+                            targetCount: ch.targetCount || 0,
+                            status: 'active',
+                            finishedAt: null
+                        }
+                    },
+                    createdAt: new Date().toISOString()
+                }, { merge: true }); // re-invite after a decline resets to pending
+                ch.race = { inviteId, withUid: inviteeUid, withName: inviteeName, role: 'inviter', lastOpponent: null };
+                await saveUserData();
+                closeChallengeFriendPicker();
+                showToast(`⚔ Challenge sent to ${inviteeName}!`, 'blue');
+                renderChallenges();
+            } catch (e) {
+                console.warn('Race invite failed:', e);
+                showToast('Failed to send challenge.', 'red');
+            }
+        };
+
+        // ── Receive: login popup ──────────────────────────────────────────
+        window.checkPendingChallengeInvites = async function() {
+            const ud = window.userData;
+            const myUID = window.currentUser?.uid;
+            if (!ud || !myUID || !ud.onboardingComplete) return;
+            const ts = ud.tutorialStep ?? -1;
+            if (ts >= 0 && ts < 99 && ts < TUTORIAL_STEPS.length) return;
+            const onboarding = document.getElementById('onboardingOverlay');
+            if (onboarding && onboarding.style.display !== 'none' && onboarding.style.display !== '') return;
+            // Don't stack on top of tab-unlock popups
+            if (window._pendingUnlockQueue && window._pendingUnlockQueue.length > 0) return;
+            if (window._raceInviteShownThisSession) return;
+            try {
+                const q = query(collection(db, RACE_COL),
+                    where('inviteeUid', '==', myUID),
+                    where('status', '==', 'pending'));
+                const snap = await getDocs(q);
+                if (snap.empty) return;
+                // One invite modal per login — first pending wins
+                const docSnap = snap.docs[0];
+                window._raceInviteShownThisSession = true;
+                showChallengeInviteModal(docSnap.id, docSnap.data());
+            } catch (e) { console.warn('Pending race invites check failed (non-critical):', e); }
+        };
+
+        function showChallengeInviteModal(inviteId, invite) {
+            window._activeRaceInvite = { id: inviteId, data: invite };
+            window._raceMappings = {}; // snapshotActivityId → my existing activityId
+            document.getElementById('raceInviterLine').textContent =
+                (invite.inviterName || 'A friend') + ' challenged you!';
+            document.getElementById('raceChallengeName').textContent = invite.challenge?.name || 'Challenge';
+            const descEl = document.getElementById('raceChallengeDesc');
+            descEl.textContent = invite.challenge?.description || '';
+            descEl.style.display = invite.challenge?.description ? '' : 'none';
+            const metaEl = document.getElementById('raceChallengeMeta');
+            const bits = [];
+            if (invite.challenge?.bonusXP) bits.push('+' + invite.challenge.bonusXP + ' XP bonus');
+            if (invite.challenge?.endDate) bits.push('ends ' + invite.challenge.endDate);
+            metaEl.textContent = bits.join(' · ');
+            raceRenderInviteActivityRows();
+            document.getElementById('challengeInviteModal').classList.add('active');
+        }
+        function raceRenderInviteActivityRows() {
+            const invite = window._activeRaceInvite?.data;
+            const listEl = document.getElementById('raceActivityList');
+            if (!invite || !listEl) return;
+            const acts = invite.challenge?.activities || [];
+            listEl.innerHTML = acts.map(a => {
+                const mappedId = window._raceMappings[a.id];
+                const mapped = mappedId ? findActivityById(mappedId) : null;
+                return `
+                <div class="race-act-row">
+                    <div class="race-act-info">
+                        <span class="race-act-name">${escapeHtml(a.name)}${a.target > 1 ? ' <span class="race-act-target">×' + a.target + '</span>' : ''}</span>
+                        <span class="race-act-sub">${mapped
+                            ? 'Counts as: ' + escapeHtml(mapped.name)
+                            : 'Will be added to your activities'}</span>
+                    </div>
+                    <button class="race-map-btn${mapped ? ' mapped' : ''}" onclick="raceMapActivity('${a.id}')">
+                        ${mapped ? 'Change' : 'I already do this'}
+                    </button>
+                </div>`;
+            }).join('');
+        }
+        window.raceMapActivity = function(snapshotActivityId) {
+            questOpenActivityPicker(function(myActivityId) {
+                window._raceMappings[snapshotActivityId] = myActivityId;
+                raceRenderInviteActivityRows();
+            }, 'I already do this', 'Pick your existing activity — its completions will count toward the race.');
+        };
+        window.closeChallengeInviteModal = function() {
+            document.getElementById('challengeInviteModal').classList.remove('active');
+            window._activeRaceInvite = null;
+        };
+
+        window.declineChallengeInvite = async function() {
+            const inv = window._activeRaceInvite;
+            if (!inv) return;
+            try {
+                await updateDoc(doc(db, RACE_COL, inv.id), { status: 'declined' });
+            } catch (e) { console.warn('Decline failed:', e); }
+            closeChallengeInviteModal();
+            showToast('Challenge declined.', 'olive');
+        };
+
+        window.acceptChallengeInvite = async function() {
+            const inv = window._activeRaceInvite;
+            const myUID = window.currentUser?.uid;
+            if (!inv || !myUID) return;
+            const invite = inv.data;
+            const snapActs = invite.challenge?.activities || [];
+
+            // Idempotence: if this invite was already materialized locally,
+            // just re-mark accepted and bail.
+            const existing = (window.userData.challenges || []).find(c => c.race && c.race.inviteId === inv.id);
+            if (existing) {
+                try { await updateDoc(doc(db, RACE_COL, inv.id), { status: 'accepted' }); } catch (e) {}
+                closeChallengeInviteModal();
+                return;
+            }
+
+            // Capacity pre-check for the whole clone batch — abort BEFORE
+            // mutating anything so a failed accept leaves no partial state.
+            const toClone = snapActs.filter(a => !window._raceMappings[a.id]);
+            const { total, limit } = getActivityCounts();
+            if (total + toClone.length > limit) {
+                alert(`This challenge adds ${toClone.length} activities but you only have ${Math.max(0, limit - total)} free slots. Map more of them to activities you already do, or level up for more slots.`);
+                return;
+            }
+
+            // 1. Clone unmapped activities into Uncategorized
+            const { di, pi } = getOrCreateUncategorized();
+            const targetPath = window.userData.dimensions[di].paths[pi];
+            const idMap = {}; // snapshot id → local id
+            snapActs.forEach((a, i) => {
+                if (window._raceMappings[a.id]) {
+                    idMap[a.id] = window._raceMappings[a.id];
+                    return;
+                }
+                const newId = Date.now().toString() + i;
+                targetPath.activities.push({
+                    id: newId,
+                    name: a.name,
+                    baseXP: a.baseXP || 10,
+                    frequency: a.frequency || 'daily',
+                    description: a.description || '',
+                    isNegative: false, isSkipNegative: false,
+                    allowMultiplePerDay: false,
+                    streak: 0, skipStreak: 0, lastCompleted: null, cycleCompletions: 0,
+                    totalXP: 0, completionCount: 0, isFavorite: false,
+                    completionHistory: [], cycleHistory: [], streakShields: 0,
+                    createdAt: new Date().toISOString()
+                });
+                idMap[a.id] = newId;
+            });
+
+            // 2. Materialize the challenge locally with race metadata
+            const activityIds = snapActs.map(a => idMap[a.id]);
+            const activityTargets = {};
+            const activityProgress = {};
+            snapActs.forEach(a => {
+                activityTargets[idMap[a.id]] = a.target || 1;
+                activityProgress[idMap[a.id]] = 0;
+            });
+            if (!window.userData.challenges) window.userData.challenges = [];
+            window.userData.challenges.push({
+                id: Date.now().toString() + '_race',
+                name: invite.challenge?.name || 'Challenge',
+                description: invite.challenge?.description || '',
+                targetCount: invite.challenge?.targetCount || snapActs.reduce((s, a) => s + (a.target || 1), 0),
+                bonusXP: invite.challenge?.bonusXP || 0,
+                startDate: localToday(),
+                endDate: invite.challenge?.endDate || null,
+                activityIds, activityTargets, activityProgress,
+                activityId: null, currentCount: 0,
+                metricEnabled: false, metricQty: null, metricUnit: null, metricCurrent: 0,
+                activityProgressCollapsed: true,
+                enforceActivities: false, enforceDateRange: false,
+                status: 'active',
+                createdAt: new Date().toISOString(),
+                race: { inviteId: inv.id, withUid: invite.inviterUid, withName: invite.inviterName || 'Friend', role: 'invitee', lastOpponent: null }
+            });
+
+            // 3. Seed my side of the race on the invite doc
+            try {
+                await updateDoc(doc(db, RACE_COL, inv.id), {
+                    status: 'accepted',
+                    [`race.${myUID}`]: {
+                        name: raceMyName(),
+                        currentCount: 0,
+                        targetCount: invite.challenge?.targetCount || 0,
+                        status: 'active',
+                        finishedAt: null
+                    }
+                });
+            } catch (e) { console.warn('Race accept doc update failed:', e); }
+
+            await saveUserData();
+            closeChallengeInviteModal();
+            updateDashboard();
+            showToast('⚔ Race on! Beat ' + (invite.inviterName || 'your friend') + ' to it.', 'green');
+        };
+
+        // ── Sync + resolution ─────────────────────────────────────────────
+        window.syncChallengeRaceProgress = async function() {
+            const myUID = window.currentUser?.uid;
+            if (!myUID) return;
+            const raced = (window.userData.challenges || []).filter(c => c.race && c.race.inviteId);
+            if (!raced.length) return;
+            let changed = false;
+            for (const ch of raced) {
+                try {
+                    const ref = doc(db, RACE_COL, ch.race.inviteId);
+                    const snap = await getDoc(ref);
+                    if (!snap.exists()) {
+                        // Doc gone — opponent nuked it; race dissolves quietly
+                        ch.race = null;
+                        changed = true;
+                        showToast('A challenge race was cancelled.', 'olive');
+                        continue;
+                    }
+                    const inv = snap.data();
+                    if (inv.status === 'declined' && ch.race.role === 'inviter' && !ch.race.declineSeen) {
+                        ch.race.declineSeen = true;
+                        changed = true;
+                        showToast((ch.race.withName || 'Your friend') + ' declined the challenge.', 'olive');
+                        continue;
+                    }
+                    if (inv.status !== 'accepted') continue;
+
+                    // Push my progress
+                    const cur = raceChallengeCurrent(ch);
+                    const myStatus = ch.status === 'completed' ? 'completed' : (ch.status === 'failed' ? 'failed' : 'active');
+                    const mine = (inv.race || {})[myUID] || {};
+                    const myFinishedAt = myStatus === 'completed' ? (mine.finishedAt || new Date().toISOString()) : null;
+                    if (mine.currentCount !== cur || mine.status !== myStatus || (mine.finishedAt || null) !== myFinishedAt) {
+                        await updateDoc(ref, {
+                            [`race.${myUID}`]: {
+                                name: raceMyName(),
+                                currentCount: cur,
+                                targetCount: ch.targetCount || 0,
+                                status: myStatus,
+                                finishedAt: myFinishedAt
+                            }
+                        });
+                    }
+
+                    // Cache opponent for synchronous card rendering
+                    const opp = (inv.race || {})[ch.race.withUid] || null;
+                    const oppCache = opp ? {
+                        currentCount: opp.currentCount || 0,
+                        targetCount: opp.targetCount || 0,
+                        status: opp.status || 'active',
+                        finishedAt: opp.finishedAt || null
+                    } : null;
+                    if (JSON.stringify(ch.race.lastOpponent || null) !== JSON.stringify(oppCache)) {
+                        ch.race.lastOpponent = oppCache;
+                        changed = true;
+                    }
+
+                    // Opponent abandoned → race dissolves
+                    if (opp && opp.status === 'abandoned' && !ch.race.resultSeen) {
+                        ch.race.resultSeen = true;
+                        changed = true;
+                        showToast((ch.race.withName || 'Your friend') + ' left the race.', 'olive');
+                        continue;
+                    }
+
+                    // Resolution: first finishedAt wins (tie → lower uid)
+                    if (!ch.race.resultSeen) {
+                        const oppFin = opp && opp.finishedAt;
+                        if (myFinishedAt || oppFin) {
+                            let iWin = false, resolved = false;
+                            if (myFinishedAt && !oppFin) { iWin = true; resolved = true; }
+                            else if (!myFinishedAt && oppFin) { iWin = false; resolved = true; }
+                            else if (myFinishedAt && oppFin) {
+                                resolved = true;
+                                iWin = myFinishedAt < oppFin || (myFinishedAt === oppFin && myUID < ch.race.withUid);
+                            }
+                            if (resolved) {
+                                ch.race.resultSeen = true;
+                                ch.race.won = iWin;
+                                changed = true;
+                                showToast(iWin
+                                    ? '🏆 You beat ' + (ch.race.withName || 'your friend') + ' — race won!'
+                                    : (ch.race.withName || 'Your friend') + ' finished first — race complete.',
+                                    iWin ? 'green' : 'olive');
+                            }
+                        }
+                    }
+                } catch (e) { console.warn('Race sync failed (non-critical):', e); }
+            }
+            if (changed) {
+                saveUserData().catch(() => {});
+                if (window.currentTab === 'challenges') renderChallenges();
+            }
+        };
+
+        // Debounced trigger — called from the challenge-progress funnels
+        // (updateChallengeProgress / undoChallengeProgress) and race hooks.
+        let _raceSyncTimer = null;
+        function raceSyncSoon() {
+            const has = (window.userData?.challenges || []).some(c => c.race && c.race.inviteId);
+            if (!has) return;
+            clearTimeout(_raceSyncTimer);
+            _raceSyncTimer = setTimeout(() => {
+                if (typeof window.syncChallengeRaceProgress === 'function') {
+                    window.syncChallengeRaceProgress().catch(() => {});
+                }
+            }, 1500);
+        }
+
+        // Completing/undoing a challenge must push race state promptly
+        (function() {
+            const _origComplete = window.completeChallenge;
+            window.completeChallenge = async function(index) {
+                await _origComplete(index);
+                raceSyncSoon();
+            };
+            const _origUndo = window.undoChallenge;
+            window.undoChallenge = async function(index) {
+                await _origUndo(index);
+                raceSyncSoon();
+            };
+            // Deleting a raced challenge marks my side abandoned so the
+            // opponent's next sync dissolves their race badge too.
+            const _origDelete = window.deleteChallenge;
+            window.deleteChallenge = async function(index) {
+                const ch = window.userData.challenges[index];
+                const raceInfo = ch && ch.race && ch.race.inviteId
+                    ? { inviteId: ch.race.inviteId } : null;
+                const before = (window.userData.challenges || []).length;
+                await _origDelete(index);
+                const deleted = (window.userData.challenges || []).length < before;
+                if (deleted && raceInfo && window.currentUser) {
+                    updateDoc(doc(db, RACE_COL, raceInfo.inviteId), {
+                        [`race.${window.currentUser.uid}.status`]: 'abandoned'
+                    }).catch(() => {});
+                }
+            };
+        })();
 
         // ════════════════════════════════════════════════════════════════════
         // ── CHARACTER TECH TREE ──────────────────────────────────────────────
