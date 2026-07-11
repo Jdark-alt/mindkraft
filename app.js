@@ -964,6 +964,7 @@
                     
                     loadSettings();
                     await processStreakPauses();
+                    processQuestRecurrence();
                     scheduleReminder();
                     updateDashboard();
                     updateProfileAvatar();
@@ -1029,7 +1030,7 @@
                     if (!window.userData) {
                         window.userData = {
                             level: 1, currentXP: 0, totalXP: 0,
-                            dimensions: [], activities: [], challenges: []
+                            dimensions: [], activities: [], challenges: [], quests: []
                         };
                     }
                     authContainer.style.display = 'none';
@@ -1077,6 +1078,8 @@
 
             if (userDoc && userDoc.exists()) {
                 window.userData = userDoc.data();
+                // Backfill quests array for existing users (added later)
+                if (!Array.isArray(window.userData.quests)) window.userData.quests = [];
                 // Backfill friendCode for existing users who don't have one yet
                 if (!window.userData.friendCode) {
                     window.userData.friendCode = generateFriendCode();
@@ -1098,7 +1101,7 @@
                 // "not found" due to a network blip or a new-device first login.
                 window.userData = {
                     level: 1, currentXP: 0, totalXP: 0,
-                    dimensions: [], activities: [], challenges: [],
+                    dimensions: [], activities: [], challenges: [], quests: [],
                     rewards: {}, friends: [],
                     friendCode: generateFriendCode(),
                     createdAt: new Date().toISOString()
@@ -1841,14 +1844,6 @@
             // freshly-toggled card animates exactly once and subsequent
             // re-renders (group toggles, filter changes) don't re-fire it.
             window._justToggledActivityId = null;
-        }
-
-        // Stub — replaced by the full Quests implementation.
-        function renderQuestsMode(container) {
-            container.innerHTML = `
-                <div class="empty-state" style="padding: 48px 20px;">
-                    <p style="color:var(--color-text-secondary);">Quests are coming soon.</p>
-                </div>`;
         }
 
         window.toggleActivityGroup = function(key) {
@@ -3578,6 +3573,557 @@
             }
         };
 
+        // ══════════════════════════════════════════════════════════════════
+        // ── Quests — finite projects with a subtask checklist ─────────────
+        // ══════════════════════════════════════════════════════════════════
+        // A Quest is a thing-to-be-finished (ship a video, plan a trip),
+        // distinct from a Practice (repeats forever, streak-driven) and a
+        // Challenge (aggregate counter over activities). Completion is
+        // user-declared. A recurring quest is ONE object mutated in place:
+        // Declare Done bumps completedCount and resets the checklist for the
+        // next period; there is no per-instance archive.
+
+        function getQuests() {
+            if (!Array.isArray(window.userData.quests)) window.userData.quests = [];
+            return window.userData.quests;
+        }
+        function findQuestById(questId) {
+            return getQuests().find(function(q) { return q.id === questId; }) || null;
+        }
+        function questProgress(q) {
+            var total = (q.subtasks || []).length;
+            var done = (q.subtasks || []).filter(function(s) { return s.done; }).length;
+            return { done: done, total: total, pct: total ? Math.round(done / total * 100) : 0 };
+        }
+
+        // Shared global-XP delta with level-up/level-down handling — the same
+        // math completeChallenge/undoChallenge use, factored so quest subtask
+        // XP, quest bonus XP, and their undos share one code path.
+        function applyBonusXP(delta) {
+            if (!delta) return;
+            window.userData.currentXP += delta;
+            window.userData.totalXP += delta;
+            if (delta > 0) {
+                let level = window.userData.level || 1;
+                let xpForNext = calculateXPForLevel(level);
+                let didLevelUp = false;
+                while (window.userData.currentXP >= xpForNext && level < 100) {
+                    window.userData.currentXP -= xpForNext;
+                    window.userData.level++;
+                    level = window.userData.level;
+                    xpForNext = calculateXPForLevel(level);
+                    didLevelUp = true;
+                }
+                if (window.userData.level >= 100) window.userData.level = 100;
+                if (didLevelUp) showLevelUpAnimation();
+            } else {
+                while (window.userData.currentXP < 0 && window.userData.level > 1) {
+                    window.userData.level -= 1;
+                    window.userData.currentXP += calculateXPForLevel(window.userData.level);
+                }
+                if (window.userData.currentXP < 0) window.userData.currentXP = 0;
+            }
+        }
+
+        // ── Recurrence ────────────────────────────────────────────────────
+        function questNextPeriodStart(periodStart, cadence) {
+            var parts = (periodStart || localToday()).split('-').map(Number);
+            var d = new Date(parts[0], parts[1] - 1, parts[2]);
+            if (cadence === 'monthly') {
+                // Clamp to end of target month so Jan 31 → Feb 28, not Mar 3
+                var day = d.getDate();
+                d.setDate(1);
+                d.setMonth(d.getMonth() + 1);
+                var maxDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+                d.setDate(Math.min(day, maxDay));
+            } else {
+                d.setDate(d.getDate() + 7);
+            }
+            return toLocalDateStr(d);
+        }
+        // Login rollover: if a recurring quest's period elapsed without a
+        // completion, advance periodStart to the current period WITHOUT
+        // wiping in-progress checkmarks — only Declare Done resets work.
+        function processQuestRecurrence() {
+            var today = localToday();
+            var changed = false;
+            getQuests().forEach(function(q) {
+                if (!q.recurrence || q.status !== 'active') return;
+                var guard = 0;
+                var next = questNextPeriodStart(q.recurrence.periodStart, q.recurrence.cadence);
+                while (next <= today && guard++ < 500) {
+                    q.recurrence.periodStart = next;
+                    next = questNextPeriodStart(next, q.recurrence.cadence);
+                    changed = true;
+                }
+            });
+            if (changed) saveUserData().catch(function() {});
+        }
+
+        // ── Quests mode (Home surface) ────────────────────────────────────
+        function renderQuestsMode(container) {
+            var quests = getQuests();
+            // Detail view swaps in place of the list (inline-planner precedent)
+            if (window._openQuestId) {
+                var openQ = findQuestById(window._openQuestId);
+                if (openQ) { container.innerHTML = renderQuestDetail(openQ); return; }
+                window._openQuestId = null;
+            }
+            if (quests.length === 0) {
+                // Onboarding-empty: CTA + copy explaining the first action
+                container.innerHTML = `
+                    <div class="empty-state" style="padding: 60px 20px;">
+                        <div class="empty-state-icon">🗺️</div>
+                        <p style="font-size:16px;font-weight:600;color:var(--color-text-primary);margin-bottom:8px;">Every big thing is a series of small steps.</p>
+                        <p style="margin-bottom:24px;">A Quest breaks one goal — a video, a trip, a launch — into a checklist you can actually finish.</p>
+                        <button class="cta-button" onclick="openQuestModal()">🗺️ &nbsp;Create your first Quest</button>
+                    </div>`;
+                return;
+            }
+            var active = quests.filter(function(q) { return q.status === 'active'; });
+            var completed = quests.filter(function(q) { return q.status === 'completed'; });
+            if (window.activityGroupExpanded['quests_done'] === undefined) window.activityGroupExpanded['quests_done'] = false;
+            var html = '<div class="quest-header-row">'
+                + '<button class="routine-add-btn" onclick="openQuestModal()">+ New Quest</button>'
+                + '</div>';
+            html += active.map(renderQuestCard).join('');
+            if (completed.length) {
+                var isExp = window.activityGroupExpanded['quests_done'] === true;
+                html += '<div class="act-group" data-group="quests_done">'
+                    + '<div class="act-group-header" onclick="toggleActivityGroup(\'quests_done\')">'
+                    + '<span class="collapse-icon ' + (isExp ? 'expanded' : '') + '">▼</span>'
+                    + '<span class="act-group-label">✓ Completed</span>'
+                    + '<span class="act-group-count">' + completed.length + '</span>'
+                    + '</div>'
+                    + '<div class="act-group-body ' + (isExp ? 'expanded' : '') + '">'
+                    + completed.map(renderQuestCard).join('')
+                    + '</div></div>';
+            }
+            container.innerHTML = html;
+        }
+
+        function questDeadlineChip(q) {
+            if (!q.deadline || q.status !== 'active') return '';
+            var msLeft = new Date(q.deadline + 'T23:59:59') - new Date();
+            var daysLeft = Math.ceil(msLeft / 86400000);
+            if (daysLeft < 0) return '<span class="quest-chip-warn">Overdue</span>';
+            if (daysLeft <= 3) return '<span class="quest-chip-warn">' + daysLeft + 'd left</span>';
+            return '<span class="quest-meta-text">Due ' + escapeHtml(q.deadline) + '</span>';
+        }
+
+        function renderQuestCard(q) {
+            var prog = questProgress(q);
+            var recurChip = q.recurrence
+                ? '<span class="quest-recur-chip">↻ ' + (q.recurrence.cadence === 'monthly' ? 'Monthly' : 'Weekly')
+                    + (q.completedCount ? ' · ' + q.completedCount + ' shipped' : '') + '</span>'
+                : (q.completedCount > 1 ? '<span class="quest-recur-chip">' + q.completedCount + ' shipped</span>' : '');
+            var doneCls = q.status === 'completed' ? ' quest-card-done' : '';
+            return '<div class="quest-card' + doneCls + '" onclick="openQuestDetail(\'' + q.id + '\')">'
+                + '<div class="quest-card-top">'
+                + '<span class="quest-card-name">' + escapeHtml(q.name) + '</span>'
+                + questDeadlineChip(q)
+                + '</div>'
+                + '<div class="quest-card-meta">'
+                + '<span class="quest-meta-text">' + prog.done + '/' + prog.total + ' steps</span>'
+                + recurChip
+                + '</div>'
+                + '<div class="quest-bar"><div class="quest-bar-inner" style="width:' + prog.pct + '%;"></div></div>'
+                + '</div>';
+        }
+
+        window.openQuestDetail = function(questId) {
+            window._openQuestId = questId;
+            renderActivitiesList();
+        };
+        window.closeQuestDetail = function() {
+            window._openQuestId = null;
+            renderActivitiesList();
+        };
+
+        function renderQuestDetail(q) {
+            var prog = questProgress(q);
+            var rows = (q.subtasks || []).map(function(s) {
+                var name, accent = '';
+                if (s.type === 'activity') {
+                    var e = ttFindActivity(s.activityId);
+                    name = e ? e.activity.name : '(deleted activity)';
+                    if (e) accent = 'border-left:2px solid ' + ttDimHexRaw(e.dim.id) + ';';
+                } else {
+                    name = s.title || '';
+                }
+                var winMeta = '';
+                if (s.window && s.window.start) {
+                    winMeta = '<span class="quest-meta-text">⏱ ' + escapeHtml(s.window.start)
+                        + (s.window.end && s.window.end !== s.window.start ? ' → ' + escapeHtml(s.window.end) : '') + '</span>';
+                }
+                var xpMeta = (s.type === 'task' && s.xp) ? '<span class="quest-xp-text">+' + s.xp + ' XP</span>' : '';
+                return '<div class="quest-subtask-row' + (s.done ? ' done' : '') + '" style="' + accent + '" onclick="toggleQuestSubtask(\'' + q.id + '\',\'' + s.id + '\')">'
+                    + '<span class="quest-check">' + (s.done
+                        ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
+                        : '') + '</span>'
+                    + '<span class="quest-subtask-name">' + escapeHtml(name) + '</span>'
+                    + xpMeta + winMeta
+                    + '</div>';
+            }).join('') || '<p class="quest-meta-text" style="padding:12px 4px;">No subtasks yet — edit this quest to add steps.</p>';
+
+            var recurLine = q.recurrence
+                ? '<span class="quest-recur-chip">↻ ' + (q.recurrence.cadence === 'monthly' ? 'Monthly series' : 'Weekly series')
+                    + ' · ' + (q.completedCount || 0) + ' shipped</span>'
+                : '';
+            var footer;
+            if (q.status === 'completed') {
+                footer = '<button class="btn-secondary pl-btn-secondary" style="width:100%;" onclick="undoQuestCompletion(\'' + q.id + '\')">↩ Undo completion</button>';
+            } else {
+                footer = '<button class="quest-declare-done" onclick="completeQuest(\'' + q.id + '\')">Declare Done'
+                    + (q.bonusXP ? ' &nbsp;·&nbsp; +' + q.bonusXP + ' XP' : '') + '</button>';
+            }
+            return '<div class="quest-detail">'
+                + '<button class="quest-back-row" onclick="closeQuestDetail()">'
+                + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>'
+                + ' Quests</button>'
+                + '<div class="quest-detail-head">'
+                + '<h3 class="quest-detail-name">' + escapeHtml(q.name) + '</h3>'
+                + '<div class="quest-card-meta">' + questDeadlineChip(q)
+                + '<span class="quest-meta-text">' + prog.done + '/' + prog.total + ' steps</span>' + recurLine + '</div>'
+                + '<div class="quest-bar"><div class="quest-bar-inner" style="width:' + prog.pct + '%;"></div></div>'
+                + '</div>'
+                + '<div class="quest-subtask-list">' + rows + '</div>'
+                + '<div class="quest-detail-footer">' + footer + '</div>'
+                + '<div class="quest-detail-actions">'
+                + '<button class="btn-secondary pl-btn-secondary" onclick="openQuestModal(\'' + q.id + '\')">Edit</button>'
+                + '<button class="btn-secondary pl-btn-secondary quest-delete-btn" onclick="deleteQuest(\'' + q.id + '\')">Delete</button>'
+                + '</div>'
+                + '</div>';
+        }
+
+        // ── Subtask toggle & activity auto-check ─────────────────────────
+        window.toggleQuestSubtask = function(questId, subId) {
+            var q = findQuestById(questId);
+            if (!q || q.status !== 'active') return;
+            var s = (q.subtasks || []).find(function(x) { return x.id === subId; });
+            if (!s) return;
+            s.done = !s.done;
+            s.doneAt = s.done ? new Date().toISOString() : null;
+            s.doneVia = s.done ? 'manual' : null;
+            if (s.type === 'task' && s.xp) {
+                applyBonusXP(s.done ? s.xp : -s.xp);
+                showToast(s.done ? '+' + s.xp + ' XP' : '↩ −' + s.xp + ' XP', s.done ? 'green' : 'olive');
+                updateDashboard();
+            }
+            debouncedSaveUserData();
+            renderActivitiesList();
+        };
+
+        // Completing a linked activity checks matching quest subtasks; the
+        // activity-undo path unchecks only ones that were checked that way today.
+        function updateQuestProgressForActivity(activityId) {
+            var touched = false;
+            getQuests().forEach(function(q) {
+                if (q.status !== 'active') return;
+                (q.subtasks || []).forEach(function(s) {
+                    if (s.type === 'activity' && s.activityId === activityId && !s.done) {
+                        s.done = true;
+                        s.doneAt = new Date().toISOString();
+                        s.doneVia = 'activity';
+                        touched = true;
+                    }
+                });
+            });
+            return touched;
+        }
+        function undoQuestProgressForActivity(activityId) {
+            var today = localToday();
+            var touched = false;
+            getQuests().forEach(function(q) {
+                if (q.status !== 'active') return;
+                (q.subtasks || []).forEach(function(s) {
+                    if (s.type === 'activity' && s.activityId === activityId && s.done
+                        && s.doneVia === 'activity' && s.doneAt && toLocalDateStr(new Date(s.doneAt)) === today) {
+                        s.done = false;
+                        s.doneAt = null;
+                        s.doneVia = null;
+                        touched = true;
+                    }
+                });
+            });
+            return touched;
+        }
+
+        // Activity deleted → convert referencing subtasks to plain tasks so
+        // no checkmark or history is lost (mirrors cleanupChallengesForActivity).
+        function cleanupQuestsForActivity(actId) {
+            var name = null;
+            getQuests().forEach(function(q) {
+                (q.subtasks || []).forEach(function(s) {
+                    if (s.type === 'activity' && s.activityId === actId) {
+                        if (name === null) {
+                            var e = ttFindActivity(actId);
+                            name = e ? e.activity.name : 'Deleted activity';
+                        }
+                        s.type = 'task';
+                        s.title = name;
+                        s.activityId = null;
+                        s.xp = null;
+                    }
+                });
+            });
+        }
+
+        // ── Declare Done / undo ───────────────────────────────────────────
+        window.completeQuest = async function(questId) {
+            var q = findQuestById(questId);
+            if (!q || q.status !== 'active') return;
+            var prog = questProgress(q);
+            var msg = 'Declare "' + q.name + '" done?'
+                + (prog.done < prog.total ? '\n(' + (prog.total - prog.done) + ' steps are still unchecked — your call, it\'s your quest.)' : '')
+                + (q.bonusXP ? '\nYou\'ll earn ' + q.bonusXP + ' XP.' : '');
+            if (!confirm(msg)) return;
+            if (q.recurrence) {
+                // Session-scoped undo snapshot (like _sessionCompleted for activities)
+                window._lastQuestCompletion = {
+                    questId: q.id,
+                    periodStart: q.recurrence.periodStart,
+                    subtaskState: (q.subtasks || []).map(function(s) {
+                        return { id: s.id, done: s.done, doneAt: s.doneAt, doneVia: s.doneVia };
+                    })
+                };
+                q.completedCount = (q.completedCount || 0) + 1;
+                (q.subtasks || []).forEach(function(s) { s.done = false; s.doneAt = null; s.doneVia = null; });
+                q.recurrence.periodStart = questNextPeriodStart(q.recurrence.periodStart, q.recurrence.cadence);
+                showToast('🏆 Shipped! That\'s ' + q.completedCount + ' — checklist reset for the next round.', 'green');
+            } else {
+                q.status = 'completed';
+                q.completedAt = new Date().toISOString();
+                q.completedCount = (q.completedCount || 0) + 1;
+                showToast('🏆 Quest complete: ' + q.name, 'green');
+            }
+            applyBonusXP(q.bonusXP || 0);
+            await saveUserData();
+            updateDashboard();
+            renderActivitiesList();
+        };
+
+        window.undoQuestCompletion = async function(questId) {
+            var q = findQuestById(questId);
+            if (!q) return;
+            if (q.status === 'completed' && !q.recurrence) {
+                if (!confirm('Undo completion of "' + q.name + '"? The ' + (q.bonusXP || 0) + ' XP will be returned.')) return;
+                q.status = 'active';
+                q.completedAt = null;
+                q.completedCount = Math.max(0, (q.completedCount || 1) - 1);
+                applyBonusXP(-(q.bonusXP || 0));
+            } else if (q.recurrence && window._lastQuestCompletion && window._lastQuestCompletion.questId === questId) {
+                // Recurring undo is session-scoped via the snapshot
+                var snap = window._lastQuestCompletion;
+                q.completedCount = Math.max(0, (q.completedCount || 1) - 1);
+                q.recurrence.periodStart = snap.periodStart;
+                (q.subtasks || []).forEach(function(s) {
+                    var st = snap.subtaskState.find(function(x) { return x.id === s.id; });
+                    if (st) { s.done = st.done; s.doneAt = st.doneAt; s.doneVia = st.doneVia; }
+                });
+                window._lastQuestCompletion = null;
+                applyBonusXP(-(q.bonusXP || 0));
+            } else {
+                return;
+            }
+            await saveUserData();
+            updateDashboard();
+            renderActivitiesList();
+            showToast('↩ Quest completion undone — XP returned', 'olive');
+        };
+
+        window.deleteQuest = async function(questId) {
+            if (!confirm('Delete this quest? Its checklist and shipped count are lost.')) return;
+            var quests = getQuests();
+            var idx = quests.findIndex(function(q) { return q.id === questId; });
+            if (idx === -1) return;
+            quests.splice(idx, 1);
+            if (window._openQuestId === questId) window._openQuestId = null;
+            await saveUserData();
+            renderActivitiesList();
+        };
+
+        // ── Quest modal (create/edit) ─────────────────────────────────────
+        let _editingQuestId = null;
+        let _questDraftSubtasks = [];
+
+        window.openQuestModal = function(questId) {
+            _editingQuestId = questId || null;
+            var q = questId ? findQuestById(questId) : null;
+            document.getElementById('questModalTitle').textContent = q ? 'Edit Quest' : 'New Quest';
+            document.getElementById('questSubmitBtn').textContent = q ? 'Save Quest' : 'Create Quest';
+            document.getElementById('questName').value = q ? q.name : '';
+            document.getElementById('questDeadline').value = (q && q.deadline) || '';
+            document.getElementById('questBonusXP').value = q ? (q.bonusXP || 100) : 100;
+            document.getElementById('questRecurrence').value = (q && q.recurrence) ? q.recurrence.cadence : '';
+            _questDraftSubtasks = q
+                ? (q.subtasks || []).map(function(s) { return Object.assign({}, s, { window: s.window ? Object.assign({}, s.window) : null }); })
+                : [];
+            questRenderSubtaskRows();
+            document.getElementById('questModal').classList.add('active');
+        };
+        window.closeQuestModal = function() {
+            document.getElementById('questModal').classList.remove('active');
+            _editingQuestId = null;
+            _questDraftSubtasks = [];
+        };
+
+        function questRenderSubtaskRows() {
+            var el = document.getElementById('questSubtaskList');
+            if (!el) return;
+            el.innerHTML = _questDraftSubtasks.map(function(s, i) {
+                var main;
+                if (s.type === 'activity') {
+                    var e = ttFindActivity(s.activityId);
+                    main = '<span class="quest-draft-actname">🔗 ' + escapeHtml(e ? e.activity.name : '(deleted activity)') + '</span>';
+                } else {
+                    main = '<input type="text" class="pl-input" style="flex:1;min-width:0;" placeholder="Step ' + (i + 1) + '" value="' + escapeHtml(s.title || '') + '" onchange="questDraftSetTitle(' + i + ', this.value)">';
+                }
+                var xpField = s.type === 'task'
+                    ? '<input type="number" class="pl-input quest-draft-xp" min="0" max="100" placeholder="XP" value="' + (s.xp || '') + '" onchange="questDraftSetXP(' + i + ', this.value)" title="Optional XP for this step">'
+                    : '';
+                var win = s.window || {};
+                return '<div class="quest-draft-row">'
+                    + '<div class="quest-draft-main">' + main + xpField
+                    + '<button type="button" class="quest-draft-del" onclick="questDraftRemove(' + i + ')" title="Remove" aria-label="Remove step">✕</button>'
+                    + '</div>'
+                    + '<div class="quest-draft-window">'
+                    + '<span class="quest-meta-text">⏱ Surface on Today:</span>'
+                    + '<input type="date" class="pl-input quest-draft-date" value="' + (win.start || '') + '" onchange="questDraftSetWindow(' + i + ', \'start\', this.value)">'
+                    + '<span class="quest-meta-text">→</span>'
+                    + '<input type="date" class="pl-input quest-draft-date" value="' + (win.end || '') + '" onchange="questDraftSetWindow(' + i + ', \'end\', this.value)">'
+                    + '</div>'
+                    + '</div>';
+            }).join('') || '<p class="ay-hint" style="margin:4px 0;">Add the steps that make this quest real — tasks, or practices you already track.</p>';
+        }
+        window.questDraftSetTitle = function(i, v) { if (_questDraftSubtasks[i]) _questDraftSubtasks[i].title = v; };
+        window.questDraftSetXP = function(i, v) {
+            if (!_questDraftSubtasks[i]) return;
+            var n = parseInt(v);
+            _questDraftSubtasks[i].xp = (n && n > 0) ? Math.min(100, n) : null;
+        };
+        window.questDraftSetWindow = function(i, side, v) {
+            var s = _questDraftSubtasks[i];
+            if (!s) return;
+            if (!s.window) s.window = { start: '', end: '' };
+            s.window[side] = v;
+            if (!s.window.start && !s.window.end) s.window = null;
+        };
+        window.questDraftRemove = function(i) {
+            _questDraftSubtasks.splice(i, 1);
+            questRenderSubtaskRows();
+        };
+        window.questAddTaskRow = function() {
+            _questDraftSubtasks.push({
+                id: 'qs_' + Date.now().toString(36) + '_' + _questDraftSubtasks.length,
+                type: 'task', title: '', xp: null, done: false, doneAt: null, doneVia: null, window: null
+            });
+            questRenderSubtaskRows();
+        };
+        window.questAddActivityRow = function() {
+            questOpenActivityPicker(function(activityId) {
+                _questDraftSubtasks.push({
+                    id: 'qs_' + Date.now().toString(36) + '_' + _questDraftSubtasks.length,
+                    type: 'activity', activityId: activityId, done: false, doneAt: null, doneVia: null, window: null
+                });
+                questRenderSubtaskRows();
+            });
+        };
+
+        // Thin activity picker — same overlay as the tech tree's, minus the
+        // mastery-goal prompt detour (irrelevant for quest linking).
+        function questOpenActivityPicker(onPick) {
+            window._questPickerOnPick = onPick;
+            var rows = ttAllActivities().map(function(e) {
+                return '<button class="tt-picker-row" onclick="questPickerSelect(\'' + e.activity.id + '\')">'
+                    + '<span class="tt-prereq-dot" style="background:' + ttDimHexRaw(e.dim.id) + ';"></span>'
+                    + '<span class="tt-picker-name">' + escapeHtml(e.activity.name) + '</span>'
+                    + '<span class="tt-picker-meta">' + escapeHtml(e.activity.frequency || '') + '</span>'
+                    + '</button>';
+            }).join('') || '<p class="tt-muted">No activities yet — create some first.</p>';
+            ttShowOverlay(
+                '<div class="tt-form">'
+                + '<h3 class="tt-form-title">Link a practice</h3>'
+                + '<p class="tt-muted">Completing it will check this quest step automatically.</p>'
+                + '<div class="tt-picker-list">' + rows + '</div>'
+                + '<div class="tt-form-actions"><button class="tt-btn tt-btn-ghost" onclick="ttCloseOverlay()">Cancel</button></div>'
+                + '</div>'
+            );
+        }
+        window.questPickerSelect = function(activityId) {
+            var fn = window._questPickerOnPick;
+            window._questPickerOnPick = null;
+            ttCloseOverlay();
+            if (fn) fn(activityId);
+        };
+
+        window.saveQuest = async function(event) {
+            event.preventDefault();
+            var name = document.getElementById('questName').value.trim();
+            if (!name) return;
+            var deadline = document.getElementById('questDeadline').value || null;
+            var bonusXP = Math.min(500, Math.max(10, parseInt(document.getElementById('questBonusXP').value) || 100));
+            var cadence = document.getElementById('questRecurrence').value || null;
+            // Drop empty task rows; normalize half-filled windows
+            var subtasks = _questDraftSubtasks.filter(function(s) {
+                return s.type === 'activity' || (s.title && s.title.trim());
+            }).map(function(s) {
+                if (s.type === 'task') s.title = s.title.trim();
+                if (s.window) {
+                    if (!s.window.start && s.window.end) s.window.start = s.window.end;
+                    if (s.window.start && !s.window.end) s.window.end = s.window.start;
+                    if (!s.window.start) s.window = null;
+                }
+                return s;
+            });
+            if (_editingQuestId) {
+                var q = findQuestById(_editingQuestId);
+                if (!q) { closeQuestModal(); return; }
+                q.name = name;
+                q.deadline = deadline;
+                q.bonusXP = bonusXP;
+                q.subtasks = subtasks;
+                if (cadence) {
+                    if (!q.recurrence) q.recurrence = { cadence: cadence, periodStart: localToday() };
+                    else q.recurrence.cadence = cadence;
+                } else {
+                    q.recurrence = null;
+                }
+            } else {
+                getQuests().push({
+                    id: 'q_' + Date.now().toString(36),
+                    name: name,
+                    deadline: deadline,
+                    bonusXP: bonusXP,
+                    status: 'active',
+                    subtasks: subtasks,
+                    recurrence: cadence ? { cadence: cadence, periodStart: localToday() } : null,
+                    completedCount: 0,
+                    createdAt: new Date().toISOString(),
+                    completedAt: null
+                });
+            }
+            await saveUserData();
+            closeQuestModal();
+            renderActivitiesList();
+        };
+
+        // Undone subtasks whose surface-window covers today — consumed by the
+        // Today view's pinned "Quest window" strip.
+        function getActiveQuestWindowItems() {
+            var today = localToday();
+            var items = [];
+            getQuests().forEach(function(q) {
+                if (q.status !== 'active') return;
+                (q.subtasks || []).forEach(function(s) {
+                    if (!s.done && s.window && s.window.start && s.window.start <= today && today <= (s.window.end || s.window.start)) {
+                        items.push({ quest: q, subtask: s });
+                    }
+                });
+            });
+            return items;
+        }
+
         // Challenge activity type handled by onChallengeTypeChange()
 
         // Render Challenges
@@ -4150,7 +4696,7 @@
         window.deleteDimension = async function(index) {
             if (confirm('Delete this dimension and all its paths/activities?')) {
                 const dim = window.userData.dimensions[index];
-                getActivityIdsInDimension(dim).forEach(id => cleanupChallengesForActivity(id));
+                getActivityIdsInDimension(dim).forEach(id => { cleanupQuestsForActivity(id); cleanupChallengesForActivity(id); });
                 window.userData.dimensions.splice(index, 1);
                 await saveUserData();
                 updateDashboard();
@@ -4217,7 +4763,7 @@
         window.deletePath = async function(dimIndex, pathIndex) {
             if (confirm('Delete this path and all its activities?')) {
                 const path = window.userData.dimensions[dimIndex].paths[pathIndex];
-                (path.activities || []).forEach(act => cleanupChallengesForActivity(act.id));
+                (path.activities || []).forEach(act => { cleanupQuestsForActivity(act.id); cleanupChallengesForActivity(act.id); });
                 window.userData.dimensions[dimIndex].paths.splice(pathIndex, 1);
                 await saveUserData();
                 updateDashboard();
@@ -5016,6 +5562,9 @@
                 }
 
                 _logDeletedActivity(activity);
+                // Convert quest subtasks referencing this activity into plain
+                // tasks BEFORE the splice so the real name is still resolvable.
+                if (actId) cleanupQuestsForActivity(actId);
                 window.userData.dimensions[dimIndex].paths[pathIndex].activities.splice(actIndex, 1);
                 // Clean up references in challenges
                 if (actId) cleanupChallengesForActivity(actId);
@@ -5425,6 +5974,9 @@
 
             // Update challenge progress
             updateChallengeProgress(activity.id);
+
+            // Auto-check quest subtasks linked to this activity
+            updateQuestProgressForActivity(activity.id);
             
             // Skip-mode activities give POSITIVE XP when performed (penalty is applied when skipped, not here)
             const xpChange = (activity.isNegative && !activity.isSkipNegative) ? -earnedXP : earnedXP;
@@ -5631,6 +6183,9 @@
             
             // Reverse challenge progress for this undo
             undoChallengeProgress(activity.id);
+
+            // Un-check quest subtasks that were auto-checked by this activity today
+            undoQuestProgressForActivity(activity.id);
 
             // Reverse dimension XP for this undo
             const _dimForUndo = window.userData.dimensions[dimIndex];
@@ -11207,7 +11762,7 @@
             if (word !== 'RESET') { alert('Reset cancelled.'); return; }
             window.userData = {
                 level: 1, currentXP: 0, totalXP: 0,
-                dimensions: [], activities: [], challenges: [], rewards: {},
+                dimensions: [], activities: [], challenges: [], quests: [], rewards: {},
                 settings: window.userData.settings || {},
                 createdAt: new Date().toISOString()
             };

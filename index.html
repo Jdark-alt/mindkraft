@@ -1862,6 +1862,64 @@
         </div>
     </div>
 
+    <!-- Quest Modal — create/edit a finite project with a subtask checklist -->
+    <div id="questModal" class="modal-overlay">
+        <div class="modal pl-modal ch-modal">
+            <div class="modal-header pl-modal-header">
+                <div>
+                    <div class="pl-modal-eyebrow">Quest</div>
+                    <h3 class="modal-title" id="questModalTitle">New Quest</h3>
+                </div>
+                <button class="pl-modal-close" type="button" onclick="closeQuestModal()" aria-label="Close">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <form id="questForm" onsubmit="saveQuest(event)">
+                <div class="modal-body pl-modal-body ay-modal-body">
+
+                    <div class="ay-field">
+                        <label class="pl-field-label" for="questName">Quest Name</label>
+                        <input type="text" id="questName" class="pl-input" placeholder="e.g., Ship this week's video" required>
+                    </div>
+
+                    <div class="ay-field-row">
+                        <div class="ay-field">
+                            <label class="pl-field-label" for="questDeadline">Deadline (optional)</label>
+                            <input type="date" id="questDeadline" class="pl-input">
+                        </div>
+                        <div class="ay-field">
+                            <label class="pl-field-label" for="questBonusXP">Completion XP</label>
+                            <input type="number" id="questBonusXP" class="pl-input" min="10" max="500" step="5" value="100">
+                        </div>
+                    </div>
+
+                    <div class="ay-field">
+                        <label class="pl-field-label" for="questRecurrence">Repeats</label>
+                        <select id="questRecurrence" class="pl-input">
+                            <option value="">Never — one-time quest</option>
+                            <option value="weekly">Weekly series</option>
+                            <option value="monthly">Monthly series</option>
+                        </select>
+                        <p class="ay-hint">A repeating quest resets its checklist each time you declare it done, and counts how many times you've shipped it.</p>
+                    </div>
+
+                    <div class="ay-field">
+                        <label class="pl-field-label">Subtasks</label>
+                        <div id="questSubtaskList"></div>
+                        <div style="display:flex;gap:8px;margin-top:8px;">
+                            <button type="button" class="btn-secondary pl-btn-secondary" style="flex:1;" onclick="questAddTaskRow()">+ Task</button>
+                            <button type="button" class="btn-secondary pl-btn-secondary" style="flex:1;" onclick="questAddActivityRow()">+ Link a practice</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer pl-modal-footer">
+                    <button type="button" class="btn-secondary pl-btn-secondary" onclick="closeQuestModal()">Cancel</button>
+                    <button type="submit" class="btn-primary pl-btn-primary" id="questSubmitBtn">Create Quest</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Activity Modal — pl-modal shell, brief-aligned, v120 -->
     <div id="activityModal" class="modal-overlay">
         <div class="modal pl-modal ay-modal">
