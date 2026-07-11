@@ -253,7 +253,7 @@
                 </svg>
                 <span id="googleBtnText">Continue with Google</span>
             </button>
-            <p class="lp-legal">By continuing, you agree to Mindkraft's Terms &amp; Privacy</p>
+            <p class="lp-legal">By continuing, you agree to Mindkraft's <a href="terms.html" class="lp-legal-link" target="_blank" rel="noopener">Terms of Service</a> and <a href="privacy.html" class="lp-legal-link" target="_blank" rel="noopener">Privacy Policy</a></p>
         </div>
     </div>
 
@@ -602,7 +602,7 @@
                                     <span id="filterActiveDot" class="act-tb-dot" style="display:none;" aria-hidden="true"></span>
                                 </button>
                                 <div class="filter-panel" id="filterPanel" style="display:none;">
-                                    <div class="filter-panel-title">Sort activities</div>
+                                    <div class="filter-panel-title">Home view</div>
                                     <div class="filter-options" id="filterOptions"></div>
                                     <div class="filter-panel-footer">
                                         <button class="btn-filter-default" id="setDefaultFilterBtn" onclick="setDefaultActivitySort()">Set as default view</button>
@@ -1056,7 +1056,7 @@
 
                         <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Analytics</div><div class="guide-inner-body">The <strong>Analytics</strong> tab shows XP over time. Use <strong>Cumulative</strong> vs <strong>Daily</strong> views, overlay any dimension/path/activity with <strong>Compare</strong>, and toggle <strong>Hide Overall</strong> to compare overlays directly. Below: Activity Calendar, full History, XP &amp; streak leaderboards, frequency charts, dimension progress.</div></div>
 
-                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="10.5" r="2.5"/><circle cx="8.5" cy="7.5" r="2.5"/><circle cx="6.5" cy="12.5" r="2.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>Themes</div><div class="guide-inner-body">Pick a theme preset in Settings — six dark and four light options. <strong>Custom mode</strong> lets you tweak every colour, background glow, and gradient direction. Save up to 3 named templates. Hit <strong>Apply Theme</strong> to persist.</div></div>
+                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="10.5" r="2.5"/><circle cx="8.5" cy="7.5" r="2.5"/><circle cx="6.5" cy="12.5" r="2.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>Themes</div><div class="guide-inner-body">Pick your look in Settings — a focused <strong>Dark</strong> mode or a clean, airy <strong>Light</strong> mode. Hit <strong>Apply Theme</strong> to persist. <strong>Custom theming</strong> — every colour, glow, and gradient under your control — is coming soon.</div></div>
 
                         <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Backup &amp; Data</div><div class="guide-inner-body">Mindkraft auto-creates a cloud backup every time you save. Hit <strong>Backup Now</strong> for an immediate snapshot. Use <strong>Restore Backup</strong> to roll back. <strong>Export</strong> a full JSON file and <strong>Import</strong> it on any device. Works across all your devices.</div></div>
 
@@ -1064,6 +1064,27 @@
 
                         <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>Negative Activities &amp; Skip Penalty</div><div class="guide-inner-body">Activities can award <strong>negative XP</strong> for habits you want to break. The <strong>Skip Penalty</strong> option auto-deducts XP the next time you open the app after missing a day — great for hard accountability. Penalties appear clearly in your Activity History.</div></div>
 
+                    </div>
+                </div>
+
+                <!-- Default Home View -->
+                <div class="settings-card">
+                    <div style="display:flex;align-items:center;gap:12px;padding:2px 0;">
+                        <span class="st-icon st-icon-blue">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                        </span>
+                        <div class="st-collapse-text" style="flex:1;">
+                            <span class="st-collapse-title">Default Home View</span>
+                            <span class="st-collapse-sub">What My Activities opens to</span>
+                        </div>
+                        <select id="settingsDefaultHomeView" onchange="setDefaultHomeViewFromSettings(this.value)"
+                            style="background:rgba(255,255,255,0.05);color:var(--color-text-primary);border:1px solid rgba(255,255,255,0.08);border-radius:9px;padding:7px 10px;font-size:13px;font-family:inherit;cursor:pointer;">
+                            <option value="auto">Automatic</option>
+                            <option value="smart">Today</option>
+                            <option value="practices">Practices</option>
+                            <option value="quests">Quests</option>
+                            <option value="occasional">Occasional</option>
+                        </select>
                     </div>
                 </div>
 
@@ -1168,7 +1189,7 @@
                         <span class="st-icon st-icon-purple"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="10.5" r="2.5"/><circle cx="8.5" cy="7.5" r="2.5"/><circle cx="6.5" cy="12.5" r="2.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg></span>
                         <div>
                             <span class="st-card-title">Theme</span>
-                            <p class="settings-card-sub">Pick a vibe or build your own</p>
+                            <p class="settings-card-sub">Dark or light — full customization coming soon</p>
                         </div>
                     </div>
                     <div class="theme-presets" id="themePresets"></div>
@@ -1329,6 +1350,27 @@
                         </div>
                     </div>
                     <button class="btn-logout" onclick="handleLogout()">Logout</button>
+                </div>
+
+                <!-- About & Legal -->
+                <div class="settings-card">
+                    <div class="settings-card-header">
+                        <span class="st-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></span>
+                        <div>
+                            <span class="st-card-title">About &amp; Legal</span>
+                            <p class="settings-card-sub">How Mindkraft handles your data</p>
+                        </div>
+                    </div>
+                    <div class="legal-links">
+                        <a class="legal-link" href="privacy.html" target="_blank" rel="noopener">
+                            <span class="legal-link-text">Privacy Policy<span>What we collect and why</span></span>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                        </a>
+                        <a class="legal-link" href="terms.html" target="_blank" rel="noopener">
+                            <span class="legal-link-text">Terms of Service<span>The rules of using Mindkraft</span></span>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                        </a>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1815,6 +1857,64 @@
                 <div class="modal-footer pl-modal-footer">
                     <button type="button" class="btn-secondary pl-btn-secondary" onclick="closeChallengeModal()">Cancel</button>
                     <button type="submit" class="btn-primary pl-btn-primary" id="challengeSubmitBtn">Create Challenge</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Quest Modal — create/edit a finite project with a subtask checklist -->
+    <div id="questModal" class="modal-overlay">
+        <div class="modal pl-modal ch-modal">
+            <div class="modal-header pl-modal-header">
+                <div>
+                    <div class="pl-modal-eyebrow">Quest</div>
+                    <h3 class="modal-title" id="questModalTitle">New Quest</h3>
+                </div>
+                <button class="pl-modal-close" type="button" onclick="closeQuestModal()" aria-label="Close">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <form id="questForm" onsubmit="saveQuest(event)">
+                <div class="modal-body pl-modal-body ay-modal-body">
+
+                    <div class="ay-field">
+                        <label class="pl-field-label" for="questName">Quest Name</label>
+                        <input type="text" id="questName" class="pl-input" placeholder="e.g., Ship this week's video" required>
+                    </div>
+
+                    <div class="ay-field-row">
+                        <div class="ay-field">
+                            <label class="pl-field-label" for="questDeadline">Deadline (optional)</label>
+                            <input type="date" id="questDeadline" class="pl-input">
+                        </div>
+                        <div class="ay-field">
+                            <label class="pl-field-label" for="questBonusXP">Completion XP</label>
+                            <input type="number" id="questBonusXP" class="pl-input" min="10" max="500" step="5" value="100">
+                        </div>
+                    </div>
+
+                    <div class="ay-field">
+                        <label class="pl-field-label" for="questRecurrence">Repeats</label>
+                        <select id="questRecurrence" class="pl-input">
+                            <option value="">Never — one-time quest</option>
+                            <option value="weekly">Weekly series</option>
+                            <option value="monthly">Monthly series</option>
+                        </select>
+                        <p class="ay-hint">A repeating quest resets its checklist each time you declare it done, and counts how many times you've shipped it.</p>
+                    </div>
+
+                    <div class="ay-field">
+                        <label class="pl-field-label">Subtasks</label>
+                        <div id="questSubtaskList"></div>
+                        <div style="display:flex;gap:8px;margin-top:8px;">
+                            <button type="button" class="btn-secondary pl-btn-secondary" style="flex:1;" onclick="questAddTaskRow()">+ Task</button>
+                            <button type="button" class="btn-secondary pl-btn-secondary" style="flex:1;" onclick="questAddActivityRow()">+ Link a practice</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer pl-modal-footer">
+                    <button type="button" class="btn-secondary pl-btn-secondary" onclick="closeQuestModal()">Cancel</button>
+                    <button type="submit" class="btn-primary pl-btn-primary" id="questSubmitBtn">Create Quest</button>
                 </div>
             </form>
         </div>
@@ -2505,6 +2605,48 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn-secondary" onclick="closeGroupInviteModal()">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Challenge Race: friend picker ──────────────────────────────── -->
+    <div id="challengeFriendPickerModal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title">Challenge a Friend</h3>
+            </div>
+            <div class="modal-body">
+                <p style="font-size:13px;color:var(--color-text-secondary);margin:0 0 12px;">They get your challenge and its activities — first to finish wins.</p>
+                <div id="challengeFriendPickerList"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-secondary" onclick="closeChallengeFriendPicker()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Challenge Race: "You've been Challenged!" (fires on login) ── -->
+    <div id="challengeInviteModal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title">⚔ You've been Challenged!</h3>
+            </div>
+            <div class="modal-body">
+                <p id="raceInviterLine" style="font-size:13px;font-weight:600;color:var(--color-text-primary);margin:0 0 10px;"></p>
+                <div class="race-challenge-panel">
+                    <div id="raceChallengeName" class="race-challenge-name"></div>
+                    <p id="raceChallengeDesc" class="race-challenge-desc"></p>
+                    <div id="raceChallengeMeta" class="race-challenge-meta"></div>
+                </div>
+                <div class="form-group" style="margin-top:14px;">
+                    <label>Activities in this challenge</label>
+                    <div id="raceActivityList" style="margin-top:8px;"></div>
+                </div>
+                <p style="font-size:11px;color:var(--color-text-secondary);margin:10px 0 0;">Accepting adds these to your activities (Uncategorized). Already do one of them? Map it instead — no duplicates.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-secondary" onclick="declineChallengeInvite()">Decline</button>
+                <button type="button" class="btn-primary" onclick="acceptChallengeInvite()">Accept the Race</button>
             </div>
         </div>
     </div>

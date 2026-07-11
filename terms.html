@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terms of Service — Mindkraft</title>
+    <meta name="description" content="The terms that govern your use of Mindkraft, the life-gamification app.">
+    <meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#e3e7ee" media="(prefers-color-scheme: light)">
+    <link rel="icon" type="image/svg+xml" href="icon-192.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        /* Standalone legal page — deliberately self-contained so it renders
+           even when the app shell cache is stale. Tokens mirror the app's
+           design system: card material, hairline borders, Inter, restraint. */
+        :root {
+            --bg: #1a1a1a;
+            --card: #22242a;
+            --card-border: rgba(255,255,255,0.045);
+            --card-shadow:
+                0 1px 0 rgba(255,255,255,0.075) inset,
+                0 -1px 0 rgba(0,0,0,0.4) inset,
+                0 1px 2px rgba(0,0,0,0.5),
+                0 6px 18px rgba(0,0,0,0.35);
+            --text: #ffffff;
+            --text-2: #b0b0b0;
+            --accent: #5a9fd4;
+            --hairline: rgba(255,255,255,0.08);
+            --glow-a: rgba(74,124,158,0.14);
+            --glow-b: rgba(142,59,95,0.10);
+            color-scheme: dark;
+        }
+        @media (prefers-color-scheme: light) {
+            :root {
+                --bg: #e3e7ee;
+                --card: #fbfcfe;
+                --card-border: rgba(0,0,0,0.06);
+                --card-shadow:
+                    0 1px 2px rgba(15,17,21,0.04),
+                    0 1px 3px rgba(15,17,21,0.06),
+                    0 6px 18px rgba(15,17,21,0.05);
+                --text: #232933;
+                --text-2: #545860;
+                --accent: #2e6fbe;
+                --hairline: rgba(0,0,0,0.08);
+                --glow-a: rgba(58,126,181,0.10);
+                --glow-b: rgba(142,59,95,0.05);
+                color-scheme: light;
+            }
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background-color: var(--bg);
+            background-image:
+                radial-gradient(ellipse 100% 55% at 18% 18%, var(--glow-a) 0%, transparent 60%),
+                radial-gradient(ellipse 70% 60% at 82% 82%, var(--glow-b) 0%, transparent 60%);
+            background-attachment: fixed;
+            color: var(--text);
+            line-height: 1.7;
+            -webkit-font-smoothing: antialiased;
+        }
+        .page {
+            max-width: 680px;
+            margin: 0 auto;
+            padding: 40px 22px 64px;
+        }
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            text-decoration: none;
+            color: var(--text);
+            margin-bottom: 34px;
+        }
+        .brand img { width: 34px; height: 34px; }
+        .brand-name { font-size: 16px; font-weight: 700; letter-spacing: -0.02em; }
+        .brand-back { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--accent); text-decoration: none; }
+        .kicker {
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.18em;
+            color: var(--text-2);
+            margin-bottom: 8px;
+        }
+        h1 {
+            font-size: 26px;
+            font-weight: 800;
+            letter-spacing: -0.025em;
+            line-height: 1.25;
+            margin-bottom: 6px;
+        }
+        .meta { font-size: 12.5px; color: var(--text-2); margin-bottom: 28px; }
+        .card {
+            background: var(--card);
+            border: 1px solid var(--card-border);
+            border-radius: 14px;
+            box-shadow: var(--card-shadow);
+            padding: 24px 24px 26px;
+            margin-bottom: 16px;
+        }
+        .card h2 {
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: -0.015em;
+            margin-bottom: 10px;
+        }
+        .card p, .card li { font-size: 13.5px; color: var(--text-2); }
+        .card p + p { margin-top: 10px; }
+        .card ul { padding-left: 20px; margin-top: 8px; }
+        .card li { margin-bottom: 7px; }
+        .card li:last-child { margin-bottom: 0; }
+        .card strong { color: var(--text); font-weight: 600; }
+        .card a { color: var(--accent); text-decoration: none; }
+        .card a:hover { text-decoration: underline; }
+        .footer {
+            margin-top: 30px;
+            padding-top: 18px;
+            border-top: 1px solid var(--hairline);
+            font-size: 12px;
+            color: var(--text-2);
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .footer a { color: var(--accent); text-decoration: none; font-weight: 600; }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <a class="brand" href="./">
+            <img src="icon-192.svg" alt="">
+            <span class="brand-name">Mindkraft</span>
+            <span class="brand-back">← Back to app</span>
+        </a>
+
+        <div class="kicker">Legal</div>
+        <h1>Terms of Service</h1>
+        <p class="meta">Effective date: July 9, 2026</p>
+
+        <div class="card">
+            <h2>1. Agreement</h2>
+            <p>These Terms of Service ("Terms") govern your use of Mindkraft, the life-gamification app available at <a href="https://mindkraft.life">mindkraft.life</a> (the "Service"). By creating an account or using the Service, you agree to these Terms and to our <a href="privacy.html">Privacy Policy</a>. If you don't agree, please don't use Mindkraft.</p>
+        </div>
+
+        <div class="card">
+            <h2>2. The Service</h2>
+            <p>Mindkraft helps you track habits and activities, earn XP, level up, build streaks, take on challenges, plan your day, and optionally share progress with friends. The Service is currently provided <strong>free of charge</strong>. Features may be added, changed, or removed as the Service evolves.</p>
+        </div>
+
+        <div class="card">
+            <h2>3. Eligibility &amp; your account</h2>
+            <ul>
+                <li>You must be at least <strong>13 years old</strong> (or the minimum age required in your country) to use Mindkraft.</li>
+                <li>You sign in with a Google account and are responsible for keeping access to it secure. Activity that happens under your account is your responsibility.</li>
+                <li>One person per account. Don't impersonate others or misrepresent who you are.</li>
+            </ul>
+        </div>
+
+        <div class="card">
+            <h2>4. Your content</h2>
+            <p>The activities, notes, challenges, and other content you create in Mindkraft belong to <strong>you</strong>. You grant us the limited license needed to store, process, back up, and display that content in order to operate the Service — including showing parts of it (display name, photo, level, XP, streaks, spider chart) to friends you add and groups you join.</p>
+            <p>You can export your data at any time from Settings → Data, and you can delete it via Reset All Data or by requesting account deletion.</p>
+        </div>
+
+        <div class="card">
+            <h2>5. Acceptable use</h2>
+            <p>Please don't:</p>
+            <ul>
+                <li>use the Service for anything unlawful, harmful, or abusive;</li>
+                <li>harass or harm other users through social features, or post offensive content in names, notes, or shared surfaces;</li>
+                <li>attempt to break, probe, or overload the Service, bypass security rules, or access other users' data;</li>
+                <li>scrape, resell, or misuse the Service or its infrastructure.</li>
+            </ul>
+            <p>We may suspend or terminate accounts that violate these Terms.</p>
+        </div>
+
+        <div class="card">
+            <h2>6. XP, levels &amp; virtual items</h2>
+            <p>XP, levels, streaks, shields, badges, and any other virtual items in Mindkraft are gameplay features only. They have <strong>no monetary value</strong>, cannot be sold or exchanged, and may be adjusted (for example when balancing formulas change). Custom rewards you define for yourself are your own responsibility.</p>
+        </div>
+
+        <div class="card">
+            <h2>7. Not professional advice</h2>
+            <p>Mindkraft is a motivation and habit-tracking tool. It does not provide medical, psychological, fitness, financial, or other professional advice. Consult a qualified professional before making decisions about your health or wellbeing.</p>
+        </div>
+
+        <div class="card">
+            <h2>8. AI-generated content</h2>
+            <p>Some features (such as the Tech Tree) use third-party AI models to generate suggestions from your activity data. AI output can be inaccurate or incomplete — treat it as inspiration, not instruction.</p>
+        </div>
+
+        <div class="card">
+            <h2>9. Availability &amp; changes</h2>
+            <p>We work to keep Mindkraft fast and reliable, but the Service is provided on an "as available" basis. It may occasionally be interrupted, and we may modify or discontinue features (or the Service itself) at any time. Back up anything important using the export feature — daily cloud backups keep only the latest snapshot.</p>
+        </div>
+
+        <div class="card">
+            <h2>10. Termination</h2>
+            <p>You can stop using Mindkraft at any time and request deletion of your account. We may suspend or terminate accounts that violate these Terms or that create risk for the Service or other users. Where reasonable, we'll give you notice so you can export your data.</p>
+        </div>
+
+        <div class="card">
+            <h2>11. Disclaimers &amp; limitation of liability</h2>
+            <p>To the maximum extent permitted by law, the Service is provided <strong>"as is" and "as available"</strong> without warranties of any kind, express or implied — including fitness for a particular purpose, accuracy, or uninterrupted availability.</p>
+            <p>To the maximum extent permitted by law, we will not be liable for indirect, incidental, special, or consequential damages, or for loss of data, arising from your use of (or inability to use) the Service. Nothing in these Terms excludes liability that cannot be excluded under applicable law.</p>
+        </div>
+
+        <div class="card">
+            <h2>12. Changes to these Terms</h2>
+            <p>We may update these Terms from time to time. When we do, we'll update the effective date above and highlight material changes in the app. Continuing to use Mindkraft after a change means you accept the updated Terms.</p>
+        </div>
+
+        <div class="card">
+            <h2>13. Contact</h2>
+            <p>Questions about these Terms? Email us at <a href="mailto:jdarktrialid@gmail.com">jdarktrialid@gmail.com</a>.</p>
+        </div>
+
+        <div class="footer">
+            <span>© 2026 Mindkraft</span>
+            <a href="privacy.html">Privacy Policy</a>
+            <a href="./">Back to app</a>
+        </div>
+    </div>
+</body>
+</html>

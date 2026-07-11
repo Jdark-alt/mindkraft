@@ -964,6 +964,7 @@
                     
                     loadSettings();
                     await processStreakPauses();
+                    processQuestRecurrence();
                     scheduleReminder();
                     updateDashboard();
                     updateProfileAvatar();
@@ -1010,6 +1011,11 @@
                             setTimeout(() => checkPendingTabUnlocks(), 800);
                             // Categorization nudge disabled — progressive
                             // notifications will be designed later.
+                            // Race invites fire after the unlock popups have
+                            // had their window (internal guard prevents overlap)
+                            setTimeout(() => checkPendingChallengeInvites(), 2000);
+                            // Pull/push race progress once per login
+                            setTimeout(() => syncChallengeRaceProgress().catch(() => {}), 3000);
                         }
                     }
                 } else {
@@ -1029,7 +1035,7 @@
                     if (!window.userData) {
                         window.userData = {
                             level: 1, currentXP: 0, totalXP: 0,
-                            dimensions: [], activities: [], challenges: []
+                            dimensions: [], activities: [], challenges: [], quests: []
                         };
                     }
                     authContainer.style.display = 'none';
@@ -1077,6 +1083,8 @@
 
             if (userDoc && userDoc.exists()) {
                 window.userData = userDoc.data();
+                // Backfill quests array for existing users (added later)
+                if (!Array.isArray(window.userData.quests)) window.userData.quests = [];
                 // Backfill friendCode for existing users who don't have one yet
                 if (!window.userData.friendCode) {
                     window.userData.friendCode = generateFriendCode();
@@ -1098,7 +1106,7 @@
                 // "not found" due to a network blip or a new-device first login.
                 window.userData = {
                     level: 1, currentXP: 0, totalXP: 0,
-                    dimensions: [], activities: [], challenges: [],
+                    dimensions: [], activities: [], challenges: [], quests: [],
                     rewards: {}, friends: [],
                     friendCode: generateFriendCode(),
                     createdAt: new Date().toISOString()
@@ -1316,13 +1324,36 @@
             }, 30000);
         }
 
-        // ── Activity Sort & Filter ────────────────────────────────────────
-        const SORT_OPTIONS = [
+        // ── Home view modes & Activity Sort ───────────────────────────────
+        // The Home surface has four peer modes. Mode is a pure function of
+        // the stored sort id (settings.activitySort keeps storing sort ids),
+        // so legacy pinned defaults map 1:1 with zero migration:
+        //   'smart' → Today; by-routine/grouped/streak-high → Practices;
+        //   'quests'/'occasional' → their own modes.
+        const HOME_MODES = [
+            { id: 'smart',      icon: '⚡', label: 'Today' },
+            { id: 'practices',  icon: '📋', label: 'Practices' },   // virtual — resolves to last practices sort
+            { id: 'quests',     icon: '🗺️', label: 'Quests' },
+            { id: 'occasional', icon: '🎲', label: 'Occasional' },
+        ];
+        const PRACTICES_SORTS = [
             { id: 'by-routine',  icon: '🎯', label: 'By Routine' },
-            { id: 'smart',       icon: '⚡', label: "Today's Focus" },
             { id: 'grouped',     icon: '📋', label: 'Grouped by frequency' },
             { id: 'streak-high', icon: '🔥', label: 'Longest streak first' },
         ];
+        // Alias kept for the label lookups sprinkled through this file.
+        const SORT_OPTIONS = HOME_MODES.filter(m => m.id !== 'practices').concat(PRACTICES_SORTS);
+
+        function modeForSort(sortId) {
+            if (sortId === 'smart') return 'today';
+            if (sortId === 'quests' || sortId === 'occasional') return sortId;
+            return 'practices'; // by-routine | grouped | streak-high
+        }
+        function getLastPracticesSort() {
+            var s = window.userData && window.userData.settings;
+            var id = s && s.lastPracticesSort;
+            return PRACTICES_SORTS.find(o => o.id === id) ? id : 'grouped';
+        }
 
         // Smart default — picks based on activity count.
         // <10 activities: "Today's Focus" highlights what to do right now
@@ -1377,18 +1408,42 @@
 
         function renderFilterOptions() {
             const current = getCurrentSort();
+            const currentMode = modeForSort(current);
             const container = document.getElementById('filterOptions');
             if (!container) return;
-            container.innerHTML = SORT_OPTIONS.map(o => `
-                <button class="filter-option ${current === o.id ? 'selected' : ''}" onclick="applyActivitySort('${o.id}')">
+            const check = '<svg style="margin-left:auto;flex-shrink:0;" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+            let html = HOME_MODES.map(o => {
+                const isSel = (o.id === 'practices') ? currentMode === 'practices' : current === o.id;
+                let row = `
+                <button class="filter-option ${isSel ? 'selected' : ''}" onclick="applyActivitySort('${o.id}')">
                     <span class="fo-icon">${o.icon}</span>
                     ${o.label}
-                    ${current === o.id ? '<svg style="margin-left:auto;flex-shrink:0;" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
-                </button>
-            `).join('');
+                    ${isSel ? check : ''}
+                </button>`;
+                // When in Practices, expose its three sorts as indented sub-options
+                if (o.id === 'practices' && currentMode === 'practices') {
+                    row += PRACTICES_SORTS.map(s => `
+                <button class="filter-option filter-suboption ${current === s.id ? 'selected' : ''}" onclick="applyActivitySort('${s.id}')">
+                    <span class="fo-icon">${s.icon}</span>
+                    ${s.label}
+                    ${current === s.id ? check : ''}
+                </button>`).join('');
+                }
+                return row;
+            }).join('');
+            container.innerHTML = html;
         }
 
         window.applyActivitySort = function(sortId) {
+            // 'practices' is a virtual mode id — resolve to the remembered sort
+            if (sortId === 'practices') sortId = getLastPracticesSort();
+            if (PRACTICES_SORTS.find(o => o.id === sortId)) {
+                if (!window.userData.settings) window.userData.settings = {};
+                if (window.userData.settings.lastPracticesSort !== sortId) {
+                    window.userData.settings.lastPracticesSort = sortId;
+                    debouncedSaveUserData();
+                }
+            }
             _currentSort = sortId;
             renderFilterOptions();
             // Update active dot
@@ -1442,6 +1497,27 @@
                 });
             });
 
+            // Initialise sort from stored preference on first render.
+            // Runs BEFORE the empty-state check because Quests mode must
+            // render even when the user has zero activities.
+            if (!_currentSort) {
+                _currentSort = (window.userData.settings && window.userData.settings.activitySort) || getDefaultActivitySort();
+                // If user had a removed sort saved (xp-high/xp-low), fall back to smart default
+                if (!SORT_OPTIONS.find(o => o.id === _currentSort)) _currentSort = getDefaultActivitySort();
+                const dot = document.getElementById('filterActiveDot');
+                if (dot) dot.style.display = (_currentSort !== getDefaultActivitySort()) ? 'block' : 'none';
+            }
+
+            const sort = getCurrentSort();
+            const viewMode = modeForSort(sort);
+
+            // Quests mode renders quest cards, not the activity list —
+            // dispatch before the activity empty-state and precompute.
+            if (viewMode === 'quests') {
+                renderQuestsMode(container);
+                return;
+            }
+
             if (allActivities.length === 0) {
                 container.innerHTML = `
                     <div class="empty-state" style="padding: 60px 20px;">
@@ -1467,23 +1543,12 @@
                 a._cycleCompletions = (a.frequency === 'custom') ? cycleCompletionsNow(a) : 0;
             });
 
-            // Initialise sort from stored preference on first render
-            if (!_currentSort) {
-                _currentSort = (window.userData.settings && window.userData.settings.activitySort) || getDefaultActivitySort();
-                // If user had a removed sort saved (xp-high/xp-low), fall back to smart default
-                if (!SORT_OPTIONS.find(o => o.id === _currentSort)) _currentSort = getDefaultActivitySort();
-                const dot = document.getElementById('filterActiveDot');
-                if (dot) dot.style.display = (_currentSort !== getDefaultActivitySort()) ? 'block' : 'none';
-            }
-
             // Update activity count in header
             const _slotEl = document.getElementById('activitySlotCount');
             if (_slotEl) {
                 const { total: _actT, limit: _actL } = getActivityCounts();
                 _slotEl.textContent = _actT + '/' + _actL;
             }
-
-            const sort = getCurrentSort();
 
             if (!window.activityGroupExpanded) window.activityGroupExpanded = {};
 
@@ -1495,11 +1560,63 @@
             //    Cleared on page reload (it's just a window-level Set).
             if (!window._sessionCompleted) window._sessionCompleted = new Set();
 
-            if (sort === 'smart') {
+            if (viewMode === 'occasional') {
+                // ── Occasional mode — occasional/one-time activities only ──
+                // (Grid toggle intentionally ignored: list style regardless.)
+                var occActs = allActivities.filter(function(a) {
+                    return a.frequency === 'occasional' || a.frequency === 'one-time';
+                });
+                if (occActs.length === 0) {
+                    // Eligibility-empty: quiet, informational, no CTA.
+                    container.innerHTML = `
+                        <div class="empty-state" style="padding: 48px 20px;">
+                            <p style="color:var(--color-text-secondary);">No occasional activities. Activities with "Occasional" frequency live here.</p>
+                        </div>`;
+                    return;
+                }
+                occActs.sort(function(a, b) { return (a.name || '').localeCompare(b.name || ''); });
+                container.innerHTML = `
+                    <div class="act-group">
+                        <div class="act-group-header" style="cursor:default;pointer-events:none;">
+                            <span class="act-group-label">Occasional Activities</span>
+                            <span class="act-group-count">${occActs.length}</span>
+                        </div>
+                        <div class="act-group-body expanded">
+                            ${renderActivityContent(occActs)}
+                        </div>
+                    </div>`;
+            } else if (sort === 'smart') {
                 // ── Smart "Today's Focus" sort ──────────────────────────────
                 var toDo = [];
                 var doneTd = [];
                 var notNow = [];
+
+                // Activities explicitly scheduled in today's Daily Planner —
+                // the exception that keeps an occasional activity in Today.
+                var _plannerTodayIds = (function() {
+                    var ids = new Set();
+                    var p = window.userData.planner;
+                    if (!p) return ids;
+                    var todayStr = localToday();
+                    var day = p.days && p.days[todayStr];
+                    var skip = new Set((day && day.skipRecurring) || []);
+                    (p.recurring || []).forEach(function(r) { if (r.activityId && !skip.has(r.id)) ids.add(r.activityId); });
+                    ((day && day.items) || []).forEach(function(it) { if (it.activityId) ids.add(it.activityId); });
+                    return ids;
+                })();
+
+                // Quest subtasks whose surface-window covers today: linked
+                // activities float to the top of To Do; plain-task steps
+                // render as a pinned strip above the buckets.
+                var _questWinItems = getActiveQuestWindowItems();
+                var _questWinActIds = new Set();
+                var _questWinTasks = [];
+                _questWinItems.forEach(function(it) {
+                    if (it.subtask.type === 'activity') _questWinActIds.add(it.subtask.activityId);
+                    else _questWinTasks.push(it);
+                });
+
+                var _hiddenOccasional = 0;
 
                 allActivities.forEach(function(a) {
                     var completed = a._completedToday;
@@ -1507,6 +1624,16 @@
                     var isMulti = a.allowMultiplePerDay && a.frequency !== 'occasional';
                     var notScheduled = a.frequency === 'custom' && a.customSubtype === 'days' && !a._isScheduledDay;
                     var doneAnythingToday = a._countToday > 0;
+
+                    // Occasional activities live in the Occasional view, not
+                    // Today — unless done today (kept visible for undo),
+                    // planner-scheduled today, or in an active quest window.
+                    var isOcc = a.frequency === 'occasional' || a.frequency === 'one-time';
+                    if (isOcc && !doneAnythingToday && !_plannerTodayIds.has(a.id) && !_questWinActIds.has(a.id)) {
+                        _hiddenOccasional++;
+                        return;
+                    }
+                    a._questWindowActive = _questWinActIds.has(a.id);
 
                     if (notScheduled) {
                         notNow.push(a);
@@ -1534,8 +1661,12 @@
                     }
                 });
 
-                // Within To Do: sort by pinned first, then by frequency rank, then by XP desc
+                // Within To Do: quest-window items first, then pinned, then
+                // frequency rank, then XP desc
                 toDo.sort(function(a, b) {
+                    var qwA = a._questWindowActive ? 0 : 1;
+                    var qwB = b._questWindowActive ? 0 : 1;
+                    if (qwA !== qwB) return qwA - qwB;
                     var pinA = a.pinned ? 0 : 1;
                     var pinB = b.pinned ? 0 : 1;
                     if (pinA !== pinB) return pinA - pinB;
@@ -1558,7 +1689,27 @@
                     { key: 'smart_notnow', label: '⏸ Not Now',   activities: notNow },
                 ].filter(function(g) { return g.activities.length > 0; });
 
-                container.innerHTML = smartGroups.map(function(g) {
+                // Pinned quest-window strip — plain-task steps due now (cap 3)
+                var questStripHtml = '';
+                if (_questWinTasks.length) {
+                    questStripHtml = '<div class="quest-win-strip">'
+                        + _questWinTasks.slice(0, 3).map(function(it) {
+                            return '<div class="quest-win-row" onclick="openQuestFromToday(\'' + it.quest.id + '\')">'
+                                + '<span class="quest-win-kicker">' + escapeHtml(it.quest.name) + '</span>'
+                                + '<span class="quest-win-title">' + escapeHtml(it.subtask.title || '') + '</span>'
+                                + '</div>';
+                        }).join('')
+                        + '</div>';
+                }
+
+                // Quiet transparency row for occasional items hidden from Today
+                var hiddenHint = _hiddenOccasional > 0
+                    ? '<div class="occ-hidden-hint">' + _hiddenOccasional + ' occasional '
+                        + (_hiddenOccasional === 1 ? 'activity' : 'activities')
+                        + ' in the Occasional view</div>'
+                    : '';
+
+                container.innerHTML = questStripHtml + smartGroups.map(function(g) {
                     var isExpanded = (g.key === 'smart_todo')
                         ? window.activityGroupExpanded[g.key] !== false
                         : window.activityGroupExpanded[g.key] === true;
@@ -1571,7 +1722,7 @@
                         + '<div class="act-group-body ' + (isExpanded ? 'expanded' : '') + '">'
                         + renderActivityContent(g.activities)
                         + '</div></div>';
-                }).join('');
+                }).join('') + hiddenHint;
 
             } else if (sort === 'grouped') {
                 // Group by frequency (original view) — reordered
@@ -1738,8 +1889,9 @@
                 container.innerHTML = html;
 
             } else {
+                var sorted = allActivities.slice();
                 if (sort === 'streak-high') {
-                    sorted.sort((a, b) => (b.streak || 0) - (a.streak || 0));
+                    sorted.sort((a, b) => (b._streak || 0) - (a._streak || 0));
                 }
                 const sortLabel = SORT_OPTIONS.find(o => o.id === sort)?.label || '';
                 container.innerHTML = `
@@ -1802,6 +1954,7 @@
                 }
                 // Note: challenges only complete via the "Complete" button — never auto-complete here
             });
+            raceSyncSoon();
         }
 
         // Reverse one completion unit for a given activity across all active challenges
@@ -1829,6 +1982,7 @@
                     challenge.currentCount = Math.max(0, (challenge.currentCount || 0) - 1);
                 }
             });
+            raceSyncSoon();
         }
 
         function showChallengeCompleteToast(challengeName, bonusXP) {
@@ -3487,6 +3641,574 @@
             }
         };
 
+        // ══════════════════════════════════════════════════════════════════
+        // ── Quests — finite projects with a subtask checklist ─────────────
+        // ══════════════════════════════════════════════════════════════════
+        // A Quest is a thing-to-be-finished (ship a video, plan a trip),
+        // distinct from a Practice (repeats forever, streak-driven) and a
+        // Challenge (aggregate counter over activities). Completion is
+        // user-declared. A recurring quest is ONE object mutated in place:
+        // Declare Done bumps completedCount and resets the checklist for the
+        // next period; there is no per-instance archive.
+
+        function getQuests() {
+            if (!Array.isArray(window.userData.quests)) window.userData.quests = [];
+            return window.userData.quests;
+        }
+        function findQuestById(questId) {
+            return getQuests().find(function(q) { return q.id === questId; }) || null;
+        }
+        function questProgress(q) {
+            var total = (q.subtasks || []).length;
+            var done = (q.subtasks || []).filter(function(s) { return s.done; }).length;
+            return { done: done, total: total, pct: total ? Math.round(done / total * 100) : 0 };
+        }
+
+        // Shared global-XP delta with level-up/level-down handling — the same
+        // math completeChallenge/undoChallenge use, factored so quest subtask
+        // XP, quest bonus XP, and their undos share one code path.
+        function applyBonusXP(delta) {
+            if (!delta) return;
+            window.userData.currentXP += delta;
+            window.userData.totalXP += delta;
+            if (delta > 0) {
+                let level = window.userData.level || 1;
+                let xpForNext = calculateXPForLevel(level);
+                let didLevelUp = false;
+                while (window.userData.currentXP >= xpForNext && level < 100) {
+                    window.userData.currentXP -= xpForNext;
+                    window.userData.level++;
+                    level = window.userData.level;
+                    xpForNext = calculateXPForLevel(level);
+                    didLevelUp = true;
+                }
+                if (window.userData.level >= 100) window.userData.level = 100;
+                if (didLevelUp) showLevelUpAnimation();
+            } else {
+                while (window.userData.currentXP < 0 && window.userData.level > 1) {
+                    window.userData.level -= 1;
+                    window.userData.currentXP += calculateXPForLevel(window.userData.level);
+                }
+                if (window.userData.currentXP < 0) window.userData.currentXP = 0;
+            }
+        }
+
+        // ── Recurrence ────────────────────────────────────────────────────
+        function questNextPeriodStart(periodStart, cadence) {
+            var parts = (periodStart || localToday()).split('-').map(Number);
+            var d = new Date(parts[0], parts[1] - 1, parts[2]);
+            if (cadence === 'monthly') {
+                // Clamp to end of target month so Jan 31 → Feb 28, not Mar 3
+                var day = d.getDate();
+                d.setDate(1);
+                d.setMonth(d.getMonth() + 1);
+                var maxDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+                d.setDate(Math.min(day, maxDay));
+            } else {
+                d.setDate(d.getDate() + 7);
+            }
+            return toLocalDateStr(d);
+        }
+        // Login rollover: if a recurring quest's period elapsed without a
+        // completion, advance periodStart to the current period WITHOUT
+        // wiping in-progress checkmarks — only Declare Done resets work.
+        function processQuestRecurrence() {
+            var today = localToday();
+            var changed = false;
+            getQuests().forEach(function(q) {
+                if (!q.recurrence || q.status !== 'active') return;
+                var guard = 0;
+                var next = questNextPeriodStart(q.recurrence.periodStart, q.recurrence.cadence);
+                while (next <= today && guard++ < 500) {
+                    q.recurrence.periodStart = next;
+                    next = questNextPeriodStart(next, q.recurrence.cadence);
+                    changed = true;
+                }
+            });
+            if (changed) saveUserData().catch(function() {});
+        }
+
+        // ── Quests mode (Home surface) ────────────────────────────────────
+        function renderQuestsMode(container) {
+            var quests = getQuests();
+            // Detail view swaps in place of the list (inline-planner precedent)
+            if (window._openQuestId) {
+                var openQ = findQuestById(window._openQuestId);
+                if (openQ) { container.innerHTML = renderQuestDetail(openQ); return; }
+                window._openQuestId = null;
+            }
+            if (quests.length === 0) {
+                // Onboarding-empty: CTA + copy explaining the first action
+                container.innerHTML = `
+                    <div class="empty-state" style="padding: 60px 20px;">
+                        <div class="empty-state-icon">🗺️</div>
+                        <p style="font-size:16px;font-weight:600;color:var(--color-text-primary);margin-bottom:8px;">Every big thing is a series of small steps.</p>
+                        <p style="margin-bottom:24px;">A Quest breaks one goal — a video, a trip, a launch — into a checklist you can actually finish.</p>
+                        <button class="cta-button" onclick="openQuestModal()">🗺️ &nbsp;Create your first Quest</button>
+                    </div>`;
+                return;
+            }
+            var active = quests.filter(function(q) { return q.status === 'active'; });
+            var completed = quests.filter(function(q) { return q.status === 'completed'; });
+            if (window.activityGroupExpanded['quests_done'] === undefined) window.activityGroupExpanded['quests_done'] = false;
+            var html = '<div class="quest-header-row">'
+                + '<button class="routine-add-btn" onclick="openQuestModal()">+ New Quest</button>'
+                + '</div>';
+            html += active.map(renderQuestCard).join('');
+            if (completed.length) {
+                var isExp = window.activityGroupExpanded['quests_done'] === true;
+                html += '<div class="act-group" data-group="quests_done">'
+                    + '<div class="act-group-header" onclick="toggleActivityGroup(\'quests_done\')">'
+                    + '<span class="collapse-icon ' + (isExp ? 'expanded' : '') + '">▼</span>'
+                    + '<span class="act-group-label">✓ Completed</span>'
+                    + '<span class="act-group-count">' + completed.length + '</span>'
+                    + '</div>'
+                    + '<div class="act-group-body ' + (isExp ? 'expanded' : '') + '">'
+                    + completed.map(renderQuestCard).join('')
+                    + '</div></div>';
+            }
+            container.innerHTML = html;
+        }
+
+        function questDeadlineChip(q) {
+            if (!q.deadline || q.status !== 'active') return '';
+            var msLeft = new Date(q.deadline + 'T23:59:59') - new Date();
+            var daysLeft = Math.ceil(msLeft / 86400000);
+            if (daysLeft < 0) return '<span class="quest-chip-warn">Overdue</span>';
+            if (daysLeft <= 3) return '<span class="quest-chip-warn">' + daysLeft + 'd left</span>';
+            return '<span class="quest-meta-text">Due ' + escapeHtml(q.deadline) + '</span>';
+        }
+
+        function renderQuestCard(q) {
+            var prog = questProgress(q);
+            var recurChip = q.recurrence
+                ? '<span class="quest-recur-chip">↻ ' + (q.recurrence.cadence === 'monthly' ? 'Monthly' : 'Weekly')
+                    + (q.completedCount ? ' · ' + q.completedCount + ' shipped' : '') + '</span>'
+                : (q.completedCount > 1 ? '<span class="quest-recur-chip">' + q.completedCount + ' shipped</span>' : '');
+            var doneCls = q.status === 'completed' ? ' quest-card-done' : '';
+            return '<div class="quest-card' + doneCls + '" onclick="openQuestDetail(\'' + q.id + '\')">'
+                + '<div class="quest-card-top">'
+                + '<span class="quest-card-name">' + escapeHtml(q.name) + '</span>'
+                + questDeadlineChip(q)
+                + '</div>'
+                + '<div class="quest-card-meta">'
+                + '<span class="quest-meta-text">' + prog.done + '/' + prog.total + ' steps</span>'
+                + recurChip
+                + '</div>'
+                + '<div class="quest-bar"><div class="quest-bar-inner" style="width:' + prog.pct + '%;"></div></div>'
+                + '</div>';
+        }
+
+        window.openQuestDetail = function(questId) {
+            window._openQuestId = questId;
+            renderActivitiesList();
+        };
+        window.closeQuestDetail = function() {
+            window._openQuestId = null;
+            // Came here via the Today strip → go back to Today, not Quests
+            if (window._questReturnSort) {
+                var back = window._questReturnSort;
+                window._questReturnSort = null;
+                applyActivitySort(back);
+                return;
+            }
+            renderActivitiesList();
+        };
+        // Entry from the Today quest-window strip: jump into the quest's
+        // detail view and remember where to return on back.
+        window.openQuestFromToday = function(questId) {
+            window._questReturnSort = getCurrentSort();
+            window._openQuestId = questId;
+            _currentSort = 'quests';
+            renderFilterOptions();
+            renderActivitiesList();
+        };
+
+        function renderQuestDetail(q) {
+            var prog = questProgress(q);
+            var rows = (q.subtasks || []).map(function(s) {
+                var name, accent = '';
+                if (s.type === 'activity') {
+                    var e = ttFindActivity(s.activityId);
+                    name = e ? e.activity.name : '(deleted activity)';
+                    if (e) accent = 'border-left:2px solid ' + ttDimHexRaw(e.dim.id) + ';';
+                } else {
+                    name = s.title || '';
+                }
+                var winMeta = '';
+                if (s.window && s.window.start) {
+                    winMeta = '<span class="quest-meta-text">⏱ ' + escapeHtml(s.window.start)
+                        + (s.window.end && s.window.end !== s.window.start ? ' → ' + escapeHtml(s.window.end) : '') + '</span>';
+                }
+                var xpMeta = (s.type === 'task' && s.xp) ? '<span class="quest-xp-text">+' + s.xp + ' XP</span>' : '';
+                return '<div class="quest-subtask-row' + (s.done ? ' done' : '') + '" style="' + accent + '" onclick="toggleQuestSubtask(\'' + q.id + '\',\'' + s.id + '\')">'
+                    + '<span class="quest-check">' + (s.done
+                        ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
+                        : '') + '</span>'
+                    + '<span class="quest-subtask-name">' + escapeHtml(name) + '</span>'
+                    + xpMeta + winMeta
+                    + '</div>';
+            }).join('') || '<p class="quest-meta-text" style="padding:12px 4px;">No subtasks yet — edit this quest to add steps.</p>';
+
+            var recurLine = q.recurrence
+                ? '<span class="quest-recur-chip">↻ ' + (q.recurrence.cadence === 'monthly' ? 'Monthly series' : 'Weekly series')
+                    + ' · ' + (q.completedCount || 0) + ' shipped</span>'
+                : '';
+            var footer;
+            if (q.status === 'completed') {
+                footer = '<button class="btn-secondary pl-btn-secondary" style="width:100%;" onclick="undoQuestCompletion(\'' + q.id + '\')">↩ Undo completion</button>';
+            } else {
+                footer = '<button class="quest-declare-done" onclick="completeQuest(\'' + q.id + '\')">Declare Done'
+                    + (q.bonusXP ? ' &nbsp;·&nbsp; +' + q.bonusXP + ' XP' : '') + '</button>';
+            }
+            return '<div class="quest-detail">'
+                + '<button class="quest-back-row" onclick="closeQuestDetail()">'
+                + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>'
+                + ' Quests</button>'
+                + '<div class="quest-detail-head">'
+                + '<h3 class="quest-detail-name">' + escapeHtml(q.name) + '</h3>'
+                + '<div class="quest-card-meta">' + questDeadlineChip(q)
+                + '<span class="quest-meta-text">' + prog.done + '/' + prog.total + ' steps</span>' + recurLine + '</div>'
+                + '<div class="quest-bar"><div class="quest-bar-inner" style="width:' + prog.pct + '%;"></div></div>'
+                + '</div>'
+                + '<div class="quest-subtask-list">' + rows + '</div>'
+                + '<div class="quest-detail-footer">' + footer + '</div>'
+                + '<div class="quest-detail-actions">'
+                + '<button class="btn-secondary pl-btn-secondary" onclick="openQuestModal(\'' + q.id + '\')">Edit</button>'
+                + '<button class="btn-secondary pl-btn-secondary quest-delete-btn" onclick="deleteQuest(\'' + q.id + '\')">Delete</button>'
+                + '</div>'
+                + '</div>';
+        }
+
+        // ── Subtask toggle & activity auto-check ─────────────────────────
+        window.toggleQuestSubtask = function(questId, subId) {
+            var q = findQuestById(questId);
+            if (!q || q.status !== 'active') return;
+            var s = (q.subtasks || []).find(function(x) { return x.id === subId; });
+            if (!s) return;
+            s.done = !s.done;
+            s.doneAt = s.done ? new Date().toISOString() : null;
+            s.doneVia = s.done ? 'manual' : null;
+            if (s.type === 'task' && s.xp) {
+                applyBonusXP(s.done ? s.xp : -s.xp);
+                showToast(s.done ? '+' + s.xp + ' XP' : '↩ −' + s.xp + ' XP', s.done ? 'green' : 'olive');
+                updateDashboard();
+            }
+            debouncedSaveUserData();
+            renderActivitiesList();
+        };
+
+        // Completing a linked activity checks matching quest subtasks; the
+        // activity-undo path unchecks only ones that were checked that way today.
+        function updateQuestProgressForActivity(activityId) {
+            var touched = false;
+            getQuests().forEach(function(q) {
+                if (q.status !== 'active') return;
+                (q.subtasks || []).forEach(function(s) {
+                    if (s.type === 'activity' && s.activityId === activityId && !s.done) {
+                        s.done = true;
+                        s.doneAt = new Date().toISOString();
+                        s.doneVia = 'activity';
+                        touched = true;
+                    }
+                });
+            });
+            return touched;
+        }
+        function undoQuestProgressForActivity(activityId) {
+            var today = localToday();
+            var touched = false;
+            getQuests().forEach(function(q) {
+                if (q.status !== 'active') return;
+                (q.subtasks || []).forEach(function(s) {
+                    if (s.type === 'activity' && s.activityId === activityId && s.done
+                        && s.doneVia === 'activity' && s.doneAt && toLocalDateStr(new Date(s.doneAt)) === today) {
+                        s.done = false;
+                        s.doneAt = null;
+                        s.doneVia = null;
+                        touched = true;
+                    }
+                });
+            });
+            return touched;
+        }
+
+        // Activity deleted → convert referencing subtasks to plain tasks so
+        // no checkmark or history is lost (mirrors cleanupChallengesForActivity).
+        function cleanupQuestsForActivity(actId) {
+            var name = null;
+            getQuests().forEach(function(q) {
+                (q.subtasks || []).forEach(function(s) {
+                    if (s.type === 'activity' && s.activityId === actId) {
+                        if (name === null) {
+                            var e = ttFindActivity(actId);
+                            name = e ? e.activity.name : 'Deleted activity';
+                        }
+                        s.type = 'task';
+                        s.title = name;
+                        s.activityId = null;
+                        s.xp = null;
+                    }
+                });
+            });
+        }
+
+        // ── Declare Done / undo ───────────────────────────────────────────
+        window.completeQuest = async function(questId) {
+            var q = findQuestById(questId);
+            if (!q || q.status !== 'active') return;
+            var prog = questProgress(q);
+            var msg = 'Declare "' + q.name + '" done?'
+                + (prog.done < prog.total ? '\n(' + (prog.total - prog.done) + ' steps are still unchecked — your call, it\'s your quest.)' : '')
+                + (q.bonusXP ? '\nYou\'ll earn ' + q.bonusXP + ' XP.' : '');
+            if (!confirm(msg)) return;
+            if (q.recurrence) {
+                // Session-scoped undo snapshot (like _sessionCompleted for activities)
+                window._lastQuestCompletion = {
+                    questId: q.id,
+                    periodStart: q.recurrence.periodStart,
+                    subtaskState: (q.subtasks || []).map(function(s) {
+                        return { id: s.id, done: s.done, doneAt: s.doneAt, doneVia: s.doneVia };
+                    })
+                };
+                q.completedCount = (q.completedCount || 0) + 1;
+                (q.subtasks || []).forEach(function(s) { s.done = false; s.doneAt = null; s.doneVia = null; });
+                q.recurrence.periodStart = questNextPeriodStart(q.recurrence.periodStart, q.recurrence.cadence);
+                showToast('🏆 Shipped! That\'s ' + q.completedCount + ' — checklist reset for the next round.', 'green');
+            } else {
+                q.status = 'completed';
+                q.completedAt = new Date().toISOString();
+                q.completedCount = (q.completedCount || 0) + 1;
+                showToast('🏆 Quest complete: ' + q.name, 'green');
+            }
+            applyBonusXP(q.bonusXP || 0);
+            await saveUserData();
+            updateDashboard();
+            renderActivitiesList();
+        };
+
+        window.undoQuestCompletion = async function(questId) {
+            var q = findQuestById(questId);
+            if (!q) return;
+            if (q.status === 'completed' && !q.recurrence) {
+                if (!confirm('Undo completion of "' + q.name + '"? The ' + (q.bonusXP || 0) + ' XP will be returned.')) return;
+                q.status = 'active';
+                q.completedAt = null;
+                q.completedCount = Math.max(0, (q.completedCount || 1) - 1);
+                applyBonusXP(-(q.bonusXP || 0));
+            } else if (q.recurrence && window._lastQuestCompletion && window._lastQuestCompletion.questId === questId) {
+                // Recurring undo is session-scoped via the snapshot
+                var snap = window._lastQuestCompletion;
+                q.completedCount = Math.max(0, (q.completedCount || 1) - 1);
+                q.recurrence.periodStart = snap.periodStart;
+                (q.subtasks || []).forEach(function(s) {
+                    var st = snap.subtaskState.find(function(x) { return x.id === s.id; });
+                    if (st) { s.done = st.done; s.doneAt = st.doneAt; s.doneVia = st.doneVia; }
+                });
+                window._lastQuestCompletion = null;
+                applyBonusXP(-(q.bonusXP || 0));
+            } else {
+                return;
+            }
+            await saveUserData();
+            updateDashboard();
+            renderActivitiesList();
+            showToast('↩ Quest completion undone — XP returned', 'olive');
+        };
+
+        window.deleteQuest = async function(questId) {
+            if (!confirm('Delete this quest? Its checklist and shipped count are lost.')) return;
+            var quests = getQuests();
+            var idx = quests.findIndex(function(q) { return q.id === questId; });
+            if (idx === -1) return;
+            quests.splice(idx, 1);
+            if (window._openQuestId === questId) window._openQuestId = null;
+            await saveUserData();
+            renderActivitiesList();
+        };
+
+        // ── Quest modal (create/edit) ─────────────────────────────────────
+        let _editingQuestId = null;
+        let _questDraftSubtasks = [];
+
+        window.openQuestModal = function(questId) {
+            _editingQuestId = questId || null;
+            var q = questId ? findQuestById(questId) : null;
+            document.getElementById('questModalTitle').textContent = q ? 'Edit Quest' : 'New Quest';
+            document.getElementById('questSubmitBtn').textContent = q ? 'Save Quest' : 'Create Quest';
+            document.getElementById('questName').value = q ? q.name : '';
+            document.getElementById('questDeadline').value = (q && q.deadline) || '';
+            document.getElementById('questBonusXP').value = q ? (q.bonusXP || 100) : 100;
+            document.getElementById('questRecurrence').value = (q && q.recurrence) ? q.recurrence.cadence : '';
+            _questDraftSubtasks = q
+                ? (q.subtasks || []).map(function(s) { return Object.assign({}, s, { window: s.window ? Object.assign({}, s.window) : null }); })
+                : [];
+            questRenderSubtaskRows();
+            document.getElementById('questModal').classList.add('active');
+        };
+        window.closeQuestModal = function() {
+            document.getElementById('questModal').classList.remove('active');
+            _editingQuestId = null;
+            _questDraftSubtasks = [];
+        };
+
+        function questRenderSubtaskRows() {
+            var el = document.getElementById('questSubtaskList');
+            if (!el) return;
+            el.innerHTML = _questDraftSubtasks.map(function(s, i) {
+                var main;
+                if (s.type === 'activity') {
+                    var e = ttFindActivity(s.activityId);
+                    main = '<span class="quest-draft-actname">🔗 ' + escapeHtml(e ? e.activity.name : '(deleted activity)') + '</span>';
+                } else {
+                    main = '<input type="text" class="pl-input" style="flex:1;min-width:0;" placeholder="Step ' + (i + 1) + '" value="' + escapeHtml(s.title || '') + '" onchange="questDraftSetTitle(' + i + ', this.value)">';
+                }
+                var xpField = s.type === 'task'
+                    ? '<input type="number" class="pl-input quest-draft-xp" min="0" max="100" placeholder="XP" value="' + (s.xp || '') + '" onchange="questDraftSetXP(' + i + ', this.value)" title="Optional XP for this step">'
+                    : '';
+                var win = s.window || {};
+                return '<div class="quest-draft-row">'
+                    + '<div class="quest-draft-main">' + main + xpField
+                    + '<button type="button" class="quest-draft-del" onclick="questDraftRemove(' + i + ')" title="Remove" aria-label="Remove step">✕</button>'
+                    + '</div>'
+                    + '<div class="quest-draft-window">'
+                    + '<span class="quest-meta-text">⏱ Surface on Today:</span>'
+                    + '<input type="date" class="pl-input quest-draft-date" value="' + (win.start || '') + '" onchange="questDraftSetWindow(' + i + ', \'start\', this.value)">'
+                    + '<span class="quest-meta-text">→</span>'
+                    + '<input type="date" class="pl-input quest-draft-date" value="' + (win.end || '') + '" onchange="questDraftSetWindow(' + i + ', \'end\', this.value)">'
+                    + '</div>'
+                    + '</div>';
+            }).join('') || '<p class="ay-hint" style="margin:4px 0;">Add the steps that make this quest real — tasks, or practices you already track.</p>';
+        }
+        window.questDraftSetTitle = function(i, v) { if (_questDraftSubtasks[i]) _questDraftSubtasks[i].title = v; };
+        window.questDraftSetXP = function(i, v) {
+            if (!_questDraftSubtasks[i]) return;
+            var n = parseInt(v);
+            _questDraftSubtasks[i].xp = (n && n > 0) ? Math.min(100, n) : null;
+        };
+        window.questDraftSetWindow = function(i, side, v) {
+            var s = _questDraftSubtasks[i];
+            if (!s) return;
+            if (!s.window) s.window = { start: '', end: '' };
+            s.window[side] = v;
+            if (!s.window.start && !s.window.end) s.window = null;
+        };
+        window.questDraftRemove = function(i) {
+            _questDraftSubtasks.splice(i, 1);
+            questRenderSubtaskRows();
+        };
+        window.questAddTaskRow = function() {
+            _questDraftSubtasks.push({
+                id: 'qs_' + Date.now().toString(36) + '_' + _questDraftSubtasks.length,
+                type: 'task', title: '', xp: null, done: false, doneAt: null, doneVia: null, window: null
+            });
+            questRenderSubtaskRows();
+        };
+        window.questAddActivityRow = function() {
+            questOpenActivityPicker(function(activityId) {
+                _questDraftSubtasks.push({
+                    id: 'qs_' + Date.now().toString(36) + '_' + _questDraftSubtasks.length,
+                    type: 'activity', activityId: activityId, done: false, doneAt: null, doneVia: null, window: null
+                });
+                questRenderSubtaskRows();
+            });
+        };
+
+        // Thin activity picker — same overlay as the tech tree's, minus the
+        // mastery-goal prompt detour. Shared by quest linking and the
+        // challenge-race "I already do this" mapping.
+        function questOpenActivityPicker(onPick, title, subtitle) {
+            window._questPickerOnPick = onPick;
+            var rows = ttAllActivities().map(function(e) {
+                return '<button class="tt-picker-row" onclick="questPickerSelect(\'' + e.activity.id + '\')">'
+                    + '<span class="tt-prereq-dot" style="background:' + ttDimHexRaw(e.dim.id) + ';"></span>'
+                    + '<span class="tt-picker-name">' + escapeHtml(e.activity.name) + '</span>'
+                    + '<span class="tt-picker-meta">' + escapeHtml(e.activity.frequency || '') + '</span>'
+                    + '</button>';
+            }).join('') || '<p class="tt-muted">No activities yet — create some first.</p>';
+            ttShowOverlay(
+                '<div class="tt-form">'
+                + '<h3 class="tt-form-title">' + escapeHtml(title || 'Link a practice') + '</h3>'
+                + '<p class="tt-muted">' + escapeHtml(subtitle || 'Completing it will check this quest step automatically.') + '</p>'
+                + '<div class="tt-picker-list">' + rows + '</div>'
+                + '<div class="tt-form-actions"><button class="tt-btn tt-btn-ghost" onclick="ttCloseOverlay()">Cancel</button></div>'
+                + '</div>'
+            );
+        }
+        window.questPickerSelect = function(activityId) {
+            var fn = window._questPickerOnPick;
+            window._questPickerOnPick = null;
+            ttCloseOverlay();
+            if (fn) fn(activityId);
+        };
+
+        window.saveQuest = async function(event) {
+            event.preventDefault();
+            var name = document.getElementById('questName').value.trim();
+            if (!name) return;
+            var deadline = document.getElementById('questDeadline').value || null;
+            var bonusXP = Math.min(500, Math.max(10, parseInt(document.getElementById('questBonusXP').value) || 100));
+            var cadence = document.getElementById('questRecurrence').value || null;
+            // Drop empty task rows; normalize half-filled windows
+            var subtasks = _questDraftSubtasks.filter(function(s) {
+                return s.type === 'activity' || (s.title && s.title.trim());
+            }).map(function(s) {
+                if (s.type === 'task') s.title = s.title.trim();
+                if (s.window) {
+                    if (!s.window.start && s.window.end) s.window.start = s.window.end;
+                    if (s.window.start && !s.window.end) s.window.end = s.window.start;
+                    if (!s.window.start) s.window = null;
+                }
+                return s;
+            });
+            if (_editingQuestId) {
+                var q = findQuestById(_editingQuestId);
+                if (!q) { closeQuestModal(); return; }
+                q.name = name;
+                q.deadline = deadline;
+                q.bonusXP = bonusXP;
+                q.subtasks = subtasks;
+                if (cadence) {
+                    if (!q.recurrence) q.recurrence = { cadence: cadence, periodStart: localToday() };
+                    else q.recurrence.cadence = cadence;
+                } else {
+                    q.recurrence = null;
+                }
+            } else {
+                getQuests().push({
+                    id: 'q_' + Date.now().toString(36),
+                    name: name,
+                    deadline: deadline,
+                    bonusXP: bonusXP,
+                    status: 'active',
+                    subtasks: subtasks,
+                    recurrence: cadence ? { cadence: cadence, periodStart: localToday() } : null,
+                    completedCount: 0,
+                    createdAt: new Date().toISOString(),
+                    completedAt: null
+                });
+            }
+            await saveUserData();
+            closeQuestModal();
+            renderActivitiesList();
+        };
+
+        // Undone subtasks whose surface-window covers today — consumed by the
+        // Today view's pinned "Quest window" strip.
+        function getActiveQuestWindowItems() {
+            var today = localToday();
+            var items = [];
+            getQuests().forEach(function(q) {
+                if (q.status !== 'active') return;
+                (q.subtasks || []).forEach(function(s) {
+                    if (!s.done && s.window && s.window.start && s.window.start <= today && today <= (s.window.end || s.window.start)) {
+                        items.push({ quest: q, subtask: s });
+                    }
+                });
+            });
+            return items;
+        }
+
         // Challenge activity type handled by onChallengeTypeChange()
 
         // Render Challenges
@@ -3797,6 +4519,13 @@
 
             const metaParts = [];
             metaParts.push(`<span class="ch-meta-xp">+${challenge.bonusXP} XP</span>`);
+            // Friend-race badge — blue counter chip with opponent progress
+            if (challenge.race && challenge.race.inviteId) {
+                const opp = challenge.race.lastOpponent;
+                const oppProgress = opp ? ` · ${opp.currentCount || 0}/${opp.targetCount || challenge.targetCount || 0}` : '';
+                metaParts.push(`<span class="ch-meta-sep">·</span>`);
+                metaParts.push(`<span class="race-vs-chip" title="Racing ${escapeHtml(challenge.race.withName || 'a friend')} — first to finish wins">⚔ vs ${escapeHtml(challenge.race.withName || 'friend')}${oppProgress}</span>`);
+            }
             if (isActive) {
                 metaParts.push(`<span class="ch-meta-sep">·</span>`);
                 metaParts.push(`<span>${daysLeft > 0 ? daysLeft + ' days left' : (daysLeft === 0 ? 'Ends today' : 'Ended ' + Math.abs(daysLeft) + 'd ago')}</span>`);
@@ -3841,6 +4570,10 @@
 
                     <div class="ch-action-row">
                         ${primaryBtn}
+                        ${isActive && !(challenge.race && challenge.race.inviteId) ? `
+                        <button class="ch-breakdown-btn race-invite-btn" type="button" onclick="openChallengeFriendPicker(${index})" title="Race a friend — first to finish wins">
+                            <span>⚔ Challenge a friend</span>
+                        </button>` : ''}
                         ${breakdownBtnHtml}
                     </div>
                     ${breakdownBodyHtml}
@@ -4059,7 +4792,7 @@
         window.deleteDimension = async function(index) {
             if (confirm('Delete this dimension and all its paths/activities?')) {
                 const dim = window.userData.dimensions[index];
-                getActivityIdsInDimension(dim).forEach(id => cleanupChallengesForActivity(id));
+                getActivityIdsInDimension(dim).forEach(id => { cleanupQuestsForActivity(id); cleanupChallengesForActivity(id); });
                 window.userData.dimensions.splice(index, 1);
                 await saveUserData();
                 updateDashboard();
@@ -4126,7 +4859,7 @@
         window.deletePath = async function(dimIndex, pathIndex) {
             if (confirm('Delete this path and all its activities?')) {
                 const path = window.userData.dimensions[dimIndex].paths[pathIndex];
-                (path.activities || []).forEach(act => cleanupChallengesForActivity(act.id));
+                (path.activities || []).forEach(act => { cleanupQuestsForActivity(act.id); cleanupChallengesForActivity(act.id); });
                 window.userData.dimensions[dimIndex].paths.splice(pathIndex, 1);
                 await saveUserData();
                 updateDashboard();
@@ -4925,6 +5658,9 @@
                 }
 
                 _logDeletedActivity(activity);
+                // Convert quest subtasks referencing this activity into plain
+                // tasks BEFORE the splice so the real name is still resolvable.
+                if (actId) cleanupQuestsForActivity(actId);
                 window.userData.dimensions[dimIndex].paths[pathIndex].activities.splice(actIndex, 1);
                 // Clean up references in challenges
                 if (actId) cleanupChallengesForActivity(actId);
@@ -5334,6 +6070,9 @@
 
             // Update challenge progress
             updateChallengeProgress(activity.id);
+
+            // Auto-check quest subtasks linked to this activity
+            updateQuestProgressForActivity(activity.id);
             
             // Skip-mode activities give POSITIVE XP when performed (penalty is applied when skipped, not here)
             const xpChange = (activity.isNegative && !activity.isSkipNegative) ? -earnedXP : earnedXP;
@@ -5540,6 +6279,9 @@
             
             // Reverse challenge progress for this undo
             undoChallengeProgress(activity.id);
+
+            // Un-check quest subtasks that were auto-checked by this activity today
+            undoQuestProgressForActivity(activity.id);
 
             // Reverse dimension XP for this undo
             const _dimForUndo = window.userData.dimensions[dimIndex];
@@ -9758,6 +10500,12 @@
             if (sSlider) { sSlider.value = se; previewStreakScaling(se); }
             loadTheme();
             updateRestoreBackupBtn();
+            // Default Home View select — reflect the stored sort id as a mode
+            const hv = document.getElementById('settingsDefaultHomeView');
+            if (hv) {
+                const stored = window.userData?.settings?.activitySort;
+                hv.value = stored ? (modeForSort(stored) === 'today' ? 'smart' : modeForSort(stored)) : 'auto';
+            }
             // Populate "signed in as" label with username + email
             const seEl = document.getElementById('settingsEmail');
             if (seEl && window.currentUser) {
@@ -9767,6 +10515,21 @@
                 seEl.textContent = name ? name + '  ·  ' + email : email;
             }
         }
+
+        // Settings → Default Home View. Stores a sort id (same field the
+        // filter panel's "Set as default view" writes) or clears it for auto.
+        window.setDefaultHomeViewFromSettings = function(modeId) {
+            if (!window.userData.settings) window.userData.settings = {};
+            if (modeId === 'auto') {
+                delete window.userData.settings.activitySort;
+            } else {
+                window.userData.settings.activitySort =
+                    (modeId === 'practices') ? getLastPracticesSort() : modeId;
+            }
+            saveUserData();
+            _currentSort = null; // re-resolve on next Activities render
+            showToast('✓ Default home view saved', 'olive');
+        };
 
         // Live preview as user drags the slider — just updates the display, doesn't save
         window.previewLevelScaling = function(k) {
@@ -9848,19 +10611,13 @@
         // ── Theme Customizer ──────────────────────────────────────────────
 
         const THEMES = [
-            // Order alternates dark/light by visual mood (cool, warm, earthy,
-            // bright) so the picker doesn't feel like two segregated groups.
-            // Dark stays first as the safe default for new accounts.
-            { id:'default',  name:'Dark',      mode:'dark',  bg:'#181818', card:'#242424', accent:'#4472a0', progress:'#537db8' },
-            { id:'paper',    name:'Paper',     mode:'light', bg:'#ede4d0', card:'#faf5e8', accent:'#2f5d8e', progress:'#3a7eb5' },
-            { id:'midnight', name:'Midnight',  mode:'dark',  bg:'#0e0e1a', card:'#181825', accent:'#6259b8', progress:'#7870cc' },
-            { id:'mint',     name:'Mint',      mode:'light', bg:'#dae6dd', card:'#eff6f1', accent:'#1f5742', progress:'#2d7964' },
-            { id:'forest',   name:'Forest',    mode:'dark',  bg:'#111a11', card:'#192019', accent:'#3d7a46', progress:'#4e8f58' },
-            { id:'sunrise',  name:'Sunrise',   mode:'light', bg:'#f5dac5', card:'#fdf0e1', accent:'#b54023', progress:'#cc5e1e' },
-            { id:'crimson',  name:'Crimson',   mode:'dark',  bg:'#190e0e', card:'#231515', accent:'#8c3535', progress:'#a04545' },
-            { id:'lavender', name:'Lavender',  mode:'light', bg:'#e2d6ed', card:'#f4edfa', accent:'#553991', progress:'#7458ad' },
-            { id:'sand',     name:'Sand',      mode:'dark',  bg:'#191711', card:'#231f17', accent:'#8c7a3d', progress:'#a08f52' },
-            { id:'slate',    name:'Slate',     mode:'dark',  bg:'#111520', card:'#191e2c', accent:'#4d6b9e', progress:'#637fb5' },
+            // Two shipped presets. Dark stays first as the safe default for
+            // new accounts. Light is the design-brief "parallel light" mode:
+            // cool paper background, white cards lifted by shadow (not
+            // borders), and a deeper-saturated blue so the interactive
+            // primary keeps AA contrast on pale surfaces.
+            { id:'default', name:'Dark',  mode:'dark',  bg:'#181818', card:'#242424', accent:'#4472a0', progress:'#537db8' },
+            { id:'light',   name:'Light', mode:'light', bg:'#e3e7ee', card:'#fbfcfe', accent:'#2e6fbe', progress:'#3186dd' },
         ];
 
         // All CSS variables exposed in the custom editor
@@ -10171,62 +10928,76 @@
             }
             _applyThemeMode(resolvedMode);
 
-            if (!presets) return;
-
-            // ── Theme lock-down ───────────────────────────────────────────
-            // We're launching with only the Dark preset polished. Other
-            // themes are kept in the codebase (so their color tokens stay
-            // wired up and existing users on them aren't disturbed), but
-            // the picker hides their names and disables the onclick so
-            // new users can't switch into them. A theme stays interactive
-            // ONLY if it's the launch-ready Dark preset OR it's the user's
-            // currently-active theme (migration grace).
-            var LAUNCH_READY_ID = 'default';
-            function _isThemeUnlocked(themeId) {
-                return themeId === LAUNCH_READY_ID || themeId === activeId;
+            // ── Migration: retired presets ────────────────────────────────
+            // Earlier builds shipped extra presets (Paper, Midnight, Mint,
+            // Forest, …) that have since been removed. Accounts still saved
+            // on one of them fall back to the surviving preset of the same
+            // mode, colours included, so nobody is left stranded on a
+            // palette the picker can no longer show.
+            var knownPreset = activeId === 'custom'
+                || THEMES.some(function(t){ return t.id === activeId; });
+            if (!knownPreset) {
+                var fallback = THEMES.find(function(t){ return t.mode === resolvedMode; }) || THEMES[0];
+                activeId = fallback.id;
+                saved = { presetId: fallback.id, mode: fallback.mode,
+                    bg: fallback.bg, card: fallback.card,
+                    secondary: adjustColor(fallback.bg, fallback.mode === 'light' ? -8 : 20),
+                    accent: fallback.accent, progress: fallback.progress };
+                // Seed the pending state so "Apply Theme" persists the
+                // migrated preset even if the user never taps a swatch.
+                window._pendingTheme = JSON.parse(JSON.stringify(saved));
             }
 
-            // Build preset swatches
+            // ── Presets are living values ─────────────────────────────────
+            // A saved preset stores a snapshot of its colours, but presets
+            // get retuned (the Light palette had a full design pass after
+            // launch). Anyone on a named preset always gets the preset's
+            // CURRENT colours; stored snapshots only bind custom themes.
+            var presetMatch = THEMES.find(function(t){ return t.id === activeId; });
+            if (presetMatch) {
+                saved = Object.assign({}, saved, {
+                    mode: presetMatch.mode,
+                    bg: presetMatch.bg,
+                    card: presetMatch.card,
+                    secondary: adjustColor(presetMatch.bg, presetMatch.mode === 'light' ? -8 : 20),
+                    accent: presetMatch.accent,
+                    progress: presetMatch.progress
+                });
+            }
+
+            if (!presets) return;
+
+            // Build preset swatches — both shipped presets are selectable.
             var swatchHtml = '';
             THEMES.forEach(function(t) {
                 // Pick a swatch-dot border that's visible against both light and dark
                 // backgrounds: dark themes get a soft mid-grey, light themes get a
                 // darker grey so the white card swatch doesn't blend into the panel.
                 var dotBorder = (t.mode === 'light') ? '#c4c4c4' : '#444';
-                var unlocked = _isThemeUnlocked(t.id);
-                var lockedCls = unlocked ? '' : ' theme-swatch-locked';
-                var clickAttr = unlocked
-                    ? ' onclick="applyThemePreset(\'' + t.id + '\', this)"'
-                    : ' onclick="event.preventDefault();" aria-disabled="true" title="Coming soon"';
-                // Locked tiles hide the real name and show "Coming soon"
-                // instead — keeps the surprise and avoids hinting at what's
-                // arriving. Active locked themes (migrating users) keep
-                // their real name so they recognise what they're on.
-                var displayName = unlocked ? t.name : 'Coming soon';
-                swatchHtml += '<div class="theme-swatch' + (t.id === activeId ? ' active' : '') + lockedCls + '"' + clickAttr + '>'
+                swatchHtml += '<div class="theme-swatch' + (t.id === activeId ? ' active' : '') + '"'
+                    + ' onclick="applyThemePreset(\'' + t.id + '\', this)">'
                     + '<div class="theme-swatch-colors">'
                     + '<div class="theme-swatch-dot" style="background:' + t.bg + ';border:1px solid ' + dotBorder + ';"></div>'
                     + '<div class="theme-swatch-dot" style="background:' + t.accent + ';"></div>'
                     + '<div class="theme-swatch-dot" style="background:' + t.progress + ';"></div>'
                     + '</div>'
-                    + '<span class="theme-swatch-name">' + displayName + '</span>'
-                    + (unlocked ? '' : '<span class="theme-swatch-lock" aria-hidden="true">'
-                        + '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'
-                        + '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>'
-                        + '<path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>')
+                    + '<span class="theme-swatch-name">' + t.name + '</span>'
                     + '</div>';
             });
+            // Custom stays visible as an option but ships locked — it only
+            // unlocks for accounts that already had a custom theme active
+            // before the lock (migration grace).
             var customActive = activeId === 'custom';
-            var customUnlocked = customActive; // never unlocked for new users
+            var customUnlocked = customActive;
             var customClickAttr = customUnlocked
                 ? ' onclick="activateCustomTheme(this)"'
-                : ' onclick="event.preventDefault();" aria-disabled="true" title="Coming soon"';
+                : ' onclick="event.preventDefault();" aria-disabled="true" title="Custom themes — coming soon"';
             var customLockedCls = customUnlocked ? '' : ' theme-swatch-locked';
             swatchHtml += '<div class="theme-swatch' + (customActive ? ' active' : '') + customLockedCls + '" id="customSwatch"' + customClickAttr + '>'
                 + '<div class="theme-swatch-colors">'
                 + '<div class="theme-swatch-dot" style="background:conic-gradient(#e84545,#f7b731,#2ecc71,#4a7c9e,#9b59b6,#e84545);border:none;"></div>'
                 + '</div>'
-                + '<span class="theme-swatch-name">' + (customUnlocked ? 'Custom' : 'Coming soon') + '</span>'
+                + '<span class="theme-swatch-name">Custom</span>'
                 + (customUnlocked ? '' : '<span class="theme-swatch-lock" aria-hidden="true">'
                     + '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'
                     + '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>'
@@ -10314,6 +11085,9 @@
         function _applyThemeMode(mode) {
             var m = (mode === 'light') ? 'light' : 'dark';
             document.documentElement.setAttribute('data-theme-mode', m);
+            // Keep the browser/PWA chrome (status bar, title bar) in step
+            var meta = document.querySelector('meta[name="theme-color"]');
+            if (meta) meta.setAttribute('content', m === 'light' ? '#e3e7ee' : '#1a1a1a');
         }
 
         window.applyThemePreset = function(id, el) {
@@ -11084,7 +11858,7 @@
             if (word !== 'RESET') { alert('Reset cancelled.'); return; }
             window.userData = {
                 level: 1, currentXP: 0, totalXP: 0,
-                dimensions: [], activities: [], challenges: [], rewards: {},
+                dimensions: [], activities: [], challenges: [], quests: [], rewards: {},
                 settings: window.userData.settings || {},
                 createdAt: new Date().toISOString()
             };
@@ -14501,6 +15275,440 @@
         }
 
         // ════════════════════════════════════════════════════════════════════
+        // ── CHALLENGE RACES — friend-vs-friend competition ──────────────────
+        // A personal challenge can be sent to ONE friend. On accept, its
+        // activities are ported into the friend's system (uncategorized, or
+        // mapped to activities they already do) and both race to finish
+        // first. Shared state lives in the `challengeInvites` collection
+        // (deterministic id `${inviteeUid}_${inviterUid}_${challengeId}`);
+        // the doc carries a full challenge SNAPSHOT so it survives the
+        // inviter deleting their copy, plus a per-uid `race` progress map
+        // synced like gcSyncProgress. The group-challenge system is untouched.
+        // ════════════════════════════════════════════════════════════════════
+
+        const RACE_COL = 'challengeInvites';
+
+        function raceMyName() {
+            return (window.userData.profile?.username) || window.currentUser?.displayName || 'A friend';
+        }
+        // Capped aggregate progress — same math the challenge card shows.
+        function raceChallengeCurrent(ch) {
+            const ids = ch.activityIds && ch.activityIds.length ? ch.activityIds : (ch.activityId ? [ch.activityId] : []);
+            if (ids.length && ch.activityTargets) {
+                return ids.reduce((s, id) => s + Math.min((ch.activityProgress || {})[id] || 0, ch.activityTargets[id] || 1), 0);
+            }
+            return ch.currentCount || 0;
+        }
+
+        // ── Send ──────────────────────────────────────────────────────────
+        window.openChallengeFriendPicker = async function(challengeIndex) {
+            const ch = window.userData.challenges[challengeIndex];
+            const myUID = window.currentUser?.uid;
+            if (!ch || !myUID) return;
+            const friends = window.userData.friends || [];
+            window._racePickerChallengeIndex = challengeIndex;
+            const list = document.getElementById('challengeFriendPickerList');
+            if (!friends.length) {
+                list.innerHTML = '<p style="color:var(--color-text-secondary);font-size:13px;">No friends yet — add friends in the Friends tab first.</p>';
+            } else {
+                list.innerHTML = '<p style="color:var(--color-text-secondary);font-size:12px;">Loading friends…</p>';
+                const rows = await Promise.all(friends.map(async uid => {
+                    try {
+                        const pSnap = await getDoc(doc(db, 'publicProfiles', uid));
+                        return { uid, name: pSnap.exists() ? (pSnap.data().displayName || 'Friend') : 'Friend' };
+                    } catch (e) { return { uid, name: 'Friend' }; }
+                }));
+                list.innerHTML = rows.map(r => `
+                    <div class="gc-friend-invite-row">
+                        <span class="gc-friend-invite-name">${escapeHtml(r.name)}</span>
+                        <button class="gc-friend-invite-btn" onclick="sendChallengeRaceInvite('${r.uid}','${escapeHtml(r.name).replace(/'/g, '&#39;')}')">Challenge</button>
+                    </div>`).join('');
+            }
+            document.getElementById('challengeFriendPickerModal').classList.add('active');
+        };
+        window.closeChallengeFriendPicker = function() {
+            document.getElementById('challengeFriendPickerModal').classList.remove('active');
+        };
+
+        window.sendChallengeRaceInvite = async function(inviteeUid, inviteeName) {
+            const myUID = window.currentUser?.uid;
+            const idx = window._racePickerChallengeIndex;
+            const ch = (idx !== undefined && idx !== null) ? window.userData.challenges[idx] : null;
+            if (!myUID || !ch) return;
+            // Snapshot the challenge + its activities so the invite is
+            // self-contained: display, port-in, and race all read from it.
+            const ids = ch.activityIds && ch.activityIds.length ? ch.activityIds : (ch.activityId ? [ch.activityId] : []);
+            const actSnapshots = ids.map(id => {
+                const a = findActivityById(id);
+                return {
+                    id: id,
+                    name: a ? a.name : 'Activity',
+                    description: (a && a.description) || '',
+                    frequency: (a && a.frequency) || 'daily',
+                    baseXP: (a && a.baseXP) || 10,
+                    target: (ch.activityTargets && ch.activityTargets[id]) || 1
+                };
+            });
+            const inviteId = `${inviteeUid}_${myUID}_${ch.id}`;
+            try {
+                await setDoc(doc(db, RACE_COL, inviteId), {
+                    inviteeUid, inviterUid: myUID,
+                    inviterName: raceMyName(),
+                    challengeId: ch.id,
+                    challenge: {
+                        name: ch.name || '',
+                        description: ch.description || '',
+                        endDate: ch.endDate || null,
+                        bonusXP: ch.bonusXP || 0,
+                        targetCount: ch.targetCount || 0,
+                        activities: actSnapshots
+                    },
+                    status: 'pending',
+                    race: {
+                        [myUID]: {
+                            name: raceMyName(),
+                            currentCount: raceChallengeCurrent(ch),
+                            targetCount: ch.targetCount || 0,
+                            status: 'active',
+                            finishedAt: null
+                        }
+                    },
+                    createdAt: new Date().toISOString()
+                }, { merge: true }); // re-invite after a decline resets to pending
+                ch.race = { inviteId, withUid: inviteeUid, withName: inviteeName, role: 'inviter', lastOpponent: null };
+                await saveUserData();
+                closeChallengeFriendPicker();
+                showToast(`⚔ Challenge sent to ${inviteeName}!`, 'blue');
+                renderChallenges();
+            } catch (e) {
+                console.warn('Race invite failed:', e);
+                showToast('Failed to send challenge.', 'red');
+            }
+        };
+
+        // ── Receive: login popup ──────────────────────────────────────────
+        window.checkPendingChallengeInvites = async function() {
+            const ud = window.userData;
+            const myUID = window.currentUser?.uid;
+            if (!ud || !myUID || !ud.onboardingComplete) return;
+            const ts = ud.tutorialStep ?? -1;
+            if (ts >= 0 && ts < 99 && ts < TUTORIAL_STEPS.length) return;
+            const onboarding = document.getElementById('onboardingOverlay');
+            if (onboarding && onboarding.style.display !== 'none' && onboarding.style.display !== '') return;
+            // Don't stack on top of tab-unlock popups
+            if (window._pendingUnlockQueue && window._pendingUnlockQueue.length > 0) return;
+            if (window._raceInviteShownThisSession) return;
+            try {
+                const q = query(collection(db, RACE_COL),
+                    where('inviteeUid', '==', myUID),
+                    where('status', '==', 'pending'));
+                const snap = await getDocs(q);
+                if (snap.empty) return;
+                // One invite modal per login — first pending wins
+                const docSnap = snap.docs[0];
+                window._raceInviteShownThisSession = true;
+                showChallengeInviteModal(docSnap.id, docSnap.data());
+            } catch (e) { console.warn('Pending race invites check failed (non-critical):', e); }
+        };
+
+        function showChallengeInviteModal(inviteId, invite) {
+            window._activeRaceInvite = { id: inviteId, data: invite };
+            window._raceMappings = {}; // snapshotActivityId → my existing activityId
+            document.getElementById('raceInviterLine').textContent =
+                (invite.inviterName || 'A friend') + ' challenged you!';
+            document.getElementById('raceChallengeName').textContent = invite.challenge?.name || 'Challenge';
+            const descEl = document.getElementById('raceChallengeDesc');
+            descEl.textContent = invite.challenge?.description || '';
+            descEl.style.display = invite.challenge?.description ? '' : 'none';
+            const metaEl = document.getElementById('raceChallengeMeta');
+            const bits = [];
+            if (invite.challenge?.bonusXP) bits.push('+' + invite.challenge.bonusXP + ' XP bonus');
+            if (invite.challenge?.endDate) bits.push('ends ' + invite.challenge.endDate);
+            metaEl.textContent = bits.join(' · ');
+            raceRenderInviteActivityRows();
+            document.getElementById('challengeInviteModal').classList.add('active');
+        }
+        function raceRenderInviteActivityRows() {
+            const invite = window._activeRaceInvite?.data;
+            const listEl = document.getElementById('raceActivityList');
+            if (!invite || !listEl) return;
+            const acts = invite.challenge?.activities || [];
+            listEl.innerHTML = acts.map(a => {
+                const mappedId = window._raceMappings[a.id];
+                const mapped = mappedId ? findActivityById(mappedId) : null;
+                return `
+                <div class="race-act-row">
+                    <div class="race-act-info">
+                        <span class="race-act-name">${escapeHtml(a.name)}${a.target > 1 ? ' <span class="race-act-target">×' + a.target + '</span>' : ''}</span>
+                        <span class="race-act-sub">${mapped
+                            ? 'Counts as: ' + escapeHtml(mapped.name)
+                            : 'Will be added to your activities'}</span>
+                    </div>
+                    <button class="race-map-btn${mapped ? ' mapped' : ''}" onclick="raceMapActivity('${a.id}')">
+                        ${mapped ? 'Change' : 'I already do this'}
+                    </button>
+                </div>`;
+            }).join('');
+        }
+        window.raceMapActivity = function(snapshotActivityId) {
+            questOpenActivityPicker(function(myActivityId) {
+                window._raceMappings[snapshotActivityId] = myActivityId;
+                raceRenderInviteActivityRows();
+            }, 'I already do this', 'Pick your existing activity — its completions will count toward the race.');
+        };
+        window.closeChallengeInviteModal = function() {
+            document.getElementById('challengeInviteModal').classList.remove('active');
+            window._activeRaceInvite = null;
+        };
+
+        window.declineChallengeInvite = async function() {
+            const inv = window._activeRaceInvite;
+            if (!inv) return;
+            try {
+                await updateDoc(doc(db, RACE_COL, inv.id), { status: 'declined' });
+            } catch (e) { console.warn('Decline failed:', e); }
+            closeChallengeInviteModal();
+            showToast('Challenge declined.', 'olive');
+        };
+
+        window.acceptChallengeInvite = async function() {
+            const inv = window._activeRaceInvite;
+            const myUID = window.currentUser?.uid;
+            if (!inv || !myUID) return;
+            const invite = inv.data;
+            const snapActs = invite.challenge?.activities || [];
+
+            // Idempotence: if this invite was already materialized locally,
+            // just re-mark accepted and bail.
+            const existing = (window.userData.challenges || []).find(c => c.race && c.race.inviteId === inv.id);
+            if (existing) {
+                try { await updateDoc(doc(db, RACE_COL, inv.id), { status: 'accepted' }); } catch (e) {}
+                closeChallengeInviteModal();
+                return;
+            }
+
+            // Capacity pre-check for the whole clone batch — abort BEFORE
+            // mutating anything so a failed accept leaves no partial state.
+            const toClone = snapActs.filter(a => !window._raceMappings[a.id]);
+            const { total, limit } = getActivityCounts();
+            if (total + toClone.length > limit) {
+                alert(`This challenge adds ${toClone.length} activities but you only have ${Math.max(0, limit - total)} free slots. Map more of them to activities you already do, or level up for more slots.`);
+                return;
+            }
+
+            // 1. Clone unmapped activities into Uncategorized
+            const { di, pi } = getOrCreateUncategorized();
+            const targetPath = window.userData.dimensions[di].paths[pi];
+            const idMap = {}; // snapshot id → local id
+            snapActs.forEach((a, i) => {
+                if (window._raceMappings[a.id]) {
+                    idMap[a.id] = window._raceMappings[a.id];
+                    return;
+                }
+                const newId = Date.now().toString() + i;
+                targetPath.activities.push({
+                    id: newId,
+                    name: a.name,
+                    baseXP: a.baseXP || 10,
+                    frequency: a.frequency || 'daily',
+                    description: a.description || '',
+                    isNegative: false, isSkipNegative: false,
+                    allowMultiplePerDay: false,
+                    streak: 0, skipStreak: 0, lastCompleted: null, cycleCompletions: 0,
+                    totalXP: 0, completionCount: 0, isFavorite: false,
+                    completionHistory: [], cycleHistory: [], streakShields: 0,
+                    createdAt: new Date().toISOString()
+                });
+                idMap[a.id] = newId;
+            });
+
+            // 2. Materialize the challenge locally with race metadata
+            const activityIds = snapActs.map(a => idMap[a.id]);
+            const activityTargets = {};
+            const activityProgress = {};
+            snapActs.forEach(a => {
+                activityTargets[idMap[a.id]] = a.target || 1;
+                activityProgress[idMap[a.id]] = 0;
+            });
+            if (!window.userData.challenges) window.userData.challenges = [];
+            window.userData.challenges.push({
+                id: Date.now().toString() + '_race',
+                name: invite.challenge?.name || 'Challenge',
+                description: invite.challenge?.description || '',
+                targetCount: invite.challenge?.targetCount || snapActs.reduce((s, a) => s + (a.target || 1), 0),
+                bonusXP: invite.challenge?.bonusXP || 0,
+                startDate: localToday(),
+                endDate: invite.challenge?.endDate || null,
+                activityIds, activityTargets, activityProgress,
+                activityId: null, currentCount: 0,
+                metricEnabled: false, metricQty: null, metricUnit: null, metricCurrent: 0,
+                activityProgressCollapsed: true,
+                enforceActivities: false, enforceDateRange: false,
+                status: 'active',
+                createdAt: new Date().toISOString(),
+                race: { inviteId: inv.id, withUid: invite.inviterUid, withName: invite.inviterName || 'Friend', role: 'invitee', lastOpponent: null }
+            });
+
+            // 3. Seed my side of the race on the invite doc
+            try {
+                await updateDoc(doc(db, RACE_COL, inv.id), {
+                    status: 'accepted',
+                    [`race.${myUID}`]: {
+                        name: raceMyName(),
+                        currentCount: 0,
+                        targetCount: invite.challenge?.targetCount || 0,
+                        status: 'active',
+                        finishedAt: null
+                    }
+                });
+            } catch (e) { console.warn('Race accept doc update failed:', e); }
+
+            await saveUserData();
+            closeChallengeInviteModal();
+            updateDashboard();
+            showToast('⚔ Race on! Beat ' + (invite.inviterName || 'your friend') + ' to it.', 'green');
+        };
+
+        // ── Sync + resolution ─────────────────────────────────────────────
+        window.syncChallengeRaceProgress = async function() {
+            const myUID = window.currentUser?.uid;
+            if (!myUID) return;
+            const raced = (window.userData.challenges || []).filter(c => c.race && c.race.inviteId);
+            if (!raced.length) return;
+            let changed = false;
+            for (const ch of raced) {
+                try {
+                    const ref = doc(db, RACE_COL, ch.race.inviteId);
+                    const snap = await getDoc(ref);
+                    if (!snap.exists()) {
+                        // Doc gone — opponent nuked it; race dissolves quietly
+                        ch.race = null;
+                        changed = true;
+                        showToast('A challenge race was cancelled.', 'olive');
+                        continue;
+                    }
+                    const inv = snap.data();
+                    if (inv.status === 'declined' && ch.race.role === 'inviter' && !ch.race.declineSeen) {
+                        ch.race.declineSeen = true;
+                        changed = true;
+                        showToast((ch.race.withName || 'Your friend') + ' declined the challenge.', 'olive');
+                        continue;
+                    }
+                    if (inv.status !== 'accepted') continue;
+
+                    // Push my progress
+                    const cur = raceChallengeCurrent(ch);
+                    const myStatus = ch.status === 'completed' ? 'completed' : (ch.status === 'failed' ? 'failed' : 'active');
+                    const mine = (inv.race || {})[myUID] || {};
+                    const myFinishedAt = myStatus === 'completed' ? (mine.finishedAt || new Date().toISOString()) : null;
+                    if (mine.currentCount !== cur || mine.status !== myStatus || (mine.finishedAt || null) !== myFinishedAt) {
+                        await updateDoc(ref, {
+                            [`race.${myUID}`]: {
+                                name: raceMyName(),
+                                currentCount: cur,
+                                targetCount: ch.targetCount || 0,
+                                status: myStatus,
+                                finishedAt: myFinishedAt
+                            }
+                        });
+                    }
+
+                    // Cache opponent for synchronous card rendering
+                    const opp = (inv.race || {})[ch.race.withUid] || null;
+                    const oppCache = opp ? {
+                        currentCount: opp.currentCount || 0,
+                        targetCount: opp.targetCount || 0,
+                        status: opp.status || 'active',
+                        finishedAt: opp.finishedAt || null
+                    } : null;
+                    if (JSON.stringify(ch.race.lastOpponent || null) !== JSON.stringify(oppCache)) {
+                        ch.race.lastOpponent = oppCache;
+                        changed = true;
+                    }
+
+                    // Opponent abandoned → race dissolves
+                    if (opp && opp.status === 'abandoned' && !ch.race.resultSeen) {
+                        ch.race.resultSeen = true;
+                        changed = true;
+                        showToast((ch.race.withName || 'Your friend') + ' left the race.', 'olive');
+                        continue;
+                    }
+
+                    // Resolution: first finishedAt wins (tie → lower uid)
+                    if (!ch.race.resultSeen) {
+                        const oppFin = opp && opp.finishedAt;
+                        if (myFinishedAt || oppFin) {
+                            let iWin = false, resolved = false;
+                            if (myFinishedAt && !oppFin) { iWin = true; resolved = true; }
+                            else if (!myFinishedAt && oppFin) { iWin = false; resolved = true; }
+                            else if (myFinishedAt && oppFin) {
+                                resolved = true;
+                                iWin = myFinishedAt < oppFin || (myFinishedAt === oppFin && myUID < ch.race.withUid);
+                            }
+                            if (resolved) {
+                                ch.race.resultSeen = true;
+                                ch.race.won = iWin;
+                                changed = true;
+                                showToast(iWin
+                                    ? '🏆 You beat ' + (ch.race.withName || 'your friend') + ' — race won!'
+                                    : (ch.race.withName || 'Your friend') + ' finished first — race complete.',
+                                    iWin ? 'green' : 'olive');
+                            }
+                        }
+                    }
+                } catch (e) { console.warn('Race sync failed (non-critical):', e); }
+            }
+            if (changed) {
+                saveUserData().catch(() => {});
+                if (window.currentTab === 'challenges') renderChallenges();
+            }
+        };
+
+        // Debounced trigger — called from the challenge-progress funnels
+        // (updateChallengeProgress / undoChallengeProgress) and race hooks.
+        let _raceSyncTimer = null;
+        function raceSyncSoon() {
+            const has = (window.userData?.challenges || []).some(c => c.race && c.race.inviteId);
+            if (!has) return;
+            clearTimeout(_raceSyncTimer);
+            _raceSyncTimer = setTimeout(() => {
+                if (typeof window.syncChallengeRaceProgress === 'function') {
+                    window.syncChallengeRaceProgress().catch(() => {});
+                }
+            }, 1500);
+        }
+
+        // Completing/undoing a challenge must push race state promptly
+        (function() {
+            const _origComplete = window.completeChallenge;
+            window.completeChallenge = async function(index) {
+                await _origComplete(index);
+                raceSyncSoon();
+            };
+            const _origUndo = window.undoChallenge;
+            window.undoChallenge = async function(index) {
+                await _origUndo(index);
+                raceSyncSoon();
+            };
+            // Deleting a raced challenge marks my side abandoned so the
+            // opponent's next sync dissolves their race badge too.
+            const _origDelete = window.deleteChallenge;
+            window.deleteChallenge = async function(index) {
+                const ch = window.userData.challenges[index];
+                const raceInfo = ch && ch.race && ch.race.inviteId
+                    ? { inviteId: ch.race.inviteId } : null;
+                const before = (window.userData.challenges || []).length;
+                await _origDelete(index);
+                const deleted = (window.userData.challenges || []).length < before;
+                if (deleted && raceInfo && window.currentUser) {
+                    updateDoc(doc(db, RACE_COL, raceInfo.inviteId), {
+                        [`race.${window.currentUser.uid}.status`]: 'abandoned'
+                    }).catch(() => {});
+                }
+            };
+        })();
+
+        // ════════════════════════════════════════════════════════════════════
         // ── CHARACTER TECH TREE ──────────────────────────────────────────────
         // AI-generated skill tree grown from the user's goal statement.
         // Generation runs server-side (scripts/generate-tech-tree.js via GitHub
@@ -14770,13 +15978,28 @@
             if (tt.pendingRequest) return;
             var cost = ttRegenCost();
             if (cost > 0) {
-                if ((window.userData.currentXP || 0) < cost) {
+                var cur = window.userData.currentXP || 0;
+                var lvl = window.userData.level || 1;
+                var willDemote = cur < cost;
+                if (willDemote && lvl <= 1) {
+                    // Level 1 with insufficient XP — nothing to demote into.
                     showToast('Not enough XP — regenerate costs ' + cost + ' XP (free in ' +
                         Math.ceil(TT_REGEN_FREE_DAYS - (Date.now() - new Date(tt.lastGeneratedAt).getTime()) / 86400000) + ' days)', 'olive');
                     return;
                 }
-                if (!confirm('Regenerate now for ' + cost + ' XP (50% of your current level-up)?\n\nActive nodes are kept; unresolved suggestions are replaced.')) return;
-                window.userData.currentXP = Math.max(0, (window.userData.currentXP || 0) - cost);
+                var msg = willDemote
+                    ? 'Regenerate costs ' + cost + ' XP but you only have ' + cur + ' — paying will drop you back to Level ' + (lvl - 1) + '.\n\nActive nodes are kept; unresolved suggestions are replaced. Continue?'
+                    : 'Regenerate now for ' + cost + ' XP (50% of your current level-up)?\n\nActive nodes are kept; unresolved suggestions are replaced.';
+                if (!confirm(msg)) return;
+                cur -= cost;
+                if (cur < 0) {
+                    // Demote one level and borrow the shortfall from it
+                    window.userData.level = lvl - 1;
+                    cur += calculateXPForLevel(lvl - 1);
+                    if (cur < 0) cur = 0;
+                    showToast('Level ' + (lvl - 1) + ' — spent into the previous level for this regenerate', 'olive');
+                }
+                window.userData.currentXP = cur;
             } else {
                 if (!confirm('Regenerate your Tech Tree?\n\nActive nodes are kept; unresolved suggestions are replaced with a new frontier.')) return;
             }
@@ -15303,27 +16526,20 @@
             if (el) el.style.display = 'none';
         };
 
-        // ── Radial layout (spec §8) ──────────────────────────────────────
-        // Sectors sized by each Dimension's share of totalXP with a 15° floor;
-        // tiers radiate outward; nexus nodes sit between their dimensions.
+        // ── Horizontal layout ────────────────────────────────────────────
+        // Left-to-right skill tree: columns are tiers (unlock order reads as
+        // time flowing right), horizontal lanes are dimensions. Crowded trees
+        // grow taller/wider — the canvas pans and zooms, so size is free.
         function ttComputeLayout(showArchived) {
             var tt = ensureTechTree();
             var nodes = tt.nodes.filter(function(n) { return showArchived || n.lifecycle !== 'archived'; });
             var dims = window.userData.dimensions || [];
-            var CORE_R = 36;
-            var FIRST_RING = 118;     // radius of tier 1
-            var RING_GAP_MIN = 76;    // minimum gap between consecutive tier rings
-            var MIN_ARC = 68;         // minimum arc distance between node centers on a ring
+            var COL_W = 172;    // horizontal distance between tiers
+            var ROW_H = 92;     // vertical distance between nodes in a column
+            var LANE_PAD = 34;  // breathing room inside each dimension lane
+            var LANE_X = 64;    // where lanes begin (left of tier 1)
+            var TIER1_X = 176;  // x of tier 1 column
 
-            // XP per dimension (from activity lifetime XP)
-            var xpByDim = {};
-            dims.forEach(function(d) {
-                var sum = 0;
-                (d.paths || []).forEach(function(p) { (p.activities || []).forEach(function(a) { sum += Math.max(0, a.totalXP || 0); }); });
-                xpByDim[d.id] = sum;
-            });
-
-            // Sector list = dimensions that own at least one visible node
             var usedDimIds = [];
             nodes.forEach(function(n) {
                 var id = n.dimensionId || 'uncategorized';
@@ -15335,99 +16551,63 @@
                 return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
             });
 
-            var FLOOR = 15 * Math.PI / 180;
-            var n = usedDimIds.length || 1;
-            var totalXP = usedDimIds.reduce(function(s, id) { return s + (xpByDim[id] || 0); }, 0);
-            var flexible = Math.max(0, 2 * Math.PI - n * FLOOR);
-            var sectors = {};
-            var cursor = -Math.PI / 2;
-            usedDimIds.forEach(function(id) {
-                var share = totalXP > 0 ? (xpByDim[id] || 0) / totalXP : 1 / n;
-                var span = FLOOR + flexible * share;
-                sectors[id] = { start: cursor, span: span, center: cursor + span / 2, dimId: id };
-                cursor += span;
-            });
-
             var maxTier = 1;
             nodes.forEach(function(nd) { maxTier = Math.max(maxTier, nd.tier || 1); });
 
-            // Group nodes per sector per tier
-            var groupsBySector = {};
+            // Rows per lane per tier (nexus nodes live in their primary lane)
+            var rows = {};
             usedDimIds.forEach(function(dimId) {
-                groupsBySector[dimId] = {};
-                for (var t = 1; t <= maxTier; t++) groupsBySector[dimId][t] = [];
+                rows[dimId] = {};
+                for (var t = 1; t <= maxTier; t++) rows[dimId][t] = [];
             });
             nodes.forEach(function(nd) {
-                if (nd.isNexus) return;
-                var dimId = usedDimIds.indexOf(nd.dimensionId) !== -1 ? nd.dimensionId : (nd.dimensionId || 'uncategorized');
-                if (!groupsBySector[dimId]) return;
-                groupsBySector[dimId][nd.tier || 1].push(nd);
+                var dimId = rows[nd.dimensionId] ? nd.dimensionId : usedDimIds[0];
+                rows[dimId][nd.tier || 1].push(nd);
             });
 
-            // Concentric tier rings that GROW as needed: each ring's radius
-            // expands until every sector on it gives its nodes at least
-            // MIN_ARC of arc length — crowded trees get bigger, never denser.
-            // The canvas is pan/zoomable, so size is free and clutter isn't.
-            var ringR = {};
-            var prev = CORE_R;
-            for (var tier = 1; tier <= maxTier; tier++) {
-                var r = Math.max(tier === 1 ? FIRST_RING : 0, prev + RING_GAP_MIN);
-                usedDimIds.forEach(function(dimId) {
-                    var count = groupsBySector[dimId][tier].length;
-                    if (!count) return;
-                    var needed = MIN_ARC * (count + 1) / sectors[dimId].span;
-                    if (needed > r) r = needed;
-                });
-                ringR[tier] = r;
-                prev = r;
-            }
+            var tierXs = {};
+            for (var t = 1; t <= maxTier; t++) tierXs[t] = TIER1_X + (t - 1) * COL_W;
 
+            var lanes = [];
             var pos = {};
+            var cursorY = 0;
             usedDimIds.forEach(function(dimId) {
-                var sector = sectors[dimId];
-                for (var t = 1; t <= maxTier; t++) {
-                    var group = groupsBySector[dimId][t];
-                    // Stagger alternate tiers by a half-step so consecutive tiers
-                    // don't stack on the same radial line.
-                    var stagger = (t % 2 === 0 && group.length > 0)
-                        ? sector.span / (2 * (group.length + 1)) : 0;
+                var laneRows = 1;
+                for (var t = 1; t <= maxTier; t++) laneRows = Math.max(laneRows, rows[dimId][t].length);
+                var laneHeight = laneRows * ROW_H + LANE_PAD;
+                for (var t2 = 1; t2 <= maxTier; t2++) {
+                    var group = rows[dimId][t2];
+                    // center a short column vertically within the lane
+                    var offset = (laneRows - group.length) * ROW_H / 2;
                     group.forEach(function(nd, i) {
-                        var angle = sector.start + sector.span * (i + 1) / (group.length + 1) + stagger;
-                        angle = Math.min(sector.start + sector.span - 0.06, angle);
-                        pos[nd.id] = { x: Math.cos(angle) * ringR[t], y: Math.sin(angle) * ringR[t] };
+                        pos[nd.id] = {
+                            x: tierXs[t2],
+                            y: cursorY + LANE_PAD / 2 + offset + (i + 0.5) * ROW_H
+                        };
                     });
                 }
-            });
-            // Nexus nodes: circular mean of their dimensions' sector centers,
-            // nudged outward off the ring so their cross-sector role reads.
-            nodes.filter(function(nd) { return nd.isNexus; }).forEach(function(nd, i) {
-                var ids = (nd.nexusDimensionIds && nd.nexusDimensionIds.length) ? nd.nexusDimensionIds : [nd.dimensionId];
-                var sx = 0, sy = 0, hits = 0;
-                ids.forEach(function(id) {
-                    var s = sectors[id];
-                    if (s) { sx += Math.cos(s.center); sy += Math.sin(s.center); hits++; }
-                });
-                var angle = hits ? Math.atan2(sy, sx) : (i * 2.399);
-                var r = (ringR[nd.tier || 1] || FIRST_RING) + 16;
-                pos[nd.id] = { x: Math.cos(angle) * r, y: Math.sin(angle) * r };
+                lanes.push({ dimId: dimId, top: cursorY, height: laneHeight });
+                cursorY += laneHeight;
             });
 
+            var totalH = Math.max(cursorY, 200);
             return {
-                nodes: nodes, sectors: sectors, positions: pos, ringR: ringR, maxTier: maxTier,
-                coreR: CORE_R, extent: (ringR[maxTier] || FIRST_RING) + 96
+                nodes: nodes, lanes: lanes, positions: pos, tierXs: tierXs, maxTier: maxTier,
+                laneX: LANE_X, coreX: 36, coreY: totalH / 2, coreR: 34,
+                width: TIER1_X + (maxTier - 1) * COL_W + 130,
+                height: totalH
             };
         }
 
         function ttBuildTreeSVG(showArchived, interactive) {
             var layout = ttComputeLayout(showArchived);
             var tt = ensureTechTree();
-            var E = layout.extent;
             var NR = 20; // node radius
             var CIRC = 2 * Math.PI * NR;
             var svg = '';
 
-            // Shared defs: core gradient + soft glow. Duplicate ids across the
-            // preview and fullscreen SVGs are fine — they resolve identically.
+            // Shared defs: core gradient. Duplicate ids across the preview and
+            // fullscreen SVGs are fine — they resolve identically.
             svg += '<defs>'
                 + '<radialGradient id="ttCoreGrad">'
                 + '<stop offset="0%" stop-color="rgba(90,159,212,0.45)"/>'
@@ -15436,41 +16616,43 @@
                 + '</radialGradient>'
                 + '</defs>';
 
-            // Concentric tier rings — the growth structure of the tree.
-            for (var t = 1; t <= layout.maxTier; t++) {
-                svg += '<circle r="' + layout.ringR[t].toFixed(1) + '" fill="none" stroke="rgba(150,150,170,0.07)" stroke-width="1"/>';
-            }
-
-            // Sector wedges: faint tint + a colored arc band at the outer edge
-            // carrying the dimension identity ("dimension colors tint, they
-            // don't fill" — design brief).
-            var bandR = (layout.ringR[layout.maxTier] || 118) + 48;
-            Object.keys(layout.sectors).forEach(function(dimId) {
-                var s = layout.sectors[dimId];
-                var hex = ttDimHexRaw(dimId);
-                var pad = 0.02; // radians of breathing room between bands
-                var a0 = s.start + pad, a1 = s.start + s.span - pad;
-                var large = (a1 - a0) > Math.PI ? 1 : 0;
-                var x1 = Math.cos(a0) * bandR, y1 = Math.sin(a0) * bandR;
-                var x2 = Math.cos(a1) * bandR, y2 = Math.sin(a1) * bandR;
-                // wedge tint
-                svg += '<path d="M0,0 L' + (Math.cos(s.start) * bandR).toFixed(1) + ',' + (Math.sin(s.start) * bandR).toFixed(1)
-                    + ' A' + bandR + ',' + bandR + ' 0 ' + (s.span > Math.PI ? 1 : 0) + ',1 '
-                    + (Math.cos(s.start + s.span) * bandR).toFixed(1) + ',' + (Math.sin(s.start + s.span) * bandR).toFixed(1)
-                    + ' Z" fill="' + hex + '" opacity="0.05"/>';
-                // colored identity band
-                svg += '<path d="M' + x1.toFixed(1) + ',' + y1.toFixed(1)
-                    + ' A' + bandR + ',' + bandR + ' 0 ' + large + ',1 ' + x2.toFixed(1) + ',' + y2.toFixed(1)
-                    + '" fill="none" stroke="' + hex + '" stroke-width="2.5" stroke-linecap="round" opacity="0.55"/>';
-                // label just outside the band, upright
-                var lx = Math.cos(s.center) * (bandR + 14), ly = Math.sin(s.center) * (bandR + 14);
-                svg += '<text x="' + lx.toFixed(1) + '" y="' + (ly + 4).toFixed(1) + '" class="tt-svg-sector-label" fill="' + hex + '" text-anchor="middle">'
-                    + escapeHtml(ttDimName(dimId)) + '</text>';
+            // Dimension lanes — tinted horizontal bands with a glowing left
+            // accent and the dimension name ("tint, don't fill").
+            layout.lanes.forEach(function(lane) {
+                var hex = ttDimHexRaw(lane.dimId);
+                var y0 = lane.top + 3, h = lane.height - 6;
+                svg += '<rect x="' + layout.laneX + '" y="' + y0 + '" width="' + (layout.width - layout.laneX) + '" height="' + h
+                    + '" rx="12" fill="' + hex + '" opacity="0.045"/>';
+                svg += '<rect x="' + layout.laneX + '" y="' + y0 + '" width="3" height="' + h + '" rx="1.5" fill="' + hex + '" opacity="0.7"/>';
+                svg += '<text x="' + (layout.laneX + 12) + '" y="' + (y0 + 16) + '" class="tt-svg-sector-label" fill="' + hex + '">'
+                    + escapeHtml(ttDimName(lane.dimId)) + '</text>';
             });
 
-            // Edges — organic quadratic curves pulled gently toward the core.
-            // Solid + dimension-colored once the source is mastered; a quiet
-            // dashed hairline while the dependency is still open.
+            // Tier column guides + labels
+            for (var t = 1; t <= layout.maxTier; t++) {
+                var tx = layout.tierXs[t];
+                svg += '<line x1="' + tx + '" y1="-6" x2="' + tx + '" y2="' + layout.height
+                    + '" stroke="rgba(150,150,170,0.06)" stroke-width="1"/>';
+                svg += '<text x="' + tx + '" y="-16" text-anchor="middle" class="tt-svg-tier-label">TIER ' + t + '</text>';
+            }
+
+            // Edges — horizontal S-curves with a chevron pointing at the node
+            // they unlock. Solid + dimension-colored once the source is
+            // mastered; a quiet dashed hairline while the dependency is open.
+            function cAt(a, c1, c2, b, t) {
+                var mt = 1 - t;
+                return {
+                    x: mt * mt * mt * a.x + 3 * mt * mt * t * c1.x + 3 * mt * t * t * c2.x + t * t * t * b.x,
+                    y: mt * mt * mt * a.y + 3 * mt * mt * t * c1.y + 3 * mt * t * t * c2.y + t * t * t * b.y
+                };
+            }
+            function cTan(a, c1, c2, b, t) {
+                var mt = 1 - t;
+                return {
+                    x: 3 * mt * mt * (c1.x - a.x) + 6 * mt * t * (c2.x - c1.x) + 3 * t * t * (b.x - c2.x),
+                    y: 3 * mt * mt * (c1.y - a.y) + 6 * mt * t * (c2.y - c1.y) + 3 * t * t * (b.y - c2.y)
+                };
+            }
             var drawnEdges = {};
             function edge(fromId, toId) {
                 var key = fromId + '>' + toId;
@@ -15481,13 +16663,24 @@
                 var from = tt.nodes.find(function(n) { return n.id === fromId; });
                 var met = from ? ttNodeIsMastered(from) : false;
                 var hex = ttDimHexRaw(from && from.dimensionId);
-                var mx = (a.x + b.x) / 2 * 0.78, my = (a.y + b.y) / 2 * 0.78;
-                var d = 'M' + a.x.toFixed(1) + ',' + a.y.toFixed(1)
-                    + ' Q' + mx.toFixed(1) + ',' + my.toFixed(1)
-                    + ' ' + b.x.toFixed(1) + ',' + b.y.toFixed(1);
-                svg += '<path d="' + d + '" fill="none" stroke="' + (met ? hex : 'rgba(150,150,160,0.22)') + '"'
+                var stroke = met ? hex : 'rgba(150,150,160,0.28)';
+                var bend = Math.max(36, Math.abs(b.x - a.x) * 0.45);
+                var c1 = { x: a.x + bend, y: a.y };
+                var c2 = { x: b.x - bend, y: b.y };
+                svg += '<path d="M' + a.x.toFixed(1) + ',' + a.y.toFixed(1)
+                    + ' C' + c1.x.toFixed(1) + ',' + c1.y.toFixed(1)
+                    + ' ' + c2.x.toFixed(1) + ',' + c2.y.toFixed(1)
+                    + ' ' + b.x.toFixed(1) + ',' + b.y.toFixed(1)
+                    + '" fill="none" stroke="' + stroke + '"'
                     + ' stroke-width="' + (met ? 2 : 1.5) + '"'
                     + (met ? ' opacity="0.8"' : ' stroke-dasharray="3,6" stroke-linecap="round"') + '/>';
+                var pt = cAt(a, c1, c2, b, 0.8);
+                var tg = cTan(a, c1, c2, b, 0.8);
+                var deg = Math.atan2(tg.y, tg.x) * 180 / Math.PI;
+                svg += '<g transform="translate(' + pt.x.toFixed(1) + ',' + pt.y.toFixed(1) + ') rotate(' + deg.toFixed(1) + ')">'
+                    + '<path d="M-4.5,-3.5 L2.5,0 L-4.5,3.5" fill="none" stroke="' + stroke + '"'
+                    + ' stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"'
+                    + (met ? ' opacity="0.9"' : ' opacity="0.7"') + '/></g>';
             }
             var nodeByActivity = {};
             layout.nodes.forEach(function(n) { if (n.activityId) nodeByActivity[n.activityId] = n.id; });
@@ -15499,11 +16692,11 @@
             });
             (tt.connections || []).forEach(function(c) { edge(c.fromNodeId, c.toNodeId); });
 
-            // Core — soft radial glow anchoring the whole tree
-            svg += '<circle cx="0" cy="0" r="' + (layout.coreR + 26) + '" fill="url(#ttCoreGrad)"/>'
-                + '<circle cx="0" cy="0" r="' + layout.coreR + '" class="tt-svg-core"/>'
-                + '<text x="0" y="-3" class="tt-svg-core-label" text-anchor="middle">Lv ' + (window.userData.level || 1) + '</text>'
-                + '<text x="0" y="12" class="tt-svg-core-sub" text-anchor="middle">YOU</text>';
+            // Core — anchors the tree at the left
+            svg += '<circle cx="' + layout.coreX + '" cy="' + layout.coreY.toFixed(1) + '" r="' + (layout.coreR + 24) + '" fill="url(#ttCoreGrad)"/>'
+                + '<circle cx="' + layout.coreX + '" cy="' + layout.coreY.toFixed(1) + '" r="' + layout.coreR + '" class="tt-svg-core"/>'
+                + '<text x="' + layout.coreX + '" y="' + (layout.coreY - 3).toFixed(1) + '" class="tt-svg-core-label" text-anchor="middle">Lv ' + (window.userData.level || 1) + '</text>'
+                + '<text x="' + layout.coreX + '" y="' + (layout.coreY + 12).toFixed(1) + '" class="tt-svg-core-sub" text-anchor="middle">YOU</text>';
 
             // Small stroked glyphs drawn in SVG (no emoji — design brief)
             function glyphLock(color) {
@@ -15526,9 +16719,7 @@
 
             // Nodes — every state carries its dimension color; mastery is a
             // proportional ring fill from grey (0%) to full color (100%),
-            // and a fully mastered node collapses into a small gold star:
-            // earned, permanent, and visually quiet so the frontier stays
-            // the busy part of the tree.
+            // and a fully mastered node collapses into a small gold star.
             layout.nodes.forEach(function(n) {
                 var p = layout.positions[n.id];
                 if (!p) return;
@@ -15542,7 +16733,6 @@
                 svg += '<g class="' + cls + '" transform="translate(' + p.x.toFixed(1) + ',' + p.y.toFixed(1) + ')"' + click + ' style="cursor:pointer;">';
 
                 if (isMastered) {
-                    // Layered gold glow + dimension-colored heart + gold star
                     svg += '<circle r="16" fill="rgba(245,197,99,0.07)"/>'
                         + '<circle r="10" fill="rgba(245,197,99,0.13)"/>'
                         + '<circle r="7" fill="rgba(' + rgb + ',0.9)"/>'
@@ -15556,7 +16746,6 @@
                     return;
                 }
 
-                // Soft dimension halo behind live states
                 if (n.lifecycle === 'active' || n.lifecycle === 'available') {
                     svg += '<circle r="' + (NR + 8) + '" fill="rgba(' + rgb + ',0.07)"/>';
                 }
@@ -15568,7 +16757,6 @@
                 svg += '<circle r="' + NR + '" fill="' + baseFill + '"/>';
 
                 if (n.lifecycle === 'active') {
-                    // grey track + colored proportional arc
                     svg += '<circle r="' + NR + '" fill="none" stroke="rgba(150,150,160,0.25)" stroke-width="3"/>';
                     if (prog.pct > 0) {
                         svg += '<circle r="' + NR + '" fill="none" stroke="' + hex + '" stroke-width="3" stroke-linecap="round"'
@@ -15598,7 +16786,13 @@
                 svg += '</g>';
             });
 
-            return '<svg class="tt-svg" viewBox="' + (-E) + ' ' + (-E) + ' ' + (2 * E) + ' ' + (2 * E) + '" xmlns="http://www.w3.org/2000/svg">' + svg + '</svg>';
+            var minX = -14, minY = -40;
+            var vbW = layout.width - minX + 20;
+            var vbH = layout.height - minY + 24;
+            // Natural (1:1) width/height so the preview renders zoomed-in and
+            // scrolls both axes instead of squeezing the whole tree into the
+            // card. The fullscreen canvas overrides these via CSS and pans.
+            return '<svg class="tt-svg" width="' + vbW + '" height="' + vbH + '" viewBox="' + minX + ' ' + minY + ' ' + vbW + ' ' + vbH + '" xmlns="http://www.w3.org/2000/svg">' + svg + '</svg>';
         }
 
         // ── Fullscreen pan/zoom canvas ───────────────────────────────────
@@ -15628,23 +16822,32 @@
         function ttInitPanZoom(container) {
             var svg = container && container.querySelector('svg');
             if (!svg) return;
-            var vbParts = svg.getAttribute('viewBox').split(' ').map(Number);
-            var vb = { x: vbParts[0], y: vbParts[1], w: vbParts[2], h: vbParts[3] };
-            var baseW = vb.w;
+            var full = svg.getAttribute('viewBox').split(' ').map(Number);
+            var rect0 = container.getBoundingClientRect();
+            var aspect = rect0.height / Math.max(1, rect0.width); // match the screen, not the tree
+            // Open zoomed-in at ~1:1 (one SVG unit ≈ one CSS pixel), anchored
+            // at the left edge and vertically centered on the core — pan for
+            // lanes/tiers, zoom out for the overview.
+            var vb = { w: Math.min(full[2], rect0.width), h: 0, x: full[0], y: 0 };
+            vb.h = vb.w * aspect;
+            vb.y = (full[1] + full[3] / 2) - vb.h / 2;
+            var minW = Math.max(160, rect0.width * 0.35);
+            var maxW = full[2] * 1.25;
             var pointers = {};
             var lastPinchDist = null;
             var moved = false;
 
             function apply() { svg.setAttribute('viewBox', vb.x + ' ' + vb.y + ' ' + vb.w + ' ' + vb.h); }
+            apply();
             function scaleAt(factor, cx, cy) {
-                var newW = Math.min(baseW * 3, Math.max(baseW * 0.15, vb.w * factor));
+                var newW = Math.min(maxW, Math.max(minW, vb.w * factor));
                 var ratio = newW / vb.w;
                 var rect = container.getBoundingClientRect();
                 var px = vb.x + (cx - rect.left) / rect.width * vb.w;
                 var py = vb.y + (cy - rect.top) / rect.height * vb.h;
                 vb.x = px - (px - vb.x) * ratio;
                 vb.y = py - (py - vb.y) * ratio;
-                vb.w = newW; vb.h = newW;
+                vb.w = newW; vb.h = newW * aspect;
                 apply();
             }
 
@@ -15765,6 +16968,14 @@
                 + '<span class="tt-goal-text">' + escapeHtml(tt.goalText || 'No goal set') + '</span>'
                 + '<button class="tt-goal-edit" onclick="ttStartGoalEdit()">Edit</button>'
                 + '</div>';
+            // The snapshot of the future this tree leads to — written by the
+            // generation pass, shown quietly above the canvas.
+            if (tt.vision) {
+                html += '<div class="tt-vision">'
+                    + '<div class="tt-vision-kicker">Where this leads</div>'
+                    + '<div class="tt-vision-text">' + escapeHtml(tt.vision) + '</div>'
+                    + '</div>';
+            }
             if (revOpen) {
                 html += '<p class="tt-rev-note"><span class="tt-num">' + revLeft + '</span> revision' + (revLeft === 1 ? '' : 's') + ' left — tap a suggested node to request a targeted fix (24h window).</p>';
             }
@@ -15773,6 +16984,32 @@
                 + ttBuildTreeSVG(window._ttShowArchived, false)
                 + '<div class="tt-canvas-expand">' + ttIcon('expand', 11) + '<span>Tap to explore</span></div>'
                 + '</div>';
+
+            // AI-suggested milestone challenges — one-click add into the
+            // Challenges tab. Only shown once that tab is unlocked.
+            var suggCh = (tt.suggestedChallenges || []).filter(function(c) { return c.status === 'suggested'; });
+            if (suggCh.length && (typeof isTabUnlocked !== 'function' || isTabUnlocked('challenges'))) {
+                html += '<div class="tt-group"><div class="tt-group-label">Suggested challenges</div>'
+                    + suggCh.map(function(c) {
+                        var ids = Object.keys(c.activityTargets || {});
+                        var names = ids.map(function(id) {
+                            var e = ttFindActivity(id);
+                            return e ? e.activity.name : null;
+                        }).filter(Boolean);
+                        var total = ids.reduce(function(s, id) { return s + (c.activityTargets[id] || 0); }, 0);
+                        return '<div class="tt-challenge-card">'
+                            + '<div class="tt-challenge-main">'
+                            + '<div class="tt-challenge-title">' + escapeHtml(c.title) + '</div>'
+                            + (c.description ? '<div class="tt-challenge-desc">' + escapeHtml(c.description) + '</div>' : '')
+                            + '<div class="tt-challenge-meta"><span class="tt-num">' + total + '</span> completions · <span class="tt-num">'
+                            + c.durationDays + '</span> days · ' + escapeHtml(names.join(', ')) + '</div>'
+                            + '</div>'
+                            + '<div class="tt-challenge-actions">'
+                            + '<button class="tt-ch-add" onclick="ttAcceptChallenge(\'' + c.id + '\')">' + ttIcon('plus', 12) + '<span>Add</span></button>'
+                            + '<button class="tt-ch-dismiss" onclick="ttDismissChallenge(\'' + c.id + '\')" aria-label="Dismiss">' + ttIcon('x', 11) + '</button>'
+                            + '</div></div>';
+                    }).join('') + '</div>';
+            }
 
             // Node list — grouped, tappable rows mirroring the canvas.
             // Left-edge dimension bar per the brief's dimension color treatment.
@@ -15832,6 +17069,60 @@
                 + '<button class="tt-btn tt-btn-primary" onclick="window._ttGoalEditConfirm && window._ttGoalEditConfirm()">Save</button>'
                 + '</div></div>'
             );
+        };
+
+        // ── AI-suggested challenges (milestones over existing activities) ──
+        // One click builds a real challenge in the same shape saveChallenge
+        // produces, so the Challenges tab treats it like any hand-made one.
+        window.ttAcceptChallenge = function(chId) {
+            var tt = ensureTechTree();
+            var sug = (tt.suggestedChallenges || []).find(function(c) { return c.id === chId; });
+            if (!sug || sug.status !== 'suggested') return;
+            var targets = {};
+            Object.keys(sug.activityTargets || {}).forEach(function(id) {
+                if (ttFindActivity(id)) targets[id] = sug.activityTargets[id];
+            });
+            var ids = Object.keys(targets);
+            if (!ids.length) { showToast('The activities in this challenge no longer exist', 'olive'); return; }
+            var totalBase = ids.reduce(function(s, id) {
+                var e = ttFindActivity(id);
+                return s + (e.activity.baseXP || 1) * targets[id];
+            }, 0);
+            var progress = {};
+            ids.forEach(function(id) { progress[id] = 0; });
+            var end = new Date(Date.now() + (sug.durationDays || 30) * 86400000);
+            if (!window.userData.challenges) window.userData.challenges = [];
+            window.userData.challenges.push({
+                id: Date.now().toString(),
+                name: sug.title,
+                description: sug.description || '',
+                targetCount: ids.reduce(function(s, id) { return s + targets[id]; }, 0),
+                bonusXP: Math.max(1, Math.round(totalBase * 0.2)),
+                startDate: toLocalDateStr(new Date()),
+                endDate: toLocalDateStr(end),
+                activityIds: ids, activityTargets: targets, activityProgress: progress,
+                activityId: null, currentCount: 0,
+                metricEnabled: false, metricQty: null, metricUnit: null, metricCurrent: 0,
+                activityProgressCollapsed: true,
+                enforceActivities: false, enforceDateRange: false,
+                status: 'active',
+                createdAt: new Date().toISOString(),
+                source: 'tech_tree'
+            });
+            sug.status = 'accepted';
+            saveUserData().catch(function() {});
+            showToast('🏆 Challenge added: ' + sug.title, 'green');
+            updateDashboard();
+            renderTechTree();
+        };
+
+        window.ttDismissChallenge = function(chId) {
+            var tt = ensureTechTree();
+            var sug = (tt.suggestedChallenges || []).find(function(c) { return c.id === chId; });
+            if (!sug) return;
+            sug.status = 'dismissed';
+            saveUserData().catch(function() {});
+            renderTechTree();
         };
 
         // ── Hooks into existing flows ────────────────────────────────────
