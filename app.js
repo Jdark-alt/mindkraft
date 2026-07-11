@@ -1316,13 +1316,36 @@
             }, 30000);
         }
 
-        // ── Activity Sort & Filter ────────────────────────────────────────
-        const SORT_OPTIONS = [
+        // ── Home view modes & Activity Sort ───────────────────────────────
+        // The Home surface has four peer modes. Mode is a pure function of
+        // the stored sort id (settings.activitySort keeps storing sort ids),
+        // so legacy pinned defaults map 1:1 with zero migration:
+        //   'smart' → Today; by-routine/grouped/streak-high → Practices;
+        //   'quests'/'occasional' → their own modes.
+        const HOME_MODES = [
+            { id: 'smart',      icon: '⚡', label: 'Today' },
+            { id: 'practices',  icon: '📋', label: 'Practices' },   // virtual — resolves to last practices sort
+            { id: 'quests',     icon: '🗺️', label: 'Quests' },
+            { id: 'occasional', icon: '🎲', label: 'Occasional' },
+        ];
+        const PRACTICES_SORTS = [
             { id: 'by-routine',  icon: '🎯', label: 'By Routine' },
-            { id: 'smart',       icon: '⚡', label: "Today's Focus" },
             { id: 'grouped',     icon: '📋', label: 'Grouped by frequency' },
             { id: 'streak-high', icon: '🔥', label: 'Longest streak first' },
         ];
+        // Alias kept for the label lookups sprinkled through this file.
+        const SORT_OPTIONS = HOME_MODES.filter(m => m.id !== 'practices').concat(PRACTICES_SORTS);
+
+        function modeForSort(sortId) {
+            if (sortId === 'smart') return 'today';
+            if (sortId === 'quests' || sortId === 'occasional') return sortId;
+            return 'practices'; // by-routine | grouped | streak-high
+        }
+        function getLastPracticesSort() {
+            var s = window.userData && window.userData.settings;
+            var id = s && s.lastPracticesSort;
+            return PRACTICES_SORTS.find(o => o.id === id) ? id : 'grouped';
+        }
 
         // Smart default — picks based on activity count.
         // <10 activities: "Today's Focus" highlights what to do right now
@@ -1377,18 +1400,42 @@
 
         function renderFilterOptions() {
             const current = getCurrentSort();
+            const currentMode = modeForSort(current);
             const container = document.getElementById('filterOptions');
             if (!container) return;
-            container.innerHTML = SORT_OPTIONS.map(o => `
-                <button class="filter-option ${current === o.id ? 'selected' : ''}" onclick="applyActivitySort('${o.id}')">
+            const check = '<svg style="margin-left:auto;flex-shrink:0;" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+            let html = HOME_MODES.map(o => {
+                const isSel = (o.id === 'practices') ? currentMode === 'practices' : current === o.id;
+                let row = `
+                <button class="filter-option ${isSel ? 'selected' : ''}" onclick="applyActivitySort('${o.id}')">
                     <span class="fo-icon">${o.icon}</span>
                     ${o.label}
-                    ${current === o.id ? '<svg style="margin-left:auto;flex-shrink:0;" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
-                </button>
-            `).join('');
+                    ${isSel ? check : ''}
+                </button>`;
+                // When in Practices, expose its three sorts as indented sub-options
+                if (o.id === 'practices' && currentMode === 'practices') {
+                    row += PRACTICES_SORTS.map(s => `
+                <button class="filter-option filter-suboption ${current === s.id ? 'selected' : ''}" onclick="applyActivitySort('${s.id}')">
+                    <span class="fo-icon">${s.icon}</span>
+                    ${s.label}
+                    ${current === s.id ? check : ''}
+                </button>`).join('');
+                }
+                return row;
+            }).join('');
+            container.innerHTML = html;
         }
 
         window.applyActivitySort = function(sortId) {
+            // 'practices' is a virtual mode id — resolve to the remembered sort
+            if (sortId === 'practices') sortId = getLastPracticesSort();
+            if (PRACTICES_SORTS.find(o => o.id === sortId)) {
+                if (!window.userData.settings) window.userData.settings = {};
+                if (window.userData.settings.lastPracticesSort !== sortId) {
+                    window.userData.settings.lastPracticesSort = sortId;
+                    debouncedSaveUserData();
+                }
+            }
             _currentSort = sortId;
             renderFilterOptions();
             // Update active dot
@@ -1442,6 +1489,27 @@
                 });
             });
 
+            // Initialise sort from stored preference on first render.
+            // Runs BEFORE the empty-state check because Quests mode must
+            // render even when the user has zero activities.
+            if (!_currentSort) {
+                _currentSort = (window.userData.settings && window.userData.settings.activitySort) || getDefaultActivitySort();
+                // If user had a removed sort saved (xp-high/xp-low), fall back to smart default
+                if (!SORT_OPTIONS.find(o => o.id === _currentSort)) _currentSort = getDefaultActivitySort();
+                const dot = document.getElementById('filterActiveDot');
+                if (dot) dot.style.display = (_currentSort !== getDefaultActivitySort()) ? 'block' : 'none';
+            }
+
+            const sort = getCurrentSort();
+            const viewMode = modeForSort(sort);
+
+            // Quests mode renders quest cards, not the activity list —
+            // dispatch before the activity empty-state and precompute.
+            if (viewMode === 'quests') {
+                renderQuestsMode(container);
+                return;
+            }
+
             if (allActivities.length === 0) {
                 container.innerHTML = `
                     <div class="empty-state" style="padding: 60px 20px;">
@@ -1467,23 +1535,12 @@
                 a._cycleCompletions = (a.frequency === 'custom') ? cycleCompletionsNow(a) : 0;
             });
 
-            // Initialise sort from stored preference on first render
-            if (!_currentSort) {
-                _currentSort = (window.userData.settings && window.userData.settings.activitySort) || getDefaultActivitySort();
-                // If user had a removed sort saved (xp-high/xp-low), fall back to smart default
-                if (!SORT_OPTIONS.find(o => o.id === _currentSort)) _currentSort = getDefaultActivitySort();
-                const dot = document.getElementById('filterActiveDot');
-                if (dot) dot.style.display = (_currentSort !== getDefaultActivitySort()) ? 'block' : 'none';
-            }
-
             // Update activity count in header
             const _slotEl = document.getElementById('activitySlotCount');
             if (_slotEl) {
                 const { total: _actT, limit: _actL } = getActivityCounts();
                 _slotEl.textContent = _actT + '/' + _actL;
             }
-
-            const sort = getCurrentSort();
 
             if (!window.activityGroupExpanded) window.activityGroupExpanded = {};
 
@@ -1495,7 +1552,32 @@
             //    Cleared on page reload (it's just a window-level Set).
             if (!window._sessionCompleted) window._sessionCompleted = new Set();
 
-            if (sort === 'smart') {
+            if (viewMode === 'occasional') {
+                // ── Occasional mode — occasional/one-time activities only ──
+                // (Grid toggle intentionally ignored: list style regardless.)
+                var occActs = allActivities.filter(function(a) {
+                    return a.frequency === 'occasional' || a.frequency === 'one-time';
+                });
+                if (occActs.length === 0) {
+                    // Eligibility-empty: quiet, informational, no CTA.
+                    container.innerHTML = `
+                        <div class="empty-state" style="padding: 48px 20px;">
+                            <p style="color:var(--color-text-secondary);">No occasional activities. Activities with "Occasional" frequency live here.</p>
+                        </div>`;
+                    return;
+                }
+                occActs.sort(function(a, b) { return (a.name || '').localeCompare(b.name || ''); });
+                container.innerHTML = `
+                    <div class="act-group">
+                        <div class="act-group-header" style="cursor:default;pointer-events:none;">
+                            <span class="act-group-label">Occasional Activities</span>
+                            <span class="act-group-count">${occActs.length}</span>
+                        </div>
+                        <div class="act-group-body expanded">
+                            ${renderActivityContent(occActs)}
+                        </div>
+                    </div>`;
+            } else if (sort === 'smart') {
                 // ── Smart "Today's Focus" sort ──────────────────────────────
                 var toDo = [];
                 var doneTd = [];
@@ -1759,6 +1841,14 @@
             // freshly-toggled card animates exactly once and subsequent
             // re-renders (group toggles, filter changes) don't re-fire it.
             window._justToggledActivityId = null;
+        }
+
+        // Stub — replaced by the full Quests implementation.
+        function renderQuestsMode(container) {
+            container.innerHTML = `
+                <div class="empty-state" style="padding: 48px 20px;">
+                    <p style="color:var(--color-text-secondary);">Quests are coming soon.</p>
+                </div>`;
         }
 
         window.toggleActivityGroup = function(key) {
@@ -9759,6 +9849,12 @@
             if (sSlider) { sSlider.value = se; previewStreakScaling(se); }
             loadTheme();
             updateRestoreBackupBtn();
+            // Default Home View select — reflect the stored sort id as a mode
+            const hv = document.getElementById('settingsDefaultHomeView');
+            if (hv) {
+                const stored = window.userData?.settings?.activitySort;
+                hv.value = stored ? (modeForSort(stored) === 'today' ? 'smart' : modeForSort(stored)) : 'auto';
+            }
             // Populate "signed in as" label with username + email
             const seEl = document.getElementById('settingsEmail');
             if (seEl && window.currentUser) {
@@ -9768,6 +9864,21 @@
                 seEl.textContent = name ? name + '  ·  ' + email : email;
             }
         }
+
+        // Settings → Default Home View. Stores a sort id (same field the
+        // filter panel's "Set as default view" writes) or clears it for auto.
+        window.setDefaultHomeViewFromSettings = function(modeId) {
+            if (!window.userData.settings) window.userData.settings = {};
+            if (modeId === 'auto') {
+                delete window.userData.settings.activitySort;
+            } else {
+                window.userData.settings.activitySort =
+                    (modeId === 'practices') ? getLastPracticesSort() : modeId;
+            }
+            saveUserData();
+            _currentSort = null; // re-resolve on next Activities render
+            showToast('✓ Default home view saved', 'olive');
+        };
 
         // Live preview as user drags the slider — just updates the display, doesn't save
         window.previewLevelScaling = function(k) {

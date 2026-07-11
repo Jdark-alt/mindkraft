@@ -2313,6 +2313,13 @@
             opacity: 0.85;
         }
 
+        /* Practices sub-sorts — indented beneath the Practices mode row */
+        .filter-option.filter-suboption {
+            padding-left: 32px;
+            font-size: 12px;
+            opacity: 0.88;
+        }
+
         .filter-panel-footer {
             border-top: 1px solid var(--card-hairline);
             padding: 8px 10px;

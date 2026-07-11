@@ -602,7 +602,7 @@
                                     <span id="filterActiveDot" class="act-tb-dot" style="display:none;" aria-hidden="true"></span>
                                 </button>
                                 <div class="filter-panel" id="filterPanel" style="display:none;">
-                                    <div class="filter-panel-title">Sort activities</div>
+                                    <div class="filter-panel-title">Home view</div>
                                     <div class="filter-options" id="filterOptions"></div>
                                     <div class="filter-panel-footer">
                                         <button class="btn-filter-default" id="setDefaultFilterBtn" onclick="setDefaultActivitySort()">Set as default view</button>
@@ -1064,6 +1064,27 @@
 
                         <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>Negative Activities &amp; Skip Penalty</div><div class="guide-inner-body">Activities can award <strong>negative XP</strong> for habits you want to break. The <strong>Skip Penalty</strong> option auto-deducts XP the next time you open the app after missing a day — great for hard accountability. Penalties appear clearly in your Activity History.</div></div>
 
+                    </div>
+                </div>
+
+                <!-- Default Home View -->
+                <div class="settings-card">
+                    <div style="display:flex;align-items:center;gap:12px;padding:2px 0;">
+                        <span class="st-icon st-icon-blue">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                        </span>
+                        <div class="st-collapse-text" style="flex:1;">
+                            <span class="st-collapse-title">Default Home View</span>
+                            <span class="st-collapse-sub">What My Activities opens to</span>
+                        </div>
+                        <select id="settingsDefaultHomeView" onchange="setDefaultHomeViewFromSettings(this.value)"
+                            style="background:rgba(255,255,255,0.05);color:var(--color-text-primary);border:1px solid rgba(255,255,255,0.08);border-radius:9px;padding:7px 10px;font-size:13px;font-family:inherit;cursor:pointer;">
+                            <option value="auto">Automatic</option>
+                            <option value="smart">Today</option>
+                            <option value="practices">Practices</option>
+                            <option value="quests">Quests</option>
+                            <option value="occasional">Occasional</option>
+                        </select>
                     </div>
                 </div>
 
