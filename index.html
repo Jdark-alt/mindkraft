@@ -582,6 +582,7 @@
                     <button class="sub-tab active" onclick="switchSubTab('activities','myActivities')">My Activities</button>
                     <button class="sub-tab" onclick="switchSubTab('activities','categories')">Categories</button>
                     <button class="sub-tab" onclick="switchSubTab('activities','techTree')">Tech Tree</button>
+                    <button class="sub-tab" onclick="switchSubTab('activities','quests')">Quests</button>
                 </div>
 
                 <!-- My Activities sub-tab -->
@@ -602,7 +603,7 @@
                                     <span id="filterActiveDot" class="act-tb-dot" style="display:none;" aria-hidden="true"></span>
                                 </button>
                                 <div class="filter-panel" id="filterPanel" style="display:none;">
-                                    <div class="filter-panel-title">Home view</div>
+                                    <div class="filter-panel-title">Sort activities</div>
                                     <div class="filter-options" id="filterOptions"></div>
                                     <div class="filter-panel-footer">
                                         <button class="btn-filter-default" id="setDefaultFilterBtn" onclick="setDefaultActivitySort()">Set as default view</button>
@@ -689,6 +690,11 @@
                 <!-- Tech Tree sub-tab — content rendered entirely by renderTechTree() -->
                 <div id="activitiesSubTechTree" class="sub-tab-content" style="display:none;">
                     <div id="techTreeContainer"></div>
+                </div>
+
+                <!-- Quests sub-tab — project dashboards -->
+                <div id="activitiesSubQuests" class="sub-tab-content" style="display:none;">
+                    <div id="questsContainer"></div>
                 </div>
             </div>
 
@@ -1064,27 +1070,6 @@
 
                         <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>Negative Activities &amp; Skip Penalty</div><div class="guide-inner-body">Activities can award <strong>negative XP</strong> for habits you want to break. The <strong>Skip Penalty</strong> option auto-deducts XP the next time you open the app after missing a day — great for hard accountability. Penalties appear clearly in your Activity History.</div></div>
 
-                    </div>
-                </div>
-
-                <!-- Default Home View -->
-                <div class="settings-card">
-                    <div style="display:flex;align-items:center;gap:12px;padding:2px 0;">
-                        <span class="st-icon st-icon-blue">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-                        </span>
-                        <div class="st-collapse-text" style="flex:1;">
-                            <span class="st-collapse-title">Default Home View</span>
-                            <span class="st-collapse-sub">What My Activities opens to</span>
-                        </div>
-                        <select id="settingsDefaultHomeView" onchange="setDefaultHomeViewFromSettings(this.value)"
-                            style="background:rgba(255,255,255,0.05);color:var(--color-text-primary);border:1px solid rgba(255,255,255,0.08);border-radius:9px;padding:7px 10px;font-size:13px;font-family:inherit;cursor:pointer;">
-                            <option value="auto">Automatic</option>
-                            <option value="smart">Today</option>
-                            <option value="practices">Practices</option>
-                            <option value="quests">Quests</option>
-                            <option value="occasional">Occasional</option>
-                        </select>
                     </div>
                 </div>
 
@@ -1882,6 +1867,11 @@
                         <input type="text" id="questName" class="pl-input" placeholder="e.g., Ship this week's video" required>
                     </div>
 
+                    <div class="ay-field">
+                        <label class="pl-field-label" for="questDescription">Description</label>
+                        <textarea id="questDescription" class="pl-input ay-textarea" rows="2" placeholder="What does done look like?"></textarea>
+                    </div>
+
                     <div class="ay-field-row">
                         <div class="ay-field">
                             <label class="pl-field-label" for="questDeadline">Deadline (optional)</label>
@@ -1894,27 +1884,90 @@
                     </div>
 
                     <div class="ay-field">
-                        <label class="pl-field-label" for="questRecurrence">Repeats</label>
-                        <select id="questRecurrence" class="pl-input">
-                            <option value="">Never — one-time quest</option>
-                            <option value="weekly">Weekly series</option>
-                            <option value="monthly">Monthly series</option>
-                        </select>
-                        <p class="ay-hint">A repeating quest resets its checklist each time you declare it done, and counts how many times you've shipped it.</p>
+                        <label class="pl-field-label" for="questRepeatUnit">Repeats</label>
+                        <div style="display:flex;gap:8px;align-items:center;">
+                            <select id="questRepeatUnit" class="pl-input" style="flex:1;" onchange="questRepeatUnitChanged()">
+                                <option value="">Doesn't repeat</option>
+                                <option value="day">Days</option>
+                                <option value="week">Weeks</option>
+                                <option value="month">Months</option>
+                            </select>
+                            <div id="questRepeatEveryWrap" style="display:none;align-items:center;gap:6px;">
+                                <span style="font-size:12px;color:var(--color-text-secondary);white-space:nowrap;">every</span>
+                                <input type="number" id="questRepeatEvery" class="pl-input" min="1" max="365" value="1" style="width:64px;">
+                            </div>
+                        </div>
+                        <p class="ay-hint">A repeating quest resets its plan each time you declare it done — task dates shift to the next cycle, and your shipped count grows.</p>
                     </div>
 
-                    <div class="ay-field">
-                        <label class="pl-field-label">Subtasks</label>
-                        <div id="questSubtaskList"></div>
-                        <div style="display:flex;gap:8px;margin-top:8px;">
-                            <button type="button" class="btn-secondary pl-btn-secondary" style="flex:1;" onclick="questAddTaskRow()">+ Task</button>
-                            <button type="button" class="btn-secondary pl-btn-secondary" style="flex:1;" onclick="questAddActivityRow()">+ Link a practice</button>
-                        </div>
-                    </div>
+                    <p class="ay-hint" style="margin-top:2px;">Tasks are planned on the quest's dashboard after you create it.</p>
                 </div>
                 <div class="modal-footer pl-modal-footer">
                     <button type="button" class="btn-secondary pl-btn-secondary" onclick="closeQuestModal()">Cancel</button>
                     <button type="submit" class="btn-primary pl-btn-primary" id="questSubmitBtn">Create Quest</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Task Editor — a single quest task: dates, activity link, XP, subtasks -->
+    <div id="taskModal" class="modal-overlay">
+        <div class="modal pl-modal ch-modal">
+            <div class="modal-header pl-modal-header">
+                <div>
+                    <div class="pl-modal-eyebrow">Task</div>
+                    <h3 class="modal-title" id="taskModalTitle">New Task</h3>
+                </div>
+                <button class="pl-modal-close" type="button" onclick="closeTaskEditor()" aria-label="Close">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <form id="taskForm" onsubmit="saveTask(event)">
+                <div class="modal-body pl-modal-body ay-modal-body">
+
+                    <div class="ay-field">
+                        <label class="pl-field-label" for="taskTitle">Task</label>
+                        <input type="text" id="taskTitle" class="pl-input" placeholder="e.g., Write the script" maxlength="140">
+                    </div>
+
+                    <div class="ay-field">
+                        <label class="pl-field-label" for="taskDescription">Notes (optional)</label>
+                        <textarea id="taskDescription" class="pl-input ay-textarea" rows="3" placeholder="Details, links, context…"></textarea>
+                    </div>
+
+                    <div class="ay-field-row">
+                        <div class="ay-field">
+                            <label class="pl-field-label" for="taskStartDate">Start</label>
+                            <input type="date" id="taskStartDate" class="pl-input">
+                        </div>
+                        <div class="ay-field">
+                            <label class="pl-field-label" for="taskDueDate">Due</label>
+                            <input type="date" id="taskDueDate" class="pl-input">
+                        </div>
+                    </div>
+
+                    <div class="ay-field">
+                        <label class="pl-field-label">Linked activity</label>
+                        <div id="taskLinkRow"></div>
+                        <p class="ay-hint">Completing the linked activity checks this task off automatically.</p>
+                    </div>
+
+                    <div class="ay-field" id="taskXPField">
+                        <label class="pl-field-label" for="taskXP">Task XP (optional)</label>
+                        <input type="number" id="taskXP" class="pl-input" min="0" max="100" placeholder="0">
+                    </div>
+
+                    <div class="ay-field">
+                        <label class="pl-field-label">Subtasks</label>
+                        <div id="taskSubList"></div>
+                        <button type="button" class="btn-secondary pl-btn-secondary" style="width:100%;margin-top:8px;" onclick="taskDraftAddSub()">+ Subtask</button>
+                    </div>
+
+                    <button type="button" id="taskDeleteBtn" class="qd-task-delete" style="display:none;" onclick="deleteTask()">Delete task</button>
+                </div>
+                <div class="modal-footer pl-modal-footer">
+                    <button type="button" class="btn-secondary pl-btn-secondary" onclick="closeTaskEditor()">Cancel</button>
+                    <button type="submit" class="btn-primary pl-btn-primary" id="taskSubmitBtn">Add Task</button>
                 </div>
             </form>
         </div>
@@ -2629,7 +2682,7 @@
     <div id="challengeInviteModal" class="modal-overlay">
         <div class="modal">
             <div class="modal-header">
-                <h3 class="modal-title">⚔ You've been Challenged!</h3>
+                <h3 class="modal-title">You've been Challenged!</h3>
             </div>
             <div class="modal-body">
                 <p id="raceInviterLine" style="font-size:13px;font-weight:600;color:var(--color-text-primary);margin:0 0 10px;"></p>

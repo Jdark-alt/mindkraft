@@ -2313,12 +2313,6 @@
             opacity: 0.85;
         }
 
-        /* Practices sub-sorts — indented beneath the Practices mode row */
-        .filter-option.filter-suboption {
-            padding-left: 32px;
-            font-size: 12px;
-            opacity: 0.88;
-        }
 
         .filter-panel-footer {
             border-top: 1px solid var(--card-hairline);
@@ -14808,26 +14802,26 @@
         .tt-sheet-actions { margin-top: 14px; }
 
 
-        /* Activities sub-tab row now holds 3 pills (My Activities / Categories /
-           Tech Tree) — move the single center divider to thirds and add the
-           second one; tighten the type so all three fit on narrow phones. */
-        #activitiesSubTabs::before { left: 33.333%; }
-        #activitiesSubTabs::after {
-            content: '';
-            position: absolute;
-            top: 22%;
-            bottom: 26%;
-            left: 66.666%;
-            width: 1px;
-            background: var(--color-border);
-            opacity: 0.5;
-            pointer-events: none;
+        /* Activities sub-tab row holds 4 pills (My Activities / Categories /
+           Tech Tree / Quests) — two pseudo-elements can't paint 3 hairline
+           dividers, so paint them as background layers at the quarter marks
+           (still 1px hairlines per the brief); tighten type so all four fit. */
+        #activitiesSubTabs::before, #activitiesSubTabs::after { content: none; }
+        #activitiesSubTabs {
+            background-image:
+                linear-gradient(var(--color-border), var(--color-border)),
+                linear-gradient(var(--color-border), var(--color-border)),
+                linear-gradient(var(--color-border), var(--color-border));
+            background-size: 1px 52%;
+            background-position: 25% 45%, 50% 45%, 75% 45%;
+            background-repeat: no-repeat;
         }
-        #activitiesSubTabs .sub-tab { font-size: 14.5px; padding-left: 4px; padding-right: 4px; }
+        #activitiesSubTabs .sub-tab { font-size: 13px; padding-left: 3px; padding-right: 3px; }
 
 /* ══════════════════════════════════════════════════════════════════════
-   Quests — finite projects with a subtask checklist
-   Card material recipe per design brief; gold reserved for Declare Done.
+   Quests — project dashboards for multi-step planning
+   Card material recipe for hero/cards; recessed surface for task rows;
+   gold reserved for Declare Done; chips keep their four jobs.
    ══════════════════════════════════════════════════════════════════════ */
 
 .quest-header-row {
@@ -14858,6 +14852,35 @@
 }
 .quest-card-done { opacity: 0.62; }
 
+/* Overview hero — the most urgent quest, one per surface */
+.quest-card.qo-hero {
+    border-radius: 14px;
+    padding: 16px 16px 14px;
+}
+.quest-card.qo-hero .quest-card-name {
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+}
+.qo-next {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    margin: 7px 0 2px;
+}
+.qo-next-kicker {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--color-progress);
+}
+.qo-next-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--color-text-primary);
+}
+
 .quest-card-top {
     display: flex;
     align-items: center;
@@ -14882,6 +14905,9 @@
     flex-wrap: wrap;
 }
 .quest-meta-text {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     font-size: 11px;
     font-weight: 500;
     color: var(--color-text-secondary);
@@ -14894,7 +14920,7 @@
     font-variant-numeric: tabular-nums;
 }
 
-/* Recurrence badge — blue counter-chip job */
+/* Repeat/shipped badge — blue counter-chip job */
 .quest-recur-chip {
     display: inline-flex;
     align-items: center;
@@ -14929,6 +14955,7 @@
     background: var(--color-bg-secondary);
     border-radius: 3px;
     overflow: hidden;
+    flex: 1;
 }
 .quest-bar-inner {
     height: 100%;
@@ -14937,9 +14964,9 @@
     transition: width 0.4s ease;
 }
 
-/* ── Detail view — swaps in place of the list ─────────────────────── */
-.quest-detail { padding: 2px 0 24px; }
-.quest-back-row {
+/* ── Dashboard ─────────────────────────────────────────────────────── */
+.qd { padding: 2px 0 24px; }
+.qd-back {
     display: inline-flex;
     align-items: center;
     gap: 5px;
@@ -14953,18 +14980,169 @@
     padding: 4px 2px;
     margin-bottom: 8px;
 }
-.quest-back-row:hover { color: var(--color-text-primary); }
-.quest-detail-name {
+.qd-back:hover { color: var(--color-text-primary); }
+
+/* Hero — the one hero element of the dashboard (card material, 14px) */
+.qd-hero {
+    background: var(--surface-card);
+    border: 1px solid var(--card-hairline);
+    border-radius: 14px;
+    padding: 16px 16px 14px;
+    margin-bottom: 14px;
+    box-shadow:
+        0 1px 0 rgba(255,255,255,0.075) inset,
+        0 -1px 0 rgba(0,0,0,0.35) inset,
+        0 1px 2px rgba(0,0,0,0.5),
+        0 6px 18px rgba(0,0,0,0.35);
+}
+[data-theme-mode="light"] .qd-hero {
+    background: var(--color-bg-card);
+    border-color: var(--color-border);
+    box-shadow: var(--shadow-card);
+}
+.qd-hero-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+}
+.qd-name {
     font-size: 22px;
     font-weight: 700;
     letter-spacing: -0.025em;
     color: var(--color-text-primary);
-    margin: 0 0 4px;
+    margin: 0;
+    min-width: 0;
 }
-.quest-detail-head { margin-bottom: 14px; }
+.qd-edit {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    padding: 4px;
+}
+.qd-edit:hover { color: var(--color-text-primary); }
+.qd-desc {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    margin: 4px 0 0;
+    line-height: 1.5;
+}
+.qd-hero-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin: 9px 0 10px;
+}
+.qd-hero-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.qd-pct {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--color-text-primary);
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
 
-.quest-subtask-list { display: flex; flex-direction: column; gap: 6px; }
-.quest-subtask-row {
+/* Timeline | List toggle — the indicator primitive owns selection here */
+.qd-viewtoggle {
+    display: flex;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--card-hairline);
+}
+.qd-vt {
+    position: relative;
+    flex: 1;
+    background: none;
+    border: none;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    padding: 9px 4px 10px;
+    cursor: pointer;
+    letter-spacing: -0.005em;
+}
+.qd-vt.active {
+    color: var(--color-text-primary);
+    font-weight: 600;
+}
+.qd-vt.active::after {
+    content: '';
+    position: absolute;
+    left: 22%; right: 22%; bottom: -1px;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--color-progress) 30%, var(--color-progress) 70%, transparent);
+    box-shadow: 0 0 10px rgba(90,159,212,0.7), 0 0 22px rgba(90,159,212,0.35);
+}
+
+/* ── Vertical timeline: hairline rail, date markers, today-line ────── */
+.qd-tl {
+    position: relative;
+    margin-left: 9px;
+    padding-left: 16px;
+    border-left: 1px solid var(--card-hairline);
+}
+.qd-tl-group { margin-bottom: 16px; }
+.qd-tl-group.is-past .qd-task:not(.overdue) { opacity: 0.62; }
+.qd-tl-marker {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--color-text-secondary);
+    margin: 0 0 7px;
+    font-variant-numeric: tabular-nums;
+}
+.qd-tl-marker.today { color: var(--color-progress); }
+.qd-tl-marker.warn { color: var(--chip-warn-fg); }
+.qd-tl-today {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 14px 0;
+}
+.qd-tl-today::before, .qd-tl-today::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: rgba(90,159,212,0.35);
+}
+.qd-tl-today span {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--color-progress);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+.qd-tl-dot {
+    position: absolute;
+    left: -19.5px;
+    margin-top: 15px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--color-bg-secondary);
+    border: 1.5px solid var(--color-text-secondary);
+    flex-shrink: 0;
+}
+.qd-task.done .qd-tl-dot {
+    border-color: var(--chip-xp-fg);
+    background: rgba(143,191,143,0.25);
+}
+
+/* ── Task rows — recessed surface, one per task ────────────────────── */
+.qd-list { display: flex; flex-direction: column; }
+.qd-task {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -14972,38 +15150,156 @@
     background: rgba(255,255,255,0.025);
     border-top: 1px solid rgba(255,255,255,0.05);
     border-radius: 10px;
-    cursor: pointer;
-    transition: background 0.12s;
+    margin-bottom: 6px;
 }
-.quest-subtask-row:hover { background: rgba(255,255,255,0.05); }
-.quest-subtask-row.done .quest-subtask-name {
+[data-theme-mode="light"] .qd-task {
+    background: rgba(0,0,0,0.03);
+    border-top-color: rgba(0,0,0,0.06);
+}
+.qd-task.done .qd-task-title {
     text-decoration: line-through;
     color: var(--color-text-secondary);
 }
-.quest-check {
+.qd-task.done { opacity: 0.55; }
+.qd-overdue-text { color: var(--chip-warn-fg) !important; }
+
+.qd-check {
     width: 19px;
     height: 19px;
     flex-shrink: 0;
     border-radius: 6px;
+    border: 1.5px solid rgba(255,255,255,0.22);
+    background: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--chip-xp-fg);
+    cursor: pointer;
+    padding: 0;
+}
+[data-theme-mode="light"] .qd-check { border-color: rgba(0,0,0,0.25); }
+.qd-task.done .qd-check {
+    border-color: var(--chip-xp-fg);
+    background: rgba(143,191,143,0.12);
+}
+.qd-task-main {
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
+}
+.qd-task-title {
+    display: block;
+    font-size: 14.5px;
+    font-weight: 500;
+    color: var(--color-text-primary);
+    letter-spacing: -0.005em;
+}
+.qd-task-meta {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    flex-wrap: wrap;
+    margin-top: 3px;
+}
+.qd-task-chev {
+    flex-shrink: 0;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    padding: 4px;
+    transition: transform 0.15s ease;
+}
+.qd-task-chev.expanded { transform: rotate(180deg); }
+
+/* Task expansion — one level deeper, hairline-topped, no extra card */
+.qd-task-body {
+    margin: -2px 0 8px 29px;
+    padding: 8px 12px 4px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+}
+.qd-task-desc {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    line-height: 1.55;
+    margin: 0 0 8px;
+}
+.qd-sub {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 2px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    cursor: pointer;
+}
+.qd-sub:last-of-type { border-bottom: none; }
+.qd-sub-check {
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+    border-radius: 5px;
     border: 1.5px solid rgba(255,255,255,0.22);
     display: inline-flex;
     align-items: center;
     justify-content: center;
     color: var(--chip-xp-fg);
 }
-.quest-subtask-row.done .quest-check {
+[data-theme-mode="light"] .qd-sub-check { border-color: rgba(0,0,0,0.25); }
+.qd-sub.done .qd-sub-check {
     border-color: var(--chip-xp-fg);
     background: rgba(143,191,143,0.12);
 }
-.quest-subtask-name {
-    flex: 1;
-    min-width: 0;
-    font-size: 13.5px;
+.qd-sub-title {
+    font-size: 12.5px;
     font-weight: 500;
     color: var(--color-text-primary);
 }
+.qd-sub.done .qd-sub-title {
+    text-decoration: line-through;
+    color: var(--color-text-secondary);
+}
+.qd-sub-addrow { margin: 6px 0 2px; }
+.qd-sub-addrow .pl-input { font-size: 12px; padding: 7px 9px; }
+.qd-task-editbtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: none;
+    border: none;
+    color: var(--color-progress);
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 6px 2px 2px;
+}
 
-.quest-detail-footer { margin: 16px 0 10px; }
+/* Add-task row — recessed, quiet, blue interactive text */
+.qd-addtask {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    background: rgba(255,255,255,0.025);
+    border: none;
+    border-top: 1px solid rgba(255,255,255,0.05);
+    border-radius: 10px;
+    color: var(--color-progress);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 12px;
+    margin: 4px 0 14px;
+    cursor: pointer;
+    transition: background 0.12s;
+}
+.qd-addtask:hover { background: rgba(255,255,255,0.05); }
+[data-theme-mode="light"] .qd-addtask {
+    background: rgba(0,0,0,0.03);
+    border-top-color: rgba(0,0,0,0.06);
+}
+
+.qd-footer { margin: 4px 0 10px; }
 /* Declare Done — the one legitimate gold CTA (genuine milestone) */
 .quest-declare-done {
     width: 100%;
@@ -15030,20 +15326,17 @@
 .quest-detail-actions .pl-btn-secondary { flex: 1; }
 .quest-delete-btn { color: var(--color-accent-red, #e07070); }
 
-/* ── Modal subtask builder ────────────────────────────────────────── */
-.quest-draft-row {
-    background: rgba(255,255,255,0.025);
-    border-top: 1px solid rgba(255,255,255,0.05);
-    border-radius: 10px;
-    padding: 8px 10px;
-    margin-bottom: 8px;
-}
-.quest-draft-main {
+/* ── Task editor sheet bits ────────────────────────────────────────── */
+.qd-linkrow {
     display: flex;
     align-items: center;
     gap: 8px;
+    padding: 9px 11px;
+    background: rgba(255,255,255,0.025);
+    border-top: 1px solid rgba(255,255,255,0.05);
+    border-radius: 10px;
 }
-.quest-draft-actname {
+.qd-linkname {
     flex: 1;
     min-width: 0;
     font-size: 13px;
@@ -15053,24 +15346,33 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.quest-draft-xp { width: 62px; flex-shrink: 0; }
-.quest-draft-del {
+.qd-unlink {
+    flex-shrink: 0;
     background: none;
     border: none;
     color: var(--color-text-secondary);
-    font-size: 13px;
     cursor: pointer;
     padding: 4px 6px;
-    flex-shrink: 0;
 }
-.quest-draft-del:hover { color: var(--color-accent-red, #e07070); }
-.quest-draft-window {
+.qd-unlink:hover { color: var(--color-accent-red, #e07070); }
+.qd-draftsub {
     display: flex;
     align-items: center;
-    gap: 6px;
-    margin-top: 7px;
+    gap: 8px;
+    margin-bottom: 6px;
 }
-.quest-draft-date { font-size: 11px; padding: 5px 7px; flex: 1; min-width: 0; }
+.qd-draftsub .pl-input { flex: 1; min-width: 0; }
+.qd-task-delete {
+    width: 100%;
+    background: none;
+    border: none;
+    color: var(--color-accent-red, #e07070);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 10px;
+    cursor: pointer;
+}
 
 /* ── Today: quest-window strip + hidden-occasional hint ────────────── */
 .quest-win-strip {
@@ -15111,15 +15413,7 @@
     font-weight: 500;
     color: var(--color-text-primary);
 }
-.occ-hidden-hint {
-    text-align: center;
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--color-text-secondary);
-    opacity: 0.75;
-    padding: 12px 0 4px;
-    font-variant-numeric: tabular-nums;
-}
+
 
 /* ══════════════════════════════════════════════════════════════════════
    Challenge Races — friend-vs-friend competition
