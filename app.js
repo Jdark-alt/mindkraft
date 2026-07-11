@@ -1586,12 +1586,49 @@
                 var doneTd = [];
                 var notNow = [];
 
+                // Activities explicitly scheduled in today's Daily Planner —
+                // the exception that keeps an occasional activity in Today.
+                var _plannerTodayIds = (function() {
+                    var ids = new Set();
+                    var p = window.userData.planner;
+                    if (!p) return ids;
+                    var todayStr = localToday();
+                    var day = p.days && p.days[todayStr];
+                    var skip = new Set((day && day.skipRecurring) || []);
+                    (p.recurring || []).forEach(function(r) { if (r.activityId && !skip.has(r.id)) ids.add(r.activityId); });
+                    ((day && day.items) || []).forEach(function(it) { if (it.activityId) ids.add(it.activityId); });
+                    return ids;
+                })();
+
+                // Quest subtasks whose surface-window covers today: linked
+                // activities float to the top of To Do; plain-task steps
+                // render as a pinned strip above the buckets.
+                var _questWinItems = getActiveQuestWindowItems();
+                var _questWinActIds = new Set();
+                var _questWinTasks = [];
+                _questWinItems.forEach(function(it) {
+                    if (it.subtask.type === 'activity') _questWinActIds.add(it.subtask.activityId);
+                    else _questWinTasks.push(it);
+                });
+
+                var _hiddenOccasional = 0;
+
                 allActivities.forEach(function(a) {
                     var completed = a._completedToday;
                     var canDo = a._canComplete;
                     var isMulti = a.allowMultiplePerDay && a.frequency !== 'occasional';
                     var notScheduled = a.frequency === 'custom' && a.customSubtype === 'days' && !a._isScheduledDay;
                     var doneAnythingToday = a._countToday > 0;
+
+                    // Occasional activities live in the Occasional view, not
+                    // Today — unless done today (kept visible for undo),
+                    // planner-scheduled today, or in an active quest window.
+                    var isOcc = a.frequency === 'occasional' || a.frequency === 'one-time';
+                    if (isOcc && !doneAnythingToday && !_plannerTodayIds.has(a.id) && !_questWinActIds.has(a.id)) {
+                        _hiddenOccasional++;
+                        return;
+                    }
+                    a._questWindowActive = _questWinActIds.has(a.id);
 
                     if (notScheduled) {
                         notNow.push(a);
@@ -1619,8 +1656,12 @@
                     }
                 });
 
-                // Within To Do: sort by pinned first, then by frequency rank, then by XP desc
+                // Within To Do: quest-window items first, then pinned, then
+                // frequency rank, then XP desc
                 toDo.sort(function(a, b) {
+                    var qwA = a._questWindowActive ? 0 : 1;
+                    var qwB = b._questWindowActive ? 0 : 1;
+                    if (qwA !== qwB) return qwA - qwB;
                     var pinA = a.pinned ? 0 : 1;
                     var pinB = b.pinned ? 0 : 1;
                     if (pinA !== pinB) return pinA - pinB;
@@ -1643,7 +1684,27 @@
                     { key: 'smart_notnow', label: '⏸ Not Now',   activities: notNow },
                 ].filter(function(g) { return g.activities.length > 0; });
 
-                container.innerHTML = smartGroups.map(function(g) {
+                // Pinned quest-window strip — plain-task steps due now (cap 3)
+                var questStripHtml = '';
+                if (_questWinTasks.length) {
+                    questStripHtml = '<div class="quest-win-strip">'
+                        + _questWinTasks.slice(0, 3).map(function(it) {
+                            return '<div class="quest-win-row" onclick="openQuestFromToday(\'' + it.quest.id + '\')">'
+                                + '<span class="quest-win-kicker">' + escapeHtml(it.quest.name) + '</span>'
+                                + '<span class="quest-win-title">' + escapeHtml(it.subtask.title || '') + '</span>'
+                                + '</div>';
+                        }).join('')
+                        + '</div>';
+                }
+
+                // Quiet transparency row for occasional items hidden from Today
+                var hiddenHint = _hiddenOccasional > 0
+                    ? '<div class="occ-hidden-hint">' + _hiddenOccasional + ' occasional '
+                        + (_hiddenOccasional === 1 ? 'activity' : 'activities')
+                        + ' in the Occasional view</div>'
+                    : '';
+
+                container.innerHTML = questStripHtml + smartGroups.map(function(g) {
                     var isExpanded = (g.key === 'smart_todo')
                         ? window.activityGroupExpanded[g.key] !== false
                         : window.activityGroupExpanded[g.key] === true;
@@ -1656,7 +1717,7 @@
                         + '<div class="act-group-body ' + (isExpanded ? 'expanded' : '') + '">'
                         + renderActivityContent(g.activities)
                         + '</div></div>';
-                }).join('');
+                }).join('') + hiddenHint;
 
             } else if (sort === 'grouped') {
                 // Group by frequency (original view) — reordered
@@ -3737,6 +3798,22 @@
         };
         window.closeQuestDetail = function() {
             window._openQuestId = null;
+            // Came here via the Today strip → go back to Today, not Quests
+            if (window._questReturnSort) {
+                var back = window._questReturnSort;
+                window._questReturnSort = null;
+                applyActivitySort(back);
+                return;
+            }
+            renderActivitiesList();
+        };
+        // Entry from the Today quest-window strip: jump into the quest's
+        // detail view and remember where to return on back.
+        window.openQuestFromToday = function(questId) {
+            window._questReturnSort = getCurrentSort();
+            window._openQuestId = questId;
+            _currentSort = 'quests';
+            renderFilterOptions();
             renderActivitiesList();
         };
 
