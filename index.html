@@ -1493,8 +1493,8 @@
                     </div>
 
                     <div class="cat-form-group">
-                        <label class="pl-field-label">Life category <span class="pl-field-optional">optional — sets the tint</span></label>
-                        <select id="projectDimension" class="pl-input pl-input-select"></select>
+                        <label class="pl-field-label">Life categories <span class="pl-field-optional">optional — pick one or more; sets the tint</span></label>
+                        <div id="projectDimPills" class="pr-dim-pills"></div>
                     </div>
 
                     <!-- Cadence -->
@@ -1505,7 +1505,7 @@
                             <button type="button" class="pr-seg-btn active" data-cad="oneoff" onclick="setProjectCadence('oneoff')">One-off</button>
                             <button type="button" class="pr-seg-btn" data-cad="recurring" onclick="setProjectCadence('recurring')">Repeats in cycles</button>
                         </div>
-                        <p class="pr-cad-hint" id="projectCadenceHint">A single run through the stages. Marks complete when you finish.</p>
+                        <p class="pr-cad-hint" id="projectCadenceHint">A single run through the pipeline. Marks complete when you finish.</p>
                         <div id="projectFreqWrap" style="display:none;margin-top:10px;">
                             <label class="pl-field-label">Cycle length</label>
                             <select id="projectFrequency" class="pl-input pl-input-select" onchange="onProjectFreqChange()">
@@ -1518,22 +1518,16 @@
                         </div>
                     </div>
 
-                    <!-- Stage templates -->
-                    <div class="cat-form-group">
-                        <label class="pl-field-label">Start from a template <span class="pl-field-optional">optional</span></label>
-                        <div class="pr-template-chips" id="projectTemplateChips"></div>
-                    </div>
-
-                    <!-- Stage / task builder -->
+                    <!-- Pipelines / stages / items builder -->
                     <div class="cat-form-group">
                         <div class="pr-builder-head">
-                            <label class="pl-field-label" style="margin:0;">Stages &amp; tasks</label>
-                            <span class="pr-builder-hint">the pipeline</span>
+                            <label class="pl-field-label" style="margin:0;">Pipelines</label>
+                            <span class="pr-builder-hint">chains of stages</span>
                         </div>
                         <div id="projectBuilder"></div>
-                        <button type="button" class="pr-add-stage-btn" onclick="projectDraftAddStage()">
+                        <button type="button" class="pr-add-pipeline-btn" onclick="projectDraftAddPipeline()">
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                            Add stage
+                            Add another pipeline
                         </button>
                     </div>
                 </div>
@@ -1542,6 +1536,30 @@
                     <button type="submit" class="btn-primary pl-btn-primary" id="projectSaveBtn">Create quest</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- Quest Activity Picker — add existing activities to a stage -->
+    <div id="projectActivityPicker" class="modal-overlay" style="z-index:1100;">
+        <div class="modal pl-modal pr-picker-modal">
+            <div class="modal-header pl-modal-header">
+                <div>
+                    <div class="pl-modal-eyebrow">Add activities</div>
+                    <h3 class="modal-title">Pick activities for this stage</h3>
+                </div>
+                <button class="pl-modal-close" type="button" onclick="closeProjectActivityPicker()" aria-label="Close">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="modal-body pl-modal-body">
+                <input type="text" id="projectActivitySearch" class="pl-input" placeholder="Search activities…" oninput="renderProjectActivityPickerList(this.value)">
+                <div id="projectActivityPickerList" class="pr-picker-list"></div>
+                <div id="projectActivityPickerEmpty" class="pr-picker-empty" style="display:none;">No activities found. Create activities first, or add a plain task instead.</div>
+            </div>
+            <div class="modal-footer pl-modal-footer">
+                <button type="button" class="btn-secondary pl-btn-secondary" onclick="closeProjectActivityPicker()">Cancel</button>
+                <button type="button" class="btn-primary pl-btn-primary" id="projectActivityPickerAdd" onclick="confirmProjectActivityPicker()">Add</button>
+            </div>
         </div>
     </div>
 
