@@ -14957,25 +14957,28 @@
 .pr-cyc-more { font-size: 11px; font-weight: 600; color: var(--color-text-secondary); opacity: 0.7; margin-left: 2px; }
 [data-theme-mode="light"] .pr-cyc-dot { background: rgba(15,17,21,0.05); border-color: rgba(0,0,0,0.06); }
 
-/* ── Stage pipeline (the hero) ─────────────────────────────────────────── */
-.pr-pipe-wrap { margin: 16px 0 0; }
-.pr-pipe-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.14em; color: var(--color-text-secondary); opacity: 0.8; margin-bottom: 11px; }
-.pr-pipe { display: flex; align-items: flex-start; gap: 0; overflow-x: auto; padding: 6px 2px 10px; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
-.pr-pipe::-webkit-scrollbar { display: none; }
+/* ── Stage pipeline (the hero) — full-width, evenly-distributed nodes ───── */
+.pr-pipe-wrap { margin: 18px 0 0; }
+.pr-pipe-label { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.14em; color: var(--color-text-secondary); opacity: 0.85; margin-bottom: 4px; }
+.pr-pipe-glyph { display: inline-flex; width: 14px; height: 14px; opacity: 0.7; flex-shrink: 0; }
+.pr-pipe-glyph svg { width: 100%; height: 100%; }
+/* Row spans edge-to-edge; nodes distribute across it regardless of count.
+   Generous top padding gives the current-stage glow breathing room (§4). */
+.pr-pipe { position: relative; display: flex; justify-content: space-between; align-items: flex-start; padding: 18px 6px 6px; overflow: visible; }
+.pr-pipe-single { justify-content: center; }
+.pr-pipe-rail { position: absolute; left: 22px; right: 22px; top: 35px; height: 2px; background: var(--color-text-secondary); opacity: 0.2; border-radius: 2px; z-index: 0; }
 .pr-stage {
-    position: relative; flex: 1 0 auto; min-width: 76px; max-width: 130px;
-    display: flex; flex-direction: column; align-items: center; gap: 7px;
-    background: none; border: none; font-family: inherit; cursor: pointer; padding: 2px 6px 4px;
+    position: relative; z-index: 1; flex: 0 0 auto; max-width: 34%;
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    background: none; border: none; font-family: inherit; cursor: pointer; padding: 0 2px;
 }
-/* connecting line — runs from this node's centre to the next */
-.pr-node-line { position: absolute; top: 15px; left: calc(50% + 17px); right: calc(-50% + 17px); height: 2px; background: var(--color-text-secondary); opacity: 0.22; border-radius: 2px; }
-.pr-node-line.solid { background: var(--chip-xp-fg); opacity: 0.5; }
 .pr-node {
-    position: relative; width: 30px; height: 30px; border-radius: 50%; z-index: 1;
+    position: relative; width: 34px; height: 34px; border-radius: 50%; z-index: 1;
     display: flex; align-items: center; justify-content: center; box-sizing: border-box;
     border: 2px solid var(--color-text-secondary); color: var(--color-text-secondary); background: var(--surface-card);
     transition: all 0.2s ease;
 }
+.pr-node-frac { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; }
 .pr-node-num { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .pr-node-check { width: 15px; height: 15px; display: block; }
 .pr-node-check svg { width: 100%; height: 100%; }
@@ -15202,3 +15205,106 @@
 .pr-pick-sub { font-size: 10.5px; font-weight: 500; color: var(--color-text-secondary); opacity: 0.8; }
 .pr-pick-added { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--chip-xp-fg); flex-shrink: 0; }
 .pl-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   QUESTS v4 redesign — density card, avatar badge, macro island, What's Next,
+   full-width pipelines, node fractions, gold treatments, repeatable counters.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Tabular numerals wherever a fraction/number can change */
+.pr-card-bonus, .pr-card-proglabel, .pr-detail-bonus, .pr-island, .pr-node-frac,
+.pr-item-counter, .pr-next-count, .pr-cnode-more, .pr-lv-chip, .pr-chip { font-variant-numeric: tabular-nums; }
+
+/* ── Avatar emoji badge (dimension-tinted, reuses .pf-avatar recipe) ────── */
+.pr-badge {
+    width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center; font-size: 21px; line-height: 1;
+    background: radial-gradient(circle at 32% 28%, color-mix(in srgb, var(--pr-badge, #5a9fd4) 42%, #2a2d33), color-mix(in srgb, var(--pr-badge, #5a9fd4) 20%, #1c1e23));
+    box-shadow: 0 1px 0 rgba(255,255,255,0.08) inset, 0 2px 8px rgba(0,0,0,0.35), 0 0 0 1px color-mix(in srgb, var(--pr-badge, #5a9fd4) 30%, transparent);
+}
+.pr-badge-lg { width: 52px; height: 52px; font-size: 27px; }
+[data-theme-mode="light"] .pr-badge { background: radial-gradient(circle at 32% 28%, color-mix(in srgb, var(--pr-badge, #5a9fd4) 26%, #ffffff), color-mix(in srgb, var(--pr-badge, #5a9fd4) 12%, #eef1f6)); box-shadow: 0 1px 2px rgba(0,0,0,0.12), 0 0 0 1px color-mix(in srgb, var(--pr-badge,#5a9fd4) 24%, transparent); }
+
+/* ── Card edit/delete icon buttons ─────────────────────────────────────── */
+.pr-card-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; margin: -2px -4px 0 0; }
+.pr-icon-btn { width: 28px; height: 28px; border: none; background: transparent; color: var(--color-text-secondary); cursor: pointer; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; transition: color 0.15s, background 0.15s, transform 0.1s; padding: 0; opacity: 0.65; }
+.pr-icon-btn svg { width: 14px; height: 14px; display: block; }
+.pr-icon-btn:hover { color: var(--color-text-primary); background: rgba(255,255,255,0.06); opacity: 1; }
+.pr-icon-btn.pr-icon-danger:hover { color: #e07070; background: rgba(224,112,112,0.08); }
+.pr-icon-btn:active { transform: scale(0.92); }
+[data-theme-mode="light"] .pr-icon-btn:hover { background: rgba(0,0,0,0.05); }
+
+/* ── Card bonus headline ───────────────────────────────────────────────── */
+.pr-card-bonus { display: flex; align-items: baseline; gap: 6px; margin-top: 4px; font-size: 17px; font-weight: 800; letter-spacing: -0.02em; color: var(--chip-xp-fg); }
+.pr-card-bonus-sub { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--color-text-secondary); opacity: 0.75; }
+
+/* ── Card pill row + progress label ────────────────────────────────────── */
+.pr-card-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.pr-card-proglabel { font-size: 11.5px; font-weight: 600; color: var(--color-text-secondary); margin-top: 11px; letter-spacing: -0.005em; }
+.pr-chip-plain { color: var(--color-text-secondary); background: var(--recessed-bg-4); }
+.pr-chip-gold { color: #23262c; background: #f5c563; }
+.pr-chip-blue { color: var(--color-progress); background: rgba(90,159,212,0.14); }
+.pr-chip-dim { color: var(--color-text-secondary); background: var(--recessed-bg-3); }
+[data-theme-mode="light"] .pr-chip-plain, [data-theme-mode="light"] .pr-chip-dim { background: rgba(15,17,21,0.06); }
+
+/* ── Card stacked pipelines (full-width even dots) ─────────────────────── */
+.pr-card-pipes { margin-top: 12px; display: flex; flex-direction: column; gap: 9px; }
+.pr-crow { position: relative; height: 16px; display: flex; align-items: center; }
+.pr-crail { position: absolute; left: 6px; right: 6px; top: 50%; height: 2px; transform: translateY(-50%); background: var(--color-text-secondary); opacity: 0.2; border-radius: 2px; }
+.pr-cnodes { position: relative; width: 100%; display: flex; justify-content: space-between; align-items: center; }
+.pr-crow-single .pr-cnodes { justify-content: center; }
+.pr-cnode { width: 12px; height: 12px; border-radius: 50%; box-sizing: border-box; border: 1.5px solid var(--color-text-secondary); background: var(--surface-card); opacity: 0.5; flex-shrink: 0; }
+.pr-cnode-done { background: var(--chip-xp-fg); border-color: var(--chip-xp-fg); opacity: 1; }
+.pr-cnode-current { background: var(--color-progress); border-color: var(--color-progress); opacity: 1; box-shadow: 0 0 8px rgba(90,159,212,0.7); }
+.pr-cnode-more { font-size: 10px; font-weight: 700; color: var(--color-text-secondary); opacity: 0.75; padding-left: 2px; background: var(--surface-card); }
+
+/* ── Card status treatments: gold (completed one-off) vs paused vs archived ─ */
+.pr-card-gold { }
+.pr-card-gold .pr-card-tint { background: #f5c563; box-shadow: 0 0 12px rgba(245,197,99,0.6); opacity: 1; }
+.pr-card-gold { box-shadow: 0 1px 0 rgba(255,255,255,0.06) inset, 0 0 0 1px rgba(245,197,99,0.28), 0 4px 14px rgba(0,0,0,0.34); }
+.pr-card-paused { opacity: 0.62; }
+
+/* ── Detail header extras ──────────────────────────────────────────────── */
+.pr-detail-flavor { font-size: 12px; font-weight: 500; font-style: italic; color: var(--color-text-secondary); opacity: 0.85; margin-top: 4px; }
+.pr-detail-bonus { margin-left: auto; flex-shrink: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.03em; color: var(--chip-xp-fg); display: flex; align-items: baseline; gap: 3px; }
+.pr-detail-bonus-unit { font-size: 12px; font-weight: 700; opacity: 0.8; }
+.pr-detail-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+
+/* ── Macro island — ambient dashboard texture (§3) ─────────────────────── */
+.pr-island { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 2px 2px; font-size: 12px; font-weight: 500; color: var(--color-text-secondary); opacity: 0.85; }
+.pr-island-dot { opacity: 0.45; }
+
+/* ── What's Next panel — one row, one action (density exception) ────────── */
+.pr-next {
+    display: flex; align-items: center; gap: 12px; margin-top: 16px; padding: 14px 15px;
+    background: var(--surface-card); border: 1px solid var(--card-hairline); border-radius: 13px; cursor: pointer;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.06) inset, 0 2px 10px rgba(0,0,0,0.3), 0 0 0 1px rgba(90,159,212,0.18);
+    transition: transform 0.12s, box-shadow 0.15s;
+}
+.pr-next:hover { box-shadow: 0 1px 0 rgba(255,255,255,0.08) inset, 0 4px 16px rgba(0,0,0,0.36), 0 0 0 1px rgba(90,159,212,0.4); }
+.pr-next:active { transform: scale(0.995); }
+[data-theme-mode="light"] .pr-next { border-color: var(--color-border); box-shadow: var(--shadow-card), 0 0 0 1px rgba(90,159,212,0.2); }
+.pr-next-main { flex: 1; min-width: 0; }
+.pr-next-kicker { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.18em; color: var(--color-progress); margin-bottom: 4px; }
+.pr-next-name { display: flex; align-items: baseline; gap: 8px; font-size: 16px; font-weight: 700; letter-spacing: -0.02em; color: var(--color-text-primary); }
+.pr-next-count { font-size: 12px; font-weight: 700; color: var(--color-progress); font-variant-numeric: tabular-nums; }
+.pr-next-crumb { font-size: 11.5px; font-weight: 500; color: var(--color-text-secondary); opacity: 0.85; margin-top: 3px; }
+.pr-next-left { flex-shrink: 0; }
+.pr-next-go { flex-shrink: 0; width: 34px; height: 34px; border-radius: 50%; background: var(--color-progress); color: #fff; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 10px rgba(90,159,212,0.4); }
+.pr-next-go svg { width: 17px; height: 17px; }
+.pr-next-ready { box-shadow: 0 1px 0 rgba(255,255,255,0.06) inset, 0 2px 12px rgba(0,0,0,0.3), 0 0 0 1px rgba(245,197,99,0.4); }
+.pr-next-ready .pr-next-kicker { color: #f5c563; }
+.pr-next-ready .pr-next-go { background: #f5c563; color: #23262c; box-shadow: 0 2px 12px rgba(245,197,99,0.5); }
+
+/* ── Node fraction + milestone gold flash ──────────────────────────────── */
+.pr-stage-flash .pr-node { animation: prNodeGold 1.6s ease; }
+@keyframes prNodeGold { 0% { box-shadow: 0 0 0 rgba(245,197,99,0); } 25% { box-shadow: 0 0 18px rgba(245,197,99,0.85), 0 0 0 4px rgba(245,197,99,0.35); background: #f5c563; border-color: #f5c563; } 100% { box-shadow: 0 0 0 rgba(245,197,99,0); } }
+
+/* ── Repeatable-item counter chip (challenge-counter idiom) ────────────── */
+.pr-item-counter { flex-shrink: 0; font-size: 10.5px; font-weight: 700; color: var(--color-progress); background: rgba(90,159,212,0.14); border-radius: 999px; padding: 3px 8px; font-variant-numeric: tabular-nums; }
+
+/* ── Builder: required-count input ─────────────────────────────────────── */
+.pr-b-req { width: 44px; flex-shrink: 0; text-align: center; padding-left: 4px; padding-right: 4px; font-variant-numeric: tabular-nums; }
+
+/* Sealed-note gold variant */
+.pr-sealed-gold { color: #d9a441; }
