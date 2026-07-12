@@ -1475,16 +1475,10 @@
             </div>
             <form id="projectForm" onsubmit="saveProject(event)">
                 <div class="modal-body pl-modal-body">
-                    <!-- Emoji + name -->
-                    <div class="pr-name-row">
-                        <div class="pr-emoji-field">
-                            <label class="pl-field-label">Icon</label>
-                            <input type="text" id="projectEmoji" class="pl-input pr-emoji-input" value="🎯" maxlength="2" aria-label="Quest emoji">
-                        </div>
-                        <div class="pr-name-field">
-                            <label class="pl-field-label">Quest name</label>
-                            <input type="text" id="projectName" class="pl-input" placeholder="e.g., Successful YouTube channel" required>
-                        </div>
+                    <!-- Name -->
+                    <div class="cat-form-group">
+                        <label class="pl-field-label">Quest name</label>
+                        <input type="text" id="projectName" class="pl-input" placeholder="e.g., Successful YouTube channel" required>
                     </div>
 
                     <div class="cat-form-group">
@@ -1509,6 +1503,7 @@
                         <div id="projectFreqWrap" style="display:none;margin-top:10px;">
                             <label class="pl-field-label">Cycle length</label>
                             <select id="projectFrequency" class="pl-input pl-input-select" onchange="onProjectFreqChange()">
+                                <option value="daily">Daily</option>
                                 <option value="weekly">Weekly</option>
                                 <option value="biweekly">Every 2 weeks</option>
                                 <option value="monthly">Monthly</option>
