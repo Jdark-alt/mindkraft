@@ -582,7 +582,6 @@
                     <button class="sub-tab active" onclick="switchSubTab('activities','myActivities')">My Activities</button>
                     <button class="sub-tab" onclick="switchSubTab('activities','categories')">Categories</button>
                     <button class="sub-tab" onclick="switchSubTab('activities','techTree')">Tech Tree</button>
-                    <button class="sub-tab" onclick="switchSubTab('activities','quests')">Quests</button>
                 </div>
 
                 <!-- My Activities sub-tab -->
@@ -690,11 +689,6 @@
                 <!-- Tech Tree sub-tab — content rendered entirely by renderTechTree() -->
                 <div id="activitiesSubTechTree" class="sub-tab-content" style="display:none;">
                     <div id="techTreeContainer"></div>
-                </div>
-
-                <!-- Quests sub-tab — project dashboards -->
-                <div id="activitiesSubQuests" class="sub-tab-content" style="display:none;">
-                    <div id="questsContainer"></div>
                 </div>
             </div>
 
@@ -1847,132 +1841,6 @@
         </div>
     </div>
 
-    <!-- Quest Modal — create/edit a finite project with a subtask checklist -->
-    <div id="questModal" class="modal-overlay">
-        <div class="modal pl-modal ch-modal">
-            <div class="modal-header pl-modal-header">
-                <div>
-                    <div class="pl-modal-eyebrow">Quest</div>
-                    <h3 class="modal-title" id="questModalTitle">New Quest</h3>
-                </div>
-                <button class="pl-modal-close" type="button" onclick="closeQuestModal()" aria-label="Close">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                </button>
-            </div>
-            <form id="questForm" onsubmit="saveQuest(event)">
-                <div class="modal-body pl-modal-body ay-modal-body">
-
-                    <div class="ay-field">
-                        <label class="pl-field-label" for="questName">Quest Name</label>
-                        <input type="text" id="questName" class="pl-input" placeholder="e.g., Ship this week's video" required>
-                    </div>
-
-                    <div class="ay-field">
-                        <label class="pl-field-label" for="questDescription">Description</label>
-                        <textarea id="questDescription" class="pl-input ay-textarea" rows="2" placeholder="What does done look like?"></textarea>
-                    </div>
-
-                    <div class="ay-field-row">
-                        <div class="ay-field">
-                            <label class="pl-field-label" for="questDeadline">Deadline (optional)</label>
-                            <input type="date" id="questDeadline" class="pl-input">
-                        </div>
-                        <div class="ay-field">
-                            <label class="pl-field-label" for="questBonusXP">Completion XP</label>
-                            <input type="number" id="questBonusXP" class="pl-input" min="10" max="500" step="5" value="100">
-                        </div>
-                    </div>
-
-                    <div class="ay-field">
-                        <label class="pl-field-label" for="questRepeatUnit">Repeats</label>
-                        <div style="display:flex;gap:8px;align-items:center;">
-                            <select id="questRepeatUnit" class="pl-input" style="flex:1;" onchange="questRepeatUnitChanged()">
-                                <option value="">Doesn't repeat</option>
-                                <option value="day">Days</option>
-                                <option value="week">Weeks</option>
-                                <option value="month">Months</option>
-                            </select>
-                            <div id="questRepeatEveryWrap" style="display:none;align-items:center;gap:6px;">
-                                <span style="font-size:12px;color:var(--color-text-secondary);white-space:nowrap;">every</span>
-                                <input type="number" id="questRepeatEvery" class="pl-input" min="1" max="365" value="1" style="width:64px;">
-                            </div>
-                        </div>
-                        <p class="ay-hint">A repeating quest resets its plan each time you declare it done — task dates shift to the next cycle, and your shipped count grows.</p>
-                    </div>
-
-                    <p class="ay-hint" style="margin-top:2px;">Tasks are planned on the quest's dashboard after you create it.</p>
-                </div>
-                <div class="modal-footer pl-modal-footer">
-                    <button type="button" class="btn-secondary pl-btn-secondary" onclick="closeQuestModal()">Cancel</button>
-                    <button type="submit" class="btn-primary pl-btn-primary" id="questSubmitBtn">Create Quest</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- Task Editor — a single quest task: dates, activity link, XP, subtasks -->
-    <div id="taskModal" class="modal-overlay">
-        <div class="modal pl-modal ch-modal">
-            <div class="modal-header pl-modal-header">
-                <div>
-                    <div class="pl-modal-eyebrow">Task</div>
-                    <h3 class="modal-title" id="taskModalTitle">New Task</h3>
-                </div>
-                <button class="pl-modal-close" type="button" onclick="closeTaskEditor()" aria-label="Close">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                </button>
-            </div>
-            <form id="taskForm" onsubmit="saveTask(event)">
-                <div class="modal-body pl-modal-body ay-modal-body">
-
-                    <div class="ay-field">
-                        <label class="pl-field-label" for="taskTitle">Task</label>
-                        <input type="text" id="taskTitle" class="pl-input" placeholder="e.g., Write the script" maxlength="140">
-                    </div>
-
-                    <div class="ay-field">
-                        <label class="pl-field-label" for="taskDescription">Notes (optional)</label>
-                        <textarea id="taskDescription" class="pl-input ay-textarea" rows="3" placeholder="Details, links, context…"></textarea>
-                    </div>
-
-                    <div class="ay-field-row">
-                        <div class="ay-field">
-                            <label class="pl-field-label" for="taskStartDate">Start</label>
-                            <input type="date" id="taskStartDate" class="pl-input">
-                        </div>
-                        <div class="ay-field">
-                            <label class="pl-field-label" for="taskDueDate">Due</label>
-                            <input type="date" id="taskDueDate" class="pl-input">
-                        </div>
-                    </div>
-
-                    <div class="ay-field">
-                        <label class="pl-field-label">Linked activity</label>
-                        <div id="taskLinkRow"></div>
-                        <p class="ay-hint">Completing the linked activity checks this task off automatically.</p>
-                    </div>
-
-                    <div class="ay-field" id="taskXPField">
-                        <label class="pl-field-label" for="taskXP">Task XP (optional)</label>
-                        <input type="number" id="taskXP" class="pl-input" min="0" max="100" placeholder="0">
-                    </div>
-
-                    <div class="ay-field">
-                        <label class="pl-field-label">Subtasks</label>
-                        <div id="taskSubList"></div>
-                        <button type="button" class="btn-secondary pl-btn-secondary" style="width:100%;margin-top:8px;" onclick="taskDraftAddSub()">+ Subtask</button>
-                    </div>
-
-                    <button type="button" id="taskDeleteBtn" class="qd-task-delete" style="display:none;" onclick="deleteTask()">Delete task</button>
-                </div>
-                <div class="modal-footer pl-modal-footer">
-                    <button type="button" class="btn-secondary pl-btn-secondary" onclick="closeTaskEditor()">Cancel</button>
-                    <button type="submit" class="btn-primary pl-btn-primary" id="taskSubmitBtn">Add Task</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
     <!-- Activity Modal — pl-modal shell, brief-aligned, v120 -->
     <div id="activityModal" class="modal-overlay">
         <div class="modal pl-modal ay-modal">
@@ -2658,48 +2526,6 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn-secondary" onclick="closeGroupInviteModal()">Done</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- ── Challenge Race: friend picker ──────────────────────────────── -->
-    <div id="challengeFriendPickerModal" class="modal-overlay">
-        <div class="modal">
-            <div class="modal-header">
-                <h3 class="modal-title">Challenge a Friend</h3>
-            </div>
-            <div class="modal-body">
-                <p style="font-size:13px;color:var(--color-text-secondary);margin:0 0 12px;">They get your challenge and its activities — first to finish wins.</p>
-                <div id="challengeFriendPickerList"></div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn-secondary" onclick="closeChallengeFriendPicker()">Cancel</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- ── Challenge Race: "You've been Challenged!" (fires on login) ── -->
-    <div id="challengeInviteModal" class="modal-overlay">
-        <div class="modal">
-            <div class="modal-header">
-                <h3 class="modal-title">You've been Challenged!</h3>
-            </div>
-            <div class="modal-body">
-                <p id="raceInviterLine" style="font-size:13px;font-weight:600;color:var(--color-text-primary);margin:0 0 10px;"></p>
-                <div class="race-challenge-panel">
-                    <div id="raceChallengeName" class="race-challenge-name"></div>
-                    <p id="raceChallengeDesc" class="race-challenge-desc"></p>
-                    <div id="raceChallengeMeta" class="race-challenge-meta"></div>
-                </div>
-                <div class="form-group" style="margin-top:14px;">
-                    <label>Activities in this challenge</label>
-                    <div id="raceActivityList" style="margin-top:8px;"></div>
-                </div>
-                <p style="font-size:11px;color:var(--color-text-secondary);margin:10px 0 0;">Accepting adds these to your activities (Uncategorized). Already do one of them? Map it instead — no duplicates.</p>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn-secondary" onclick="declineChallengeInvite()">Decline</button>
-                <button type="button" class="btn-primary" onclick="acceptChallengeInvite()">Accept the Race</button>
             </div>
         </div>
     </div>
