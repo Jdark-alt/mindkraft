@@ -15436,3 +15436,37 @@
 .pr-arow-locked { cursor: default; }
 .pr-arow-locked:hover { background: var(--surface-card); }
 .pr-badge-kind { color: var(--color-progress); background: rgba(90,159,212,0.13); border: none; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   QUESTS v5.1 fixes — hero spacing, pipeline node/rail alignment, row height.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Hero card: kill the compounding (flex gap + per-child margins) that left big
+   whitespace. One consistent small gap; child margins zeroed. */
+.pr-detail-head { gap: 9px; }
+.pr-detail-head .pr-island { margin: 0; }
+.pr-detail-divider { margin: 4px 0; }
+.pr-detail-pills { margin: 0; }
+.pr-detail-head .pr-prog-lg { margin-top: 4px; }
+.pr-detail-desc { margin-top: 2px; }
+.pr-detail-flavor { margin-top: 2px; }
+/* Bonus: smaller than the title, top-aligned on the same line. */
+.pr-detail-head-row { align-items: flex-start; }
+.pr-detail-name { font-size: 21px; }
+.pr-detail-bonus { font-size: 18px; line-height: 1.1; align-self: flex-start; margin-top: 1px; }
+.pr-detail-bonus-unit { font-size: 10.5px; }
+
+/* Pipeline: replace the single absolute rail with per-node connector segments
+   that are positioned relative to each node — always aligned to the node
+   centre regardless of scroll padding / offset-parent quirks. */
+.pr-pipe-rail, .pr-pipe-rail-fill { display: none; }
+.pr-stage::after {
+    content: ''; position: absolute; top: 20px; left: 50%; right: -50%;
+    height: 5px; transform: translateY(-50%); border-radius: 999px;
+    background: var(--recessed-bg-4); z-index: 0; pointer-events: none;
+}
+.pr-stage:last-child::after { display: none; }
+.pr-stage-done::after { background: linear-gradient(90deg, var(--chip-xp-fg), #86e8ab); box-shadow: 0 0 9px rgba(74,222,128,0.45); }
+
+/* In-stage activity rows ~13% shorter (same look, less vertical padding). */
+.pr-arow { padding-top: 7px; padding-bottom: 7px; }

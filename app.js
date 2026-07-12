@@ -16531,8 +16531,6 @@
                         (potential > 0 ? '<div class="pr-detail-bonus">+' + potential + '<span class="pr-detail-bonus-unit">XP</span></div>' : '') +
                     '</div>' +
                     (p.description ? '<div class="pr-detail-desc">' + escapeHtml(p.description) + '</div>' : '') +
-                    // Cadence line
-                    '<div class="pr-detail-cadline"><span class="pr-chip pr-chip-blue">' + (isRecurring ? 'Cycle ' + (p.currentCycle || 1) : 'One-off') + '</span></div>' +
                     // Info line — ambient dashboard texture
                     '<div class="pr-island">' +
                         '<span>' + stats.done + '/' + stats.total + ' done</span>' +
@@ -16681,10 +16679,7 @@
 
             return '<div class="pr-pipe-wrap">' + head +
                 '<div class="pr-pipe-scroll' + (scrollable ? ' pr-scrollable' : '') + '">' +
-                    '<div class="pr-pipe">' +
-                        '<span class="pr-pipe-rail"></span><span class="pr-pipe-rail-fill" style="width:' + fillPct + '%;"></span>' +
-                        nodes +
-                    '</div>' +
+                    '<div class="pr-pipe">' + nodes + '</div>' +
                 '</div>' +
                 (tasksPanel ? '<div class="pr-items-connect">' + tasksPanel + '</div>' : '') +
             '</div>';
