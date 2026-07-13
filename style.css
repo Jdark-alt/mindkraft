@@ -14889,7 +14889,6 @@
 
 /* Status chips — chip system, one job per color. */
 .pr-chip { display: inline-block; font-size: 10.5px; font-weight: 600; border-radius: 999px; padding: 3px 9px; white-space: nowrap; letter-spacing: -0.005em; }
-.pr-chip-warn { color: var(--chip-warn-fg); background: var(--chip-warn-bg); }
 .pr-chip-done { color: var(--chip-xp-fg); background: rgba(74,222,128,0.14); }
 .pr-chip-muted { color: var(--color-text-secondary); background: var(--recessed-bg-4); }
 
@@ -15050,6 +15049,7 @@
 .pr-act-btn { background: none; border: none; color: var(--color-text-secondary); font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; padding: 6px 10px; border-radius: 8px; transition: all 0.14s; }
 .pr-act-btn:hover { background: var(--color-hover-overlay); color: var(--color-text-primary); }
 .pr-act-danger:hover { color: var(--color-accent-red); background: rgba(142,59,95,0.1); }
+.pr-act-reset:hover { color: var(--color-accent-amber); background: rgba(184,130,66,0.1); }
 
 /* ═══ CREATE / EDIT MODAL builder ═══════════════════════════════════════ */
 .pr-modal .pl-modal-body { max-height: min(72vh, 620px); }
@@ -15071,6 +15071,14 @@
 
 .pr-builder-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 9px; }
 .pr-builder-hint { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--color-text-secondary); opacity: 0.55; }
+
+/* Inline structure explainer — permanent, static preview of Pipeline → Stage → Activity/Task */
+.pr-struct-explainer { margin: 0 0 12px; }
+.pr-struct-line { font-size: 12px; font-weight: 500; line-height: 1.5; color: var(--color-text-secondary); margin: 0 0 9px; }
+.pr-struct-diagram { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.pr-struct-node { font-size: 11px; font-weight: 600; color: var(--color-text-primary); background: var(--recessed-bg-3); border: 1px solid var(--recessed-ring); border-radius: 8px; padding: 5px 9px; white-space: nowrap; }
+.pr-struct-glyph { display: inline-flex; width: 14px; height: 14px; opacity: 0.5; flex-shrink: 0; }
+.pr-struct-glyph svg { width: 100%; height: 100%; }
 .pr-b-stage { background: var(--recessed-bg); border: 1px solid var(--recessed-ring); border-radius: 11px; padding: 11px; margin-bottom: 10px; }
 .pr-b-stage-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
 .pr-b-stage-num { width: 22px; height: 22px; flex-shrink: 0; border-radius: 50%; background: var(--recessed-bg-4); color: var(--color-text-secondary); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -15109,13 +15117,6 @@
 .pr-modal .pl-modal-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; max-height: none; }
 .pr-modal .pl-modal-footer { flex-shrink: 0; }
 
-/* ── Multi-dimension pills ──────────────────────────────────────────────── */
-.pr-dim-pills { display: flex; flex-wrap: wrap; gap: 7px; }
-.pr-dim-pill { display: inline-flex; align-items: center; gap: 7px; background: var(--recessed-bg-3); border: 1px solid var(--recessed-ring); border-radius: 999px; padding: 7px 12px 7px 10px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--color-text-secondary); cursor: pointer; transition: all 0.15s; }
-.pr-dim-pill .pr-dim-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--pr-dim); flex-shrink: 0; opacity: 0.7; transition: opacity 0.15s; }
-.pr-dim-pill.on { color: var(--color-text-primary); border-color: var(--pr-dim); background: color-mix(in srgb, var(--pr-dim) 14%, transparent); }
-.pr-dim-pill.on .pr-dim-dot { opacity: 1; box-shadow: 0 0 8px var(--pr-dim); }
-.pr-dim-none { font-size: 12px; color: var(--color-text-secondary); opacity: 0.7; }
 
 /* ── Card progress bar (default quest) ──────────────────────────────────── */
 .pr-card-progress { display: flex; align-items: center; gap: 10px; padding-top: 2px; }

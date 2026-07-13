@@ -1486,9 +1486,8 @@
                         <input type="text" id="projectDesc" class="pl-input" placeholder="One line on what “done” looks like" maxlength="160">
                     </div>
 
-                    <div class="cat-form-group">
-                        <label class="pl-field-label">Life categories <span class="pl-field-optional">optional — pick one or more; sets the tint</span></label>
-                        <div id="projectDimPills" class="pr-dim-pills"></div>
+                    <div class="cat-form-group" id="projectDimReadoutWrap" style="display:none;">
+                        <p class="pr-cad-hint" id="projectDimReadout"></p>
                     </div>
 
                     <!-- Cadence -->
@@ -1500,17 +1499,6 @@
                             <button type="button" class="pr-seg-btn" data-cad="recurring" onclick="setProjectCadence('recurring')">Repeats in cycles</button>
                         </div>
                         <p class="pr-cad-hint" id="projectCadenceHint">A single run through the pipeline. Marks complete when you finish.</p>
-                        <div id="projectFreqWrap" style="display:none;margin-top:10px;">
-                            <label class="pl-field-label">Cycle length</label>
-                            <select id="projectFrequency" class="pl-input pl-input-select" onchange="onProjectFreqChange()">
-                                <option value="daily">Daily</option>
-                                <option value="weekly">Weekly</option>
-                                <option value="biweekly">Every 2 weeks</option>
-                                <option value="monthly">Monthly</option>
-                                <option value="custom">Custom (days)</option>
-                            </select>
-                            <input type="number" id="projectCustomDays" class="pl-input" min="1" max="365" placeholder="Days per cycle, e.g. 10" style="display:none;margin-top:8px;">
-                        </div>
                     </div>
 
                     <!-- Pipelines / stages / items builder -->
@@ -1518,6 +1506,16 @@
                         <div class="pr-builder-head">
                             <label class="pl-field-label" style="margin:0;">Pipelines</label>
                             <span class="pr-builder-hint">chains of stages</span>
+                        </div>
+                        <div class="pr-struct-explainer">
+                            <p class="pr-struct-line">A quest is one or more pipelines — each pipeline is a chain of stages — each stage holds the activities or tasks you'll actually do.</p>
+                            <div class="pr-struct-diagram">
+                                <span class="pr-struct-node">Pipeline</span>
+                                <span class="pr-struct-glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2"/><circle cx="19" cy="6" r="2.2"/><circle cx="19" cy="18" r="2.2"/><path d="M7 11l10-4"/><path d="M7 13l10 4"/></svg></span>
+                                <span class="pr-struct-node">Stage</span>
+                                <span class="pr-struct-glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2"/><circle cx="19" cy="6" r="2.2"/><circle cx="19" cy="18" r="2.2"/><path d="M7 11l10-4"/><path d="M7 13l10 4"/></svg></span>
+                                <span class="pr-struct-node">Activity / Task</span>
+                            </div>
                         </div>
                         <div id="projectBuilder"></div>
                         <button type="button" class="pr-add-pipeline-btn" onclick="projectDraftAddPipeline()">

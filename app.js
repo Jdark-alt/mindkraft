@@ -16180,7 +16180,7 @@
             return Math.round(sum * QUEST_XP_FRACTION);
         }
         function questDaysActive(p) {
-            var start = new Date(p.createdAt || Date.now());
+            var start = new Date(p.lastResetAt || p.createdAt || Date.now());
             return Math.max(1, Math.floor((Date.now() - start.getTime()) / 86400000) + 1);
         }
         function projectCycleReady(p) {
@@ -16211,28 +16211,36 @@
             var stops = hexes.map(function(h, i) { return h + ' ' + Math.round(i / (hexes.length - 1) * 100) + '%'; }).join(', ');
             return ' style="--pr-tint:' + hexes[0] + ';--pr-tint-grad:linear-gradient(180deg, ' + stops + ');--pr-badge:' + badge + ';"';
         }
+        // Dimensions are inferred, not picked: scan every linked-activity item,
+        // dedupe dimensionIds in first-appearance order, and take the most
+        // frequent as the primary tint (ties broken by first appearance).
+        function computeProjectDimensions(pipelines) {
+            _buildActIdx();
+            var order = [], counts = {};
+            (pipelines || []).forEach(function(pl) {
+                (pl.stages || []).forEach(function(s) {
+                    (s.items || []).forEach(function(it) {
+                        if (it.type !== 'activity' || !it.linkedActivityId) return;
+                        var m = actMeta(it.linkedActivityId);
+                        if (!m || !m.dimId) return;
+                        if (order.indexOf(m.dimId) === -1) order.push(m.dimId);
+                        counts[m.dimId] = (counts[m.dimId] || 0) + 1;
+                    });
+                });
+            });
+            var primary = order.length ? order[0] : null, best = order.length ? counts[order[0]] : 0;
+            order.forEach(function(id) { if (counts[id] > best) { best = counts[id]; primary = id; } });
+            return { dimensionIds: order, dimensionId: primary };
+        }
 
         // ── Cadence ────────────────────────────────────────────────────────
-        function cadenceDays(p) {
-            var c = p && p.cadence; if (!c || c.type !== 'recurring') return null;
-            var f = c.frequency;
-            if (f === 'daily') return 1;
-            if (f === 'weekly') return 7; if (f === 'biweekly') return 14; if (f === 'monthly') return 30;
-            if (f === 'custom') return Math.max(1, parseInt(c.customDays, 10) || 7);
-            return null;
-        }
-        function cycleDaysLeft(p) {
-            var d = cadenceDays(p); if (!d) return null;
-            var start = new Date(p.startedCycleAt || p.createdAt || Date.now());
-            return Math.ceil((new Date(start.getTime() + d * 86400000) - new Date()) / 86400000);
-        }
+        // Cadence is a single binary — oneoff vs recurring. No calendar/frequency
+        // dimension: a recurring quest's cycle ends when its items are done, not
+        // on a date. Item-level pacing comes free from linked Activities' own
+        // frequency/timesPerCycle fields.
         function prFreqLabel(p) {
-            var c = p && p.cadence; if (!c || c.type !== 'recurring') return 'One-off';
-            var f = c.frequency;
-            if (f === 'daily') return 'Daily';
-            if (f === 'weekly') return 'Weekly'; if (f === 'biweekly') return 'Every 2 weeks'; if (f === 'monthly') return 'Monthly';
-            if (f === 'custom') return 'Every ' + (Math.max(1, parseInt(c.customDays, 10) || 7)) + ' days';
-            return 'Recurring';
+            var c = p && p.cadence;
+            return (c && c.type === 'recurring') ? 'Recurring' : 'One-off';
         }
 
         function prCheckSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'; }
@@ -16397,7 +16405,6 @@
 
         function renderProjectCard(p) {
             var lvl = p.questLevel || questLevelFromXP(p.questXP || 0);
-            var isRecurring = p.cadence && p.cadence.type === 'recurring';
             var counts = questCounts(p);
             var stats = questItemStats(p);
             var potential = questPotentialBonus(p);
@@ -16415,10 +16422,6 @@
 
             // Status chip (behind pace / paused / complete) — small, below the bar
             var chip = '';
-            if (p.status === 'active' && isRecurring && !projectCycleReady(p)) {
-                var dl = cycleDaysLeft(p);
-                if (dl !== null && dl <= 2) chip = '<span class="pr-chip pr-chip-warn">' + (dl < 0 ? 'Cycle overdue' : dl === 0 ? 'Cycle ends today' : 'Cycle ends in ' + dl + 'd') + '</span>';
-            }
             if (p.status === 'paused') chip = '<span class="pr-chip pr-chip-muted">Paused</span>';
             if (p.status === 'completed') chip = '<span class="pr-chip pr-chip-gold">Complete</span>';
 
@@ -16763,24 +16766,29 @@
             } else if (p.status === 'archived') {
                 out += '<div class="pr-sealed-note">Archived</div><button class="pr-cycle-btn" onclick="unarchiveProject(\'' + p.id + '\')">Restore quest</button>';
             }
+            var canReset = isRecurring ? (p.status === 'active' || p.status === 'paused') : (p.status === 'active' || p.status === 'paused' || p.status === 'completed');
             out += '<div class="pr-actions">';
             out += '<button class="pr-act-btn" onclick="openProjectModal(\'' + p.id + '\')">Edit</button>';
             if (p.status === 'active') out += '<button class="pr-act-btn" onclick="pauseProject(\'' + p.id + '\')">Pause</button>';
+            if (canReset) out += '<button class="pr-act-btn pr-act-reset" onclick="resetProject(\'' + p.id + '\')">' + (isRecurring ? 'Reset cycle' : 'Reset') + '</button>';
             if (p.status !== 'archived') out += '<button class="pr-act-btn" onclick="archiveProject(\'' + p.id + '\')">Archive</button>';
             out += '<button class="pr-act-btn pr-act-danger" onclick="deleteProject(\'' + p.id + '\')">Delete</button>';
             out += '</div>';
             out += '<div class="pr-footer-cad">' + escapeHtml(cadenceFooterText(p)) + '</div></div>';
             return out;
         }
+        // Momentum framing, not deadline framing — pace derived from sealed
+        // cycles in cycleHistory, never from a calendar window.
         function cadenceFooterText(p) {
             var isRecurring = p.cadence && p.cadence.type === 'recurring';
             if (!isRecurring) return 'One-off quest — finishes when you mark it complete.';
-            var dl = cycleDaysLeft(p);
-            var base = 'Repeats ' + prFreqLabel(p).toLowerCase() + '. ';
-            if (dl === null) return base;
-            if (dl < 0) return base + 'Cycle window ended ' + Math.abs(dl) + 'd ago.';
-            if (dl === 0) return base + 'Cycle window ends today.';
-            return base + Math.round(dl) + ' day' + (dl === 1 ? '' : 's') + ' left in this cycle.';
+            var hist = p.cycleHistory || [];
+            var cycleNum = p.currentCycle || 1;
+            if (!hist.length) return 'Cycle ' + cycleNum + ' — seals when everything in it is done.';
+            var last = hist[hist.length - 1];
+            var days = (last.startedAt && last.completedAt)
+                ? Math.max(1, Math.round((new Date(last.completedAt) - new Date(last.startedAt)) / 86400000)) : null;
+            return 'Cycle ' + cycleNum + (days !== null ? ' — last one took ' + days + ' day' + (days === 1 ? '' : 's') + '.' : '.');
         }
 
         // ── Item interaction: tap (increment / complete activity), long-press
@@ -16895,6 +16903,33 @@
         window.archiveProject = function(id) { var p = findProject(id); if (!p) return; p.status = 'archived'; saveUserData(); showToast('Quest archived', 'olive'); window.closeProjectDetail(); };
         window.unarchiveProject = function(id) { var p = findProject(id); if (!p) return; p.status = 'active'; saveUserData(); showToast('Quest restored', 'green'); renderProjectDetail(id); };
         window.reopenProject = function(id) { var p = findProject(id); if (!p) return; p.status = 'active'; p.completedAt = null; saveUserData(); showToast('Quest reopened', 'green'); renderProjectDetail(id); };
+
+        // Drop an in-progress cycle/run and restart clean. Never touches XP —
+        // only clears the quest's own tracking counters. A reset is an
+        // abandonment, not a completion, so it never writes to cycleHistory
+        // and (for recurring quests) never increments currentCycle.
+        window.resetProject = function(id) {
+            var p = findProject(id); if (!p) return;
+            var isRecurring = p.cadence && p.cadence.type === 'recurring';
+            if (isRecurring) {
+                if (p.status !== 'active' && p.status !== 'paused') return;
+                if (!confirm('Reset this cycle? Progress on repeating items will clear, but nothing you’ve already earned is lost. This can’t be undone.')) return;
+                allItems(p).forEach(function(it) { if (it.resetMode !== 'once') { it.completedCount = 0; it.doneAt = null; } });
+                p.startedCycleAt = new Date().toISOString();
+                p.resetCount = (p.resetCount || 0) + 1;
+                showToast('Cycle reset', 'olive');
+            } else {
+                if (p.status !== 'active' && p.status !== 'paused' && p.status !== 'completed') return;
+                if (!confirm('Reset this quest? Progress will clear, but nothing you’ve already earned is lost. This can’t be undone.')) return;
+                allItems(p).forEach(function(it) { it.completedCount = 0; it.doneAt = null; });
+                p.status = 'active'; p.completedAt = null;
+                p.lastResetAt = new Date().toISOString();
+                p.resetCount = (p.resetCount || 0) + 1;
+                showToast('Quest reset', 'olive');
+            }
+            delete _prNextSkip[id]; delete _prNextDone[id];
+            saveUserData(); renderProjectDetail(id);
+        };
         window.deleteProject = function(id) {
             var p = findProject(id); if (!p) return;
             if (!confirm('Delete “' + (p.name || 'this quest') + '” permanently? This can’t be undone.')) return;
@@ -16928,55 +16963,44 @@
                 migrateProject(_projectDraft);
                 if (!_projectDraft.pipelines || !_projectDraft.pipelines.length) _projectDraft.pipelines = [_blankPipeline()];
             } else {
-                _projectDraft = { name: '', description: '', dimensionIds: [], cadence: { type: 'oneoff', frequency: 'weekly', customDays: 7 }, pipelines: [_blankPipeline()] };
+                _projectDraft = { name: '', description: '', cadence: { type: 'oneoff' }, pipelines: [_blankPipeline()] };
             }
             document.getElementById('projectModalTitle').textContent = editing ? 'Edit Quest' : 'New Quest';
             document.getElementById('projectSaveBtn').textContent = editing ? 'Save changes' : 'Create quest';
             document.getElementById('projectName').value = _projectDraft.name || '';
             document.getElementById('projectDesc').value = _projectDraft.description || '';
-            renderProjectDimPills();
             var cadType = (_projectDraft.cadence && _projectDraft.cadence.type) || 'oneoff';
             _applyCadenceUI(cadType);
-            document.getElementById('projectFrequency').value = (_projectDraft.cadence && _projectDraft.cadence.frequency) || 'weekly';
-            var cd = document.getElementById('projectCustomDays');
-            cd.value = (_projectDraft.cadence && _projectDraft.cadence.customDays) || '';
-            cd.style.display = (_projectDraft.cadence && _projectDraft.cadence.frequency === 'custom') ? '' : 'none';
             renderProjectBuilder();
             var body = document.querySelector('#projectModal .pl-modal-body'); if (body) body.scrollTop = 0;
             document.getElementById('projectModal').classList.add('active');
         };
         window.closeProjectModal = function() { document.getElementById('projectModal').classList.remove('active'); _projectDraft = null; _projectEditingId = null; };
 
-        function renderProjectDimPills() {
-            var host = document.getElementById('projectDimPills');
-            if (!host || !_projectDraft) return;
-            var dims = (window.userData.dimensions || []).filter(function(d) { return d.id !== 'uncategorized'; });
-            if (!dims.length) { host.innerHTML = '<span class="pr-dim-none">No life categories yet — you can add one in Activities → Categories.</span>'; return; }
-            var sel = _projectDraft.dimensionIds || [];
-            host.innerHTML = dims.map(function(d) {
-                var hex = (typeof DIM_HEX_MAP !== 'undefined' && DIM_HEX_MAP[d.color]) || '#5a9fd4';
-                var on = sel.indexOf(d.id) !== -1;
-                return '<button type="button" class="pr-dim-pill' + (on ? ' on' : '') + '" style="--pr-dim:' + hex + ';" onclick="toggleProjectDim(\'' + prAttr(d.id) + '\')"><span class="pr-dim-dot"></span>' + escapeHtml(d.name) + '</button>';
-            }).join('');
+        // Dimensions are inferred from the activities in the quest (§7) — this
+        // is a read-only informational line, not a picker.
+        function renderProjectDimReadout() {
+            var wrap = document.getElementById('projectDimReadoutWrap');
+            var host = document.getElementById('projectDimReadout');
+            if (!wrap || !host || !_projectDraft) return;
+            var result = computeProjectDimensions(_projectDraft.pipelines);
+            var names = result.dimensionIds.map(function(id) {
+                var dim = (window.userData.dimensions || []).find(function(d) { return d.id === id; });
+                return dim ? dim.name : null;
+            }).filter(Boolean);
+            if (!names.length) { wrap.style.display = 'none'; host.innerHTML = ''; return; }
+            wrap.style.display = '';
+            host.innerHTML = 'Categories: <strong>' + escapeHtml(names.join(', ')) + '</strong> — set automatically from the activities in this quest.';
         }
-        window.toggleProjectDim = function(id) {
-            if (!_projectDraft) return;
-            _projectDraft.dimensionIds = _projectDraft.dimensionIds || [];
-            var i = _projectDraft.dimensionIds.indexOf(id);
-            if (i === -1) _projectDraft.dimensionIds.push(id); else _projectDraft.dimensionIds.splice(i, 1);
-            renderProjectDimPills();
-        };
 
         window.setProjectCadence = function(type) { if (!_projectDraft) return; _projectDraft.cadence = _projectDraft.cadence || {}; _projectDraft.cadence.type = type; _applyCadenceUI(type); renderProjectBuilder(); };
         function _applyCadenceUI(type) {
             document.getElementById('projectCadenceType').value = type;
             document.querySelectorAll('#projectCadenceSeg .pr-seg-btn').forEach(function(b) { b.classList.toggle('active', b.getAttribute('data-cad') === type); });
-            document.getElementById('projectFreqWrap').style.display = type === 'recurring' ? '' : 'none';
             document.getElementById('projectCadenceHint').textContent = type === 'recurring'
                 ? 'Runs in repeating cycles. Per-cycle items reset each time you seal a cycle.'
                 : 'A single run through the pipeline. Marks complete when you finish.';
         }
-        window.onProjectFreqChange = function() { document.getElementById('projectCustomDays').style.display = document.getElementById('projectFrequency').value === 'custom' ? '' : 'none'; };
 
         function renderProjectBuilder() {
             var host = document.getElementById('projectBuilder');
@@ -17019,6 +17043,7 @@
                 return '<div class="pr-b-pipe">' + pipeHead + stagesHtml +
                     '<button type="button" class="pr-add-stage-btn" onclick="projectDraftAddStage(' + pi + ')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add stage</button></div>';
             }).join('');
+            renderProjectDimReadout();
         }
 
         window.projectDraftSetPipeName = function(pi, v) { if (_projectDraft && _projectDraft.pipelines[pi]) _projectDraft.pipelines[pi].name = v; };
@@ -17088,9 +17113,6 @@
             if (!name) { showToast('Give your quest a name', 'red'); return; }
             var desc = (document.getElementById('projectDesc').value || '').trim();
             var cadType = document.getElementById('projectCadenceType').value || 'oneoff';
-            var freq = document.getElementById('projectFrequency').value || 'weekly';
-            var customDays = parseInt(document.getElementById('projectCustomDays').value, 10);
-            if (cadType === 'recurring' && freq === 'custom' && (!customDays || customDays < 1)) { showToast('Enter how many days per cycle', 'red'); return; }
 
             var pipelines = (_projectDraft.pipelines || []).map(function(pl) {
                 var stages = (pl.stages || []).map(function(s, si) {
@@ -17110,18 +17132,20 @@
             }).filter(function(pl) { return pl.stages.length; });
             if (pipelines.length === 0) pipelines = [_blankPipeline()];
 
-            var cadence = { type: cadType, frequency: freq, customDays: freq === 'custom' ? customDays : null };
-            var dimIds = (_projectDraft.dimensionIds || []).slice();
+            var cadence = { type: cadType };
+            // Dimensions are inferred from linked activities, recomputed on
+            // every save — never hand-picked (§7).
+            var dims = computeProjectDimensions(pipelines);
 
             if (_projectEditingId) {
                 var p = findProject(_projectEditingId);
                 if (!p) { showToast('Quest not found', 'red'); return; }
-                p.name = name; p.description = desc; p.dimensionIds = dimIds; p.dimensionId = dimIds[0] || null;
+                p.name = name; p.description = desc; p.dimensionIds = dims.dimensionIds; p.dimensionId = dims.dimensionId;
                 p.cadence = cadence; p.pipelines = pipelines; p.questLevel = questLevelFromXP(p.questXP || 0);
                 var savedId = p.id;
                 saveUserData(); closeProjectModal(); showToast('✓ Quest updated', 'green'); openProjectDetail(savedId);
             } else {
-                var proj = { id: prId('proj'), name: name, description: desc, dimensionIds: dimIds, dimensionId: dimIds[0] || null,
+                var proj = { id: prId('proj'), name: name, description: desc, dimensionIds: dims.dimensionIds, dimensionId: dims.dimensionId,
                     status: 'active', cadence: cadence, pipelines: pipelines, currentCycle: 1, cycleHistory: [],
                     questXP: 0, questLevel: 1, createdAt: new Date().toISOString(), startedCycleAt: new Date().toISOString() };
                 getProjects().push(proj);
