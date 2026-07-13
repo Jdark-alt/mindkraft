@@ -15077,8 +15077,6 @@
 .pr-struct-line { font-size: 12px; font-weight: 500; line-height: 1.5; color: var(--color-text-secondary); margin: 0 0 9px; }
 .pr-struct-diagram { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .pr-struct-node { font-size: 11px; font-weight: 600; color: var(--color-text-primary); background: var(--recessed-bg-3); border: 1px solid var(--recessed-ring); border-radius: 8px; padding: 5px 9px; white-space: nowrap; }
-.pr-struct-glyph { display: inline-flex; width: 14px; height: 14px; opacity: 0.5; flex-shrink: 0; }
-.pr-struct-glyph svg { width: 100%; height: 100%; }
 .pr-b-stage { background: var(--recessed-bg); border: 1px solid var(--recessed-ring); border-radius: 11px; padding: 11px; margin-bottom: 10px; }
 .pr-b-stage-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
 .pr-b-stage-num { width: 22px; height: 22px; flex-shrink: 0; border-radius: 50%; background: var(--recessed-bg-4); color: var(--color-text-secondary); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }

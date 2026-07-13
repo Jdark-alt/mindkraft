@@ -16222,7 +16222,7 @@
                     (s.items || []).forEach(function(it) {
                         if (it.type !== 'activity' || !it.linkedActivityId) return;
                         var m = actMeta(it.linkedActivityId);
-                        if (!m || !m.dimId) return;
+                        if (!m || !m.dimId || m.dimId === 'uncategorized') return;
                         if (order.indexOf(m.dimId) === -1) order.push(m.dimId);
                         counts[m.dimId] = (counts[m.dimId] || 0) + 1;
                     });
@@ -16873,6 +16873,12 @@
             renderProjectDetail(pid);
         };
 
+        // Zero out a recurring quest's per-cycle items — shared by the cycle-seal
+        // rollover (completeProjectCycle) and an abandon-and-restart (resetProject).
+        // 'once' items are setup work, not part of "starting fresh," so they're
+        // always left untouched.
+        function clearRecurringItems(p) { allItems(p).forEach(function(it) { if (it.resetMode !== 'once') { it.completedCount = 0; it.doneAt = null; } }); }
+
         window.completeProjectCycle = function(projectId) {
             var p = findProject(projectId);
             if (!p || p.status !== 'active') return;
@@ -16883,8 +16889,9 @@
             var stats = questItemStats(p);
             p.cycleHistory = p.cycleHistory || [];
             p.cycleHistory.push({ cycleNumber: p.currentCycle || 1, startedAt: p.startedCycleAt || p.createdAt, completedAt: new Date().toISOString(), itemsCompleted: stats.done, itemsTotal: stats.total });
+            delete _prNextSkip[p.id]; delete _prNextDone[p.id];
             if (p.cadence && p.cadence.type === 'recurring') {
-                allItems(p).forEach(function(it) { if (it.resetMode !== 'once') { it.completedCount = 0; it.doneAt = null; } });
+                clearRecurringItems(p);
                 p.currentCycle = (p.currentCycle || 1) + 1; p.startedCycleAt = new Date().toISOString();
                 var stages = (p.pipelines[0] && p.pipelines[0].stages) || [];
                 var cur = Math.min(currentStageIndex(stages), stages.length - 1);
@@ -16914,9 +16921,12 @@
             if (isRecurring) {
                 if (p.status !== 'active' && p.status !== 'paused') return;
                 if (!confirm('Reset this cycle? Progress on repeating items will clear, but nothing you’ve already earned is lost. This can’t be undone.')) return;
-                allItems(p).forEach(function(it) { if (it.resetMode !== 'once') { it.completedCount = 0; it.doneAt = null; } });
+                clearRecurringItems(p);
                 p.startedCycleAt = new Date().toISOString();
                 p.resetCount = (p.resetCount || 0) + 1;
+                var stages = (p.pipelines[0] && p.pipelines[0].stages) || [];
+                var cur = Math.min(currentStageIndex(stages), stages.length - 1);
+                if (stages[cur]) _prExpandedStage[p.id] = stages[cur].id;
                 showToast('Cycle reset', 'olive');
             } else {
                 if (p.status !== 'active' && p.status !== 'paused' && p.status !== 'completed') return;
@@ -16924,6 +16934,7 @@
                 allItems(p).forEach(function(it) { it.completedCount = 0; it.doneAt = null; });
                 p.status = 'active'; p.completedAt = null;
                 p.lastResetAt = new Date().toISOString();
+                p.startedCycleAt = new Date().toISOString();
                 p.resetCount = (p.resetCount || 0) + 1;
                 showToast('Quest reset', 'olive');
             }
