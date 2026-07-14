@@ -16179,7 +16179,7 @@
             if (type === 'activity' && !it.linkedActivityId) return null;
             return { id: it.id || prId('lf'), kind: 'leaf', type: type, linkedActivityId: type === 'activity' ? it.linkedActivityId : null,
                      name: type === 'activity' ? '' : (it.name || 'Task'), resetMode: it.resetMode === 'once' ? 'once' : 'per-cycle',
-                     requiredCount: req, completedCount: Math.max(0, cc), doneAt: it.doneAt || null };
+                     requiredCount: req, completedCount: Math.max(0, cc) };
         }
         // Defensive normalizer for already-v2 data (fills in defaults, drops
         // orphaned activity leaves whose id is missing).
@@ -16195,7 +16195,7 @@
             if (type === 'activity' && !n.linkedActivityId) return null;
             return { id: n.id || prId('lf'), kind: 'leaf', type: type, linkedActivityId: type === 'activity' ? n.linkedActivityId : null,
                      name: type === 'activity' ? '' : (n.name || 'Task'), resetMode: n.resetMode === 'once' ? 'once' : 'per-cycle',
-                     requiredCount: req, completedCount: Math.max(0, Math.min(req, parseInt(n.completedCount, 10) || 0)), doneAt: n.doneAt || null };
+                     requiredCount: req, completedCount: Math.max(0, Math.min(req, parseInt(n.completedCount, 10) || 0)) };
         }
 
         // ── Activity lookup (cached per top-level render) ──────────────────
@@ -16220,7 +16220,7 @@
         function leafDone(l) { return (l.completedCount || 0) >= itemReq(l); }
         function nodeDone(n) { return n.kind === 'group' ? (n.repsDone || 0) >= (n.repeat || 1) : leafDone(n); }
         function repComplete(g) { return (g.children || []).every(nodeDone); }
-        function resetNode(n) { if (n.kind === 'group') { n.repsDone = 0; (n.children || []).forEach(resetNode); } else { n.completedCount = 0; n.doneAt = null; } }
+        function resetNode(n) { if (n.kind === 'group') { n.repsDone = 0; (n.children || []).forEach(resetNode); } else { n.completedCount = 0; } }
         function settle(n) {
             if (n.kind !== 'group') return;
             (n.children || []).forEach(settle);
@@ -16265,7 +16265,9 @@
             var names = path.filter(function(e) { return e.node.kind === 'group'; }).map(function(e) { return e.node.name || 'Group'; });
             var crumb = names.length ? names.join(' › ') : (topGroup.name || 'Group');
             if ((topGroup.repeat || 1) > 1) crumb += ' · rep ' + ((topGroup.repsDone || 0) + 1) + ' of ' + topGroup.repeat;
-            if (topGroup.ordered) crumb += ' · step ' + ((path.length ? path[0].idx : 0) + 1);
+            // "step K" = the leaf's branch position WITHIN the ordered top group
+            // (path[1]), not the top group's own index among the quest's groups.
+            if (topGroup.ordered) crumb += ' · step ' + ((path[1] ? path[1].idx : 0) + 1);
             return crumb;
         }
 
@@ -16337,11 +16339,6 @@
             (p.dimensionIds || []).forEach(function(id) { var dim = (window.userData.dimensions || []).find(function(d) { return d.id === id; }); if (dim) { var hex = DIM_HEX_MAP[dim.color]; if (hex) out.push(hex); } });
             return out;
         }
-        function projectDimNames(p) {
-            var out = [];
-            (p.dimensionIds || []).forEach(function(id) { var dim = (window.userData.dimensions || []).find(function(d) { return d.id === id; }); if (dim) out.push(dim.name); });
-            return out;
-        }
         // Dimension strip: distinct dimensions → solid segments, hard-stop
         // boundary (no blending). One dim → solid. None → brand fallback.
         function projectStripStyle(p) {
@@ -16394,7 +16391,7 @@
                 migrateProject(p);
                 allLeaves(p).forEach(function(leaf) {
                     if (leaf.type === 'activity' && leaf.linkedActivityId === activityId && (leaf.completedCount || 0) < itemReq(leaf)) {
-                        leaf.completedCount = (leaf.completedCount || 0) + 1; leaf.doneAt = new Date().toISOString();
+                        leaf.completedCount = (leaf.completedCount || 0) + 1;
                     }
                 });
                 settleAll(p);
@@ -16845,7 +16842,7 @@
             var repeats = (g.repeat || 1) > 1;
             return '<div class="pr-nested-head"><span>' + escapeHtml(g.name || 'Group') + '</span>' +
                 (repeats ? '<span class="pr-nested-rep">×' + g.repeat + (nodeDone(g) ? ' · done' : ' · ' + Math.min((g.repsDone || 0) + 1, g.repeat) + '/' + g.repeat) + '</span>' : '') +
-                '<span class="pr-nested-mode">' + (g.ordered ? 'in order' : 'any order') + '</span>' +
+                '<span class="pr-nested-mode">' + (g.ordered ? 'sequence' : 'list') + '</span>' +
             '</div>';
         }
         function renderChecklist(p, nodes) {
@@ -16861,7 +16858,7 @@
             var repeats = (g.repeat || 1) > 1;
             var h = '<div class="pr-group"><div class="pr-group-head">' +
                 '<span class="pr-group-title">' + escapeHtml(g.name || 'Group') + '</span>' +
-                '<span class="pr-group-mode ' + (g.ordered ? 'pr-mode-ord' : 'pr-mode-un') + '">' + (g.ordered ? 'in order' : 'any order') + '</span>' +
+                '<span class="pr-group-mode ' + (g.ordered ? 'pr-mode-ord' : 'pr-mode-un') + '">' + (g.ordered ? 'sequence' : 'list') + '</span>' +
                 '<span class="pr-group-frac">' + gd + '/' + (g.children || []).length + '</span>' +
             '</div>';
             if (repeats) h += renderRepDots(g);
@@ -16961,8 +16958,8 @@
 
             if (leaf.type === 'task') {
                 var before = snapshotReps(p);
-                if ((leaf.completedCount || 0) < req) { leaf.completedCount = (leaf.completedCount || 0) + 1; leaf.doneAt = new Date().toISOString(); }
-                else { leaf.completedCount = 0; leaf.doneAt = null; }
+                if ((leaf.completedCount || 0) < req) { leaf.completedCount = (leaf.completedCount || 0) + 1; }
+                else { leaf.completedCount = 0; }
                 finishMutation(p, before, leafId);
                 return;
             }
@@ -16975,7 +16972,7 @@
                 if (typeof isCompletedToday === 'function' && isCompletedToday(act) && !allowMulti) {
                     if ((leaf.completedCount || 0) === 0) {
                         var before3 = snapshotReps(p);
-                        leaf.completedCount = 1; leaf.doneAt = new Date().toISOString();
+                        leaf.completedCount = 1;
                         finishMutation(p, before3, leafId);
                     } else {
                         showToast('“' + (act.name || 'Activity') + '” is already done for today', 'olive');
@@ -17088,7 +17085,7 @@
 
         function clearCycleNode(n) {
             if (n.kind === 'group') { n.repsDone = 0; (n.children || []).forEach(clearCycleNode); }
-            else if (n.resetMode !== 'once') { n.completedCount = 0; n.doneAt = null; }
+            else if (n.resetMode !== 'once') { n.completedCount = 0; }
         }
         function clearRecurringItems(p) { (p.groups || []).forEach(clearCycleNode); }
 
@@ -17281,7 +17278,6 @@
             var isAct = type === 'activity';
             var req = seed ? Math.max(1, seed.requiredCount || 1) : 1;
             var completedCount = seed ? Math.max(0, seed.completedCount || 0) : 0;
-            var doneAt = seed && seed.doneAt ? seed.doneAt : '';
             var resetMode = seed && seed.resetMode === 'once' ? 'once' : 'per-cycle';
             var meta = isAct ? actMeta(seed.linkedActivityId) : null;
             var dimHex = meta ? meta.dimHex : null;
@@ -17293,7 +17289,6 @@
             row.setAttribute('data-type', type);
             row.setAttribute('data-linked-id', isAct ? (seed.linkedActivityId || '') : '');
             row.setAttribute('data-completed-count', completedCount);
-            row.setAttribute('data-done-at', doneAt);
             row.setAttribute('data-reset-mode', resetMode);
             row.innerHTML =
                 '<span class="pr-b-handle" data-draghandle aria-label="Drag">' + prDragSvg() + '</span>' +
@@ -17450,17 +17445,16 @@
             var reqEl = el.querySelector(':scope > .pr-b-mini-step .pr-b-mini-val');
             var req = parseInt((reqEl ? reqEl.textContent : '×1').replace('×', ''), 10) || 1;
             var completedCount = Math.max(0, Math.min(req, parseInt(el.getAttribute('data-completed-count'), 10) || 0));
-            var doneAt = el.getAttribute('data-done-at') || null;
             var resetMode = el.getAttribute('data-reset-mode') === 'once' ? 'once' : 'per-cycle';
             if (type === 'activity') {
                 var linkedId = el.getAttribute('data-linked-id');
                 if (!linkedId) return null;
-                return { id: el.getAttribute('data-id') || prId('lf'), kind: 'leaf', type: 'activity', linkedActivityId: linkedId, name: '', resetMode: resetMode, requiredCount: req, completedCount: completedCount, doneAt: doneAt };
+                return { id: el.getAttribute('data-id') || prId('lf'), kind: 'leaf', type: 'activity', linkedActivityId: linkedId, name: '', resetMode: resetMode, requiredCount: req, completedCount: completedCount };
             }
             var nameInp = el.querySelector(':scope > .pr-b-item-body > .pr-b-item-name-inp');
             var name = ((nameInp ? nameInp.value : '') || '').trim();
             if (!name) return null;
-            return { id: el.getAttribute('data-id') || prId('lf'), kind: 'leaf', type: 'task', linkedActivityId: null, name: name, resetMode: resetMode, requiredCount: req, completedCount: completedCount, doneAt: doneAt };
+            return { id: el.getAttribute('data-id') || prId('lf'), kind: 'leaf', type: 'task', linkedActivityId: null, name: name, resetMode: resetMode, requiredCount: req, completedCount: completedCount };
         }
         function readGroupCard(el) {
             var gid = el.getAttribute('data-group');
