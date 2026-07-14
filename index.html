@@ -1480,12 +1480,12 @@
                         <label class="pl-field-label">Quest name</label>
                         <div class="pr-b-name-row">
                             <input type="text" id="projectEmoji" class="pl-input pr-b-emoji-input" value="🎯" maxlength="2" aria-label="Emoji">
-                            <input type="text" id="projectName" class="pl-input pr-b-name-input" placeholder="e.g., Successful YouTube channel" required>
+                            <input type="text" id="projectName" class="pl-input pr-b-name-input" placeholder="e.g. Learn Spanish, Run a 5K, Launch my shop" required>
                         </div>
                     </div>
 
-                    <div class="cat-form-group">
-                        <label class="pl-field-label">Description <span class="pl-field-optional">optional</span></label>
+                    <div class="cat-form-group pr-b-desc-group">
+                        <label class="pl-field-label">Description <span class="pl-field-optional">(optional)</span></label>
                         <textarea id="projectDesc" class="pl-input pr-b-desc" placeholder="What's this quest about?" maxlength="240" rows="2"></textarea>
                     </div>
 
@@ -1499,17 +1499,18 @@
                         <input type="hidden" id="projectCadenceType" value="oneoff">
                         <div class="pr-seg" id="projectCadenceSeg">
                             <button type="button" class="pr-seg-btn active" data-cad="oneoff" onclick="setProjectCadence('oneoff')">One-off</button>
-                            <button type="button" class="pr-seg-btn" data-cad="recurring" onclick="setProjectCadence('recurring')">Repeating</button>
+                            <button type="button" class="pr-seg-btn" data-cad="recurring" onclick="setProjectCadence('recurring')">Repeat</button>
                         </div>
-                        <p class="pr-cad-hint" id="projectCadenceHint">A single run. Marks complete when everything is done.</p>
+                        <p class="pr-cad-hint" id="projectCadenceHint">Quest is archived after completion. For one time projects.</p>
                     </div>
 
                     <!-- Groups builder -->
                     <div class="cat-form-group">
-                        <div class="pr-builder-head">
-                            <label class="pl-field-label" style="margin:0;">Build it</label>
+                        <div class="pr-builder-head pr-help-toggle" onclick="toggleBuilderHelp()" role="button" tabindex="0" aria-expanded="false" aria-controls="builderHelpBody">
+                            <label class="pl-field-label" style="margin:0;">How to build a quest?</label>
+                            <svg class="pr-help-chev" id="builderHelpChev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
                         </div>
-                        <p class="pr-struct-line">A quest is one or more <strong>groups</strong> of activities and tasks. Add to a group — that's already a working quest. Set a <strong>repeat</strong> to do the whole group several times, turn on <strong>in order</strong> to make it a sequence, or add a <strong>nested group</strong> to break a step into its own tasks.</p>
+                        <p class="pr-struct-line pr-help-body" id="builderHelpBody">Quests are made of groups that are a list of activities or tasks. Create a simple to do list for everyday goals, or a sequence of connected activities, and multiple nested groups for complex projects. Set activities or groups on repeat to add routines inside your quests.</p>
                         <div id="projectBuilder"></div>
                         <button type="button" class="pr-add-pipeline-btn" onclick="addGroup()">
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>

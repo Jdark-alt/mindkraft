@@ -16109,14 +16109,12 @@
         function prChevSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>'; }
         function prPlusSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>'; }
         function prMinusSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14"/></svg>'; }
-        function prRepeatSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>'; }
         function prPlaySvg() { return '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>'; }
         function prLinkSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 0 10h-2M8 12h8"/></svg>'; }
         function prDragSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01"/></svg>'; }
         function prArrowSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6"/></svg>'; }
         function prXSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>'; }
         function prGroupSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/></svg>'; }
-        function orderedMiniSvg() { return '<svg class="pr-b-ordmini" viewBox="0 0 52 20"><line class="pr-b-mini-rail" x1="8" y1="10" x2="44" y2="10" stroke-width="2"/><circle cx="10" cy="10" r="5" stroke-width="1.5"/><circle cx="26" cy="10" r="5" stroke-width="1.5"/><circle cx="42" cy="10" r="5" stroke-width="1.5"/></svg>'; }
 
         // ── Data access + migration ────────────────────────────────────────
         function getProjects() {
@@ -16288,7 +16286,12 @@
             var t = 0, d = 0;
             (n.children || []).forEach(function(c) { var s = nodeStats(c); t += s.total; d += s.done; });
             var rep = n.repeat || 1, reps = n.repsDone || 0;
-            return { total: t * rep, done: t * reps + d };
+            // On the final banked rep, settle() deliberately leaves children
+            // marked done (doesn't resetNode them) so the last rep still reads
+            // as complete — so `d` here IS that final rep's contribution and
+            // must not be added on top of `t*reps`, or done exceeds total.
+            var done = reps < rep ? (t * reps + d) : (t * rep);
+            return { total: t * rep, done: done };
         }
         function questStats(p) {
             var t = 0, d = 0;
@@ -16525,7 +16528,7 @@
                 return '<span class="pr-tdot ' + cls + '"></span>';
             }).join('');
             var tagCls = rep ? 'pr-tag-rep' : (g.ordered ? 'pr-tag-ord' : 'pr-tag-un');
-            var tagText = rep ? ('×' + g.repeat) : (g.ordered ? 'in order' : 'any order');
+            var tagText = rep ? ('×' + g.repeat) : (g.ordered ? 'sequence' : 'list');
             return '<div class="pr-thread' + (g.ordered ? ' pr-thread-ordered' : ' pr-thread-un') + '">' +
                 '<span class="pr-thread-name">' + escapeHtml(g.name || 'Group') + '</span>' +
                 '<div class="pr-thread-line"><span class="pr-thread-rail"></span><div class="pr-thread-dots">' + dots + '</div></div>' +
@@ -16613,12 +16616,6 @@
             });
         }
 
-        function renderOrderBanner(p) {
-            var hasOrdered = (p.groups || []).some(function(g) { return g.ordered && (g.children || []).length > 1; });
-            if (!hasOrdered) return '';
-            return '<div class="pr-banner"><span class="pr-banner-dot"></span><p>Steps below show a <b>suggested order</b> — tap any step to see and mark it, even ahead of the current one.</p></div>';
-        }
-
         function renderProjectDetail(id) {
             _buildActIdx();
             var p = findProject(id);
@@ -16667,12 +16664,11 @@
                     ) +
                 '</div>';
 
-            var banner = (p.status === 'active') ? renderOrderBanner(p) : '';
             var whatsNext = renderWhatsNext(p);
             var groupsHtml = (p.groups || []).map(renderGroupBlock.bind(null, p)).join('');
             var footer = renderProjectFooter(p);
 
-            dv.innerHTML = header + banner + whatsNext + '<div class="pr-groups">' + groupsHtml + '</div>' + footer;
+            dv.innerHTML = header + whatsNext + '<div class="pr-groups">' + groupsHtml + '</div>' + footer;
             _prFlashRep = null; _prFlashStep = null;
             requestAnimationFrame(function() { centerPipes(dv); window.scrollTo(0, prevScroll); });
         }
@@ -16920,10 +16916,24 @@
             var g = findNode(p, gid); if (!g || g.kind !== 'group') return;
             var node = (g.children || []).find(function(c) { return c.id === nodeId; });
             if (!node) return;
-            if (isCurrent && node.kind === 'leaf') { window.bumpLeaf(pid, nodeId); return; }
+            if (isCurrent && node.kind === 'leaf') { window.bumpLeaf(pid, nodeId); return; } // finishMutation -> setFocusPath keeps its card showing
             _prFocusNode[pid + ':' + gid] = nodeId;
             renderProjectDetail(pid);
         };
+
+        // Keep every ordered ancestor's "Do now" panel pointed at the node that
+        // was just acted on, instead of letting currentIndex() silently auto-
+        // advance past it the instant it's marked done — so a single-tap leaf
+        // (no counter, no repeat) still shows its own card after completion,
+        // not just multi-count leaves that happen to stay "current" for a
+        // few extra taps.
+        function setFocusPath(p, leafId) {
+            var path = findPath(p, leafId);
+            if (!path || !path.length) return;
+            for (var i = 0; i < path.length - 1; i++) {
+                if (path[i].node.kind === 'group') _prFocusNode[p.id + ':' + path[i].node.id] = path[i + 1].node.id;
+            }
+        }
 
         // ── Leaf mutation — funnels through one apply step that settles reps,
         //    computes flash targets, saves, and re-renders. ─────────────────
@@ -16933,6 +16943,7 @@
             (p.groups || []).forEach(function(g, i) { var f = trackBank(g, beforeSnap[i]); if (f) bankedGroupId = f; });
             _prFlashRep = bankedGroupId;
             _prFlashStep = bankedGroupId ? null : leafId;
+            setFocusPath(p, leafId);
             if (!alreadySaved) debouncedSaveUserData();
             if (window._openProjectId === p.id) renderProjectDetail(p.id);
             if (p.status === 'active' && projectCycleReady(p)) {
@@ -17140,6 +17151,9 @@
             document.getElementById('projectDesc').value = editing ? (editing.description || '') : '';
             var cadType = editing && editing.cadence ? editing.cadence.type : 'oneoff';
             _applyCadenceUI(cadType);
+            var helpBody = document.getElementById('builderHelpBody'), helpChev = document.getElementById('builderHelpChev');
+            if (helpBody) helpBody.classList.remove('open');
+            if (helpChev) helpChev.classList.remove('open');
             _buildActIdx();
             var host = document.getElementById('projectBuilder');
             host.innerHTML = '';
@@ -17159,9 +17173,17 @@
             document.getElementById('projectCadenceType').value = type;
             document.querySelectorAll('#projectCadenceSeg .pr-seg-btn').forEach(function(b) { b.classList.toggle('active', b.getAttribute('data-cad') === type); });
             document.getElementById('projectCadenceHint').textContent = type === 'recurring'
-                ? 'Runs in repeating cycles. Per-cycle items reset each time you seal a cycle.'
-                : 'A single run. Marks complete when everything is done.';
+                ? 'Quest restarts after completion. For routines and larger habits.'
+                : 'Quest is archived after completion. For one time projects.';
         }
+        window.toggleBuilderHelp = function() {
+            var body = document.getElementById('builderHelpBody');
+            var chev = document.getElementById('builderHelpChev');
+            var toggle = document.querySelector('.pr-help-toggle');
+            var open = body ? body.classList.toggle('open') : false;
+            if (chev) chev.classList.toggle('open', open);
+            if (toggle) toggle.setAttribute('aria-expanded', open);
+        };
 
         function renderProjectDimReadout() {
             var wrap = document.getElementById('projectDimReadoutWrap');
@@ -17174,8 +17196,6 @@
             wrap.style.display = '';
             host.innerHTML = 'Categories: <strong>' + escapeHtml(names.join(', ')) + '</strong> — set automatically from the activities in this quest.';
         }
-
-        function repSubCopy(v) { return v > 1 ? ('the whole group runs ' + v + ' times — everything inside repeats') : 'runs once'; }
 
         function wireDragHandle(el) {
             var h = el.querySelector('[data-draghandle]');
@@ -17194,15 +17214,18 @@
             wrap.innerHTML =
                 '<div class="pr-b-group-head">' +
                     '<span class="pr-b-handle" data-draghandle aria-label="Drag">' + prDragSvg() + '</span>' +
-                    '<input class="pr-b-group-name" value="' + prAttr(seed ? seed.name : '') + '" placeholder="Name this group — e.g. Nutrition (optional)">' +
+                    '<input class="pr-b-group-name" value="' + prAttr(seed ? seed.name : '') + '" placeholder="Group name — e.g. Morning routine">' +
                     '<button type="button" class="pr-b-group-x" aria-label="Remove group" onclick="removeGroupCard(\'' + gid + '\')">' + prXSvg() + '</button>' +
                 '</div>' +
-                '<div class="pr-b-rep-ctrl"><div class="pr-b-rep-txt"><div class="pr-b-rep-title">' + prRepeatSvg() + 'Repeat this whole group</div><div class="pr-b-rep-sub">' + repSubCopy(repeat) + '</div></div>' +
-                    '<div class="pr-b-stepper"><button type="button" aria-label="Fewer" onclick="stepGroupRepeat(\'' + gid + '\',-1)">' + prMinusSvg() + '</button><span class="pr-b-stepper-val">×' + repeat + '</span><button type="button" aria-label="More" onclick="stepGroupRepeat(\'' + gid + '\',1)">' + prPlusSvg() + '</button></div></div>' +
-                '<div class="pr-b-ordtog' + (ordered ? ' pr-b-on' : '') + '" onclick="toggleGroupOrdered(this)" role="switch" aria-checked="' + ordered + '">' +
-                    orderedMiniSvg() +
-                    '<div class="pr-b-ordtog-txt"><div class="pr-b-ordtog-title">These happen in order</div><div class="pr-b-ordtog-sub">' + (ordered ? 'shown as a sequence — any step can still be marked' : 'off — do them in any order') + '</div></div>' +
-                    '<span class="pr-b-switch"></span>' +
+                '<div class="pr-b-ctrl-row">' +
+                    '<div class="pr-b-ctrl-ord' + (ordered ? ' pr-b-on' : '') + '" onclick="toggleGroupOrdered(this)" role="switch" aria-checked="' + ordered + '">' +
+                        '<span class="pr-b-ctrl-label">Make this a Sequence</span>' +
+                        '<span class="pr-b-switch"></span>' +
+                    '</div>' +
+                    '<div class="pr-b-ctrl-rep">' +
+                        '<span class="pr-b-ctrl-label">Repeat this entire group</span>' +
+                        '<div class="pr-b-stepper"><button type="button" aria-label="Fewer" onclick="stepGroupRepeat(\'' + gid + '\',-1)">' + prMinusSvg() + '</button><span class="pr-b-stepper-val">×' + repeat + '</span><button type="button" aria-label="More" onclick="stepGroupRepeat(\'' + gid + '\',1)">' + prPlusSvg() + '</button></div>' +
+                    '</div>' +
                 '</div>' +
                 '<div class="pr-b-zone" data-dropzone data-group="' + gid + '"></div>' +
                 '<div class="pr-b-empty" data-empty>No activities, tasks, or groups yet</div>' +
@@ -17241,17 +17264,15 @@
         window.toggleGroupOrdered = function(el) {
             var on = el.classList.toggle('pr-b-on');
             el.setAttribute('aria-checked', on);
-            el.querySelector('.pr-b-ordtog-sub').textContent = on ? 'shown as a sequence — any step can still be marked' : 'off — do them in any order';
         };
         window.stepGroupRepeat = function(gid, delta) {
             var wrap = document.querySelector('.pr-b-group[data-group="' + gid + '"]');
             if (!wrap) return;
-            var el = wrap.querySelector(':scope > .pr-b-rep-ctrl .pr-b-stepper-val');
+            var el = wrap.querySelector(':scope > .pr-b-ctrl-row .pr-b-stepper-val');
             var v = parseInt(el.textContent.replace('×', ''), 10) || 1;
             v = Math.max(1, Math.min(20, v + delta));
             el.textContent = '×' + v;
             wrap.classList.toggle('pr-b-repeating', v > 1);
-            wrap.querySelector(':scope > .pr-b-rep-ctrl .pr-b-rep-sub').textContent = repSubCopy(v);
         };
 
         function addLeafRow(zoneEl, seed) {
@@ -17281,7 +17302,7 @@
                         ? '<div class="pr-b-item-name pr-b-item-name-static" title="' + prAttr(displayName) + '">' + escapeHtml(displayName) + '</div>'
                         : '<input class="pr-b-item-name pr-b-item-name-inp" value="' + prAttr(displayName) + '" placeholder="Task name">') +
                     '<div class="pr-b-item-meta ' + (isAct ? 'pr-meta-act' : 'pr-meta-task') + '">' +
-                        (isAct ? ('<span class="pr-b-mdot" style="background:' + (dimHex || '#8a9099') + '"></span>' + escapeHtml(meta ? meta.dimName : 'Unknown') + ' · linked') : 'one-off task') +
+                        (isAct ? ('<span class="pr-b-mdot" style="background:' + (dimHex || '#8a9099') + '"></span>' + escapeHtml(meta ? meta.dimName : 'Unknown')) : 'one-off task') +
                     '</div>' +
                 '</div>' +
                 '<span class="pr-b-mini-step" title="Times to complete"><button type="button" aria-label="Fewer" onclick="stepLeafCount(this,-1)">' + prMinusSvg() + '</button><span class="pr-b-mini-val' + (req > 1 ? ' pr-hot' : '') + '">×' + req + '</span><button type="button" aria-label="More" onclick="stepLeafCount(this,1)">' + prPlusSvg() + '</button></span>' +
@@ -17445,9 +17466,9 @@
             var gid = el.getAttribute('data-group');
             var nameInp = el.querySelector(':scope > .pr-b-group-head > .pr-b-group-name');
             var name = ((nameInp ? nameInp.value : '') || '').trim();
-            var ordtog = el.querySelector(':scope > .pr-b-ordtog');
+            var ordtog = el.querySelector(':scope > .pr-b-ctrl-row > .pr-b-ctrl-ord');
             var ordered = !!(ordtog && ordtog.classList.contains('pr-b-on'));
-            var stepVal = el.querySelector(':scope > .pr-b-rep-ctrl .pr-b-stepper-val');
+            var stepVal = el.querySelector(':scope > .pr-b-ctrl-row .pr-b-stepper-val');
             var repeat = parseInt((stepVal ? stepVal.textContent : '×1').replace('×', ''), 10) || 1;
             var repsDone = Math.min(repeat, Math.max(0, parseInt(el.getAttribute('data-reps-done'), 10) || 0));
             var zone = el.querySelector(':scope > .pr-b-zone');
