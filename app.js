@@ -16066,17 +16066,22 @@
         })();
 
         /* ═══════════════════════════════════════════════════════════════════
-        /* ═══════════════════════════════════════════════════════════════════
-           QUESTS (Projects) — v4 redesign
-           A Quest is one or more PIPELINES (chains of STAGES), each stage
-           holding ITEMS. An item is a linked ACTIVITY or a naked TASK, and
-           each carries requiredCount / completedCount (repeatable). Completing
-           a linked activity pays the user a real 20% bonus XP (same amount that
-           drives the quest's level — one ledger, not two). Two jobs, always:
-           bird's-eye clarity, and earned pride. Follows the Design Brief.
+           QUESTS (Projects) — v5 redesign: recursive groups
+           A Quest is a tree of GROUPS and LEAVES. A Group is a container —
+           ordered (sequence/pipeline) or unordered (checklist) — that can
+           repeat N times; its children are other Groups or Leaves, any depth.
+           A Leaf is a linked ACTIVITY or a local TASK with a target count.
+           Ordered groups still render as a pipeline, but order is a map, not
+           a gate — every step can be seen and marked, not just the current
+           one. Completing a linked activity anywhere (main tracker, another
+           quest, this quest) pays the real 20% bonus XP through the same
+           completeActivity/undoActivity path — one ledger, not two — and
+           every quest that references it advances together. Follows the
+           Design Brief.
            ═══════════════════════════════════════════════════════════════════ */
 
         var QUEST_XP_FRACTION = 0.2;   // real bonus XP paid per linked completion
+        var DEFAULT_QUEST_EMOJI = '🎯';
 
         // ── ids / escaping ─────────────────────────────────────────────────
         function prId(prefix) { return (prefix || 'pr') + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
@@ -16085,6 +16090,7 @@
                 .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
                 .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
+        function hexA(hex, a) { if (!hex) return 'rgba(138,144,153,' + a + ')'; var n = parseInt(hex.slice(1), 16); return 'rgba(' + (n >> 16 & 255) + ',' + (n >> 8 & 255) + ',' + (n & 255) + ',' + a + ')'; }
 
         // Quest level — open-ended, derived from cumulative bonus XP paid.
         function questLevelFromXP(xp) {
@@ -16093,6 +16099,21 @@
             while (xp >= 25 * (L * (L + 1) / 2)) L++;
             return L;
         }
+
+        // ── icons ───────────────────────────────────────────────────────────
+        function prCheckSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'; }
+        function prUndoSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M3.5 13a9 9 0 1 0 2.3-9.3L3 6"/></svg>'; }
+        function prChevSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>'; }
+        function prPlusSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>'; }
+        function prMinusSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14"/></svg>'; }
+        function prRepeatSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>'; }
+        function prPlaySvg() { return '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>'; }
+        function prLinkSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 0 10h-2M8 12h8"/></svg>'; }
+        function prDragSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01"/></svg>'; }
+        function prArrowSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6"/></svg>'; }
+        function prXSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>'; }
+        function prGroupSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/></svg>'; }
+        function orderedMiniSvg() { return '<svg class="pr-b-ordmini" viewBox="0 0 52 20"><line class="pr-b-mini-rail" x1="8" y1="10" x2="44" y2="10" stroke-width="2"/><circle cx="10" cy="10" r="5" stroke-width="1.5"/><circle cx="26" cy="10" r="5" stroke-width="1.5"/><circle cx="42" cy="10" r="5" stroke-width="1.5"/></svg>'; }
 
         // ── Data access + migration ────────────────────────────────────────
         function getProjects() {
@@ -16106,41 +16127,74 @@
         function migrateProject(p) {
             if (!p) return p;
             if (p.dimensionIds === undefined) p.dimensionIds = p.dimensionId ? [p.dimensionId] : [];
-            if (!Array.isArray(p.pipelines)) {
-                var stages = Array.isArray(p.stages) ? p.stages : [];
-                p.pipelines = [{ id: prId('pl'), name: '', stages: stages.map(migrateStage) }];
-                delete p.stages;
+            if (!p.emoji) p.emoji = DEFAULT_QUEST_EMOJI;
+            if (!Array.isArray(p.groups)) {
+                var pipelines = Array.isArray(p.pipelines) ? p.pipelines : legacyStagesToPipelines(p);
+                p.groups = pipelinesToGroups(pipelines);
+                delete p.pipelines; delete p.stages;
             } else {
-                p.pipelines.forEach(function(pl) { if (!Array.isArray(pl.stages)) pl.stages = []; pl.stages = pl.stages.map(migrateStage); });
+                p.groups = p.groups.map(migrateNode).filter(Boolean);
+                if (!p.groups.length) p.groups = [blankGroup()];
             }
-            if (p.pipelines.length === 0) p.pipelines = [{ id: prId('pl'), name: '', stages: [{ id: prId('st'), name: 'To Do', order: 0, items: [] }] }];
+            p.schemaVersion = 2;
             if (typeof p.questXP !== 'number') p.questXP = p.projectXP || 0;
             p.questLevel = questLevelFromXP(p.questXP);
             return p;
         }
-        function migrateStage(s) {
-            if (!s) return { id: prId('st'), name: 'Stage', order: 0, items: [] };
-            if (!Array.isArray(s.items)) {
-                var tasks = Array.isArray(s.tasks) ? s.tasks : [];
-                s.items = tasks.map(function(t) {
-                    return { id: t.id || prId('it'), type: t.linkedActivityId ? 'activity' : 'task',
-                             linkedActivityId: t.linkedActivityId || null, name: t.linkedActivityId ? '' : (t.name || 'Task'),
-                             resetMode: t.resetMode === 'once' ? 'once' : 'per-cycle', done: !!t.done, requiredCount: 1 };
-                });
-                delete s.tasks;
-            }
-            s.items = s.items.map(migrateItem);
-            return s;
+        function blankGroup() { return { id: prId('grp'), kind: 'group', name: '', ordered: false, repeat: 1, repsDone: 0, children: [] }; }
+        function legacyStagesToPipelines(p) {
+            var stages = Array.isArray(p.stages) ? p.stages : [];
+            return [{ id: prId('pl'), name: '', stages: stages }];
         }
-        function migrateItem(it, i) {
+        // v1 (pipelines[].stages[].items[]) → v2 (recursive groups[]). Each
+        // pipeline becomes an ordered group; a stage with >1 items becomes a
+        // nested unordered group; a stage with exactly 1 item collapses
+        // straight to that Leaf (no synthetic wrapper).
+        function pipelinesToGroups(pipelines) {
+            var groups = (pipelines || []).map(function(pl) {
+                var children = (pl.stages || []).map(legacyStageToNode).filter(Boolean);
+                return { id: pl.id || prId('grp'), kind: 'group', name: pl.name || '', ordered: true, repeat: 1, repsDone: 0, children: children };
+            }).filter(function(g) { return g.children.length; });
+            if (!groups.length) groups = [blankGroup()];
+            return groups;
+        }
+        function legacyStageToNode(s) {
+            if (!s) return null;
+            var rawItems = Array.isArray(s.items) ? s.items : (Array.isArray(s.tasks) ? s.tasks.map(function(t) {
+                return { id: t.id, type: t.linkedActivityId ? 'activity' : 'task', linkedActivityId: t.linkedActivityId || null,
+                         name: t.linkedActivityId ? '' : (t.name || 'Task'), resetMode: t.resetMode === 'once' ? 'once' : 'per-cycle',
+                         requiredCount: 1, completedCount: t.done ? 1 : 0 };
+            }) : []);
+            var items = rawItems.map(legacyItemToLeaf).filter(Boolean);
+            if (!items.length) return null;
+            if (items.length === 1) return items[0];
+            return { id: s.id || prId('grp'), kind: 'group', name: s.name || '', ordered: false, repeat: 1, repsDone: 0, children: items };
+        }
+        function legacyItemToLeaf(it) {
+            if (!it) return null;
             var req = Math.max(1, parseInt(it.requiredCount, 10) || 1);
             var cc = (typeof it.completedCount === 'number') ? it.completedCount : (it.done ? req : 0);
-            return { id: it.id || prId('it'), order: (typeof it.order === 'number' ? it.order : i),
-                     type: it.type === 'activity' ? 'activity' : 'task',
-                     linkedActivityId: it.type === 'activity' ? (it.linkedActivityId || null) : null,
-                     name: it.type === 'activity' ? '' : (it.name || 'Task'),
-                     resetMode: it.resetMode === 'once' ? 'once' : 'per-cycle',
+            var type = it.type === 'activity' ? 'activity' : 'task';
+            if (type === 'activity' && !it.linkedActivityId) return null;
+            return { id: it.id || prId('lf'), kind: 'leaf', type: type, linkedActivityId: type === 'activity' ? it.linkedActivityId : null,
+                     name: type === 'activity' ? '' : (it.name || 'Task'), resetMode: it.resetMode === 'once' ? 'once' : 'per-cycle',
                      requiredCount: req, completedCount: Math.max(0, cc), doneAt: it.doneAt || null };
+        }
+        // Defensive normalizer for already-v2 data (fills in defaults, drops
+        // orphaned activity leaves whose id is missing).
+        function migrateNode(n) {
+            if (!n) return null;
+            if (n.kind === 'group') {
+                var children = (n.children || []).map(migrateNode).filter(Boolean);
+                return { id: n.id || prId('grp'), kind: 'group', name: n.name || '', ordered: !!n.ordered,
+                         repeat: Math.max(1, parseInt(n.repeat, 10) || 1), repsDone: Math.max(0, parseInt(n.repsDone, 10) || 0), children: children };
+            }
+            var req = Math.max(1, parseInt(n.requiredCount, 10) || 1);
+            var type = n.type === 'activity' ? 'activity' : 'task';
+            if (type === 'activity' && !n.linkedActivityId) return null;
+            return { id: n.id || prId('lf'), kind: 'leaf', type: type, linkedActivityId: type === 'activity' ? n.linkedActivityId : null,
+                     name: type === 'activity' ? '' : (n.name || 'Task'), resetMode: n.resetMode === 'once' ? 'once' : 'per-cycle',
+                     requiredCount: req, completedCount: Math.max(0, Math.min(req, parseInt(n.completedCount, 10) || 0)), doneAt: n.doneAt || null };
         }
 
         // ── Activity lookup (cached per top-level render) ──────────────────
@@ -16158,44 +16212,123 @@
             return map;
         }
         function actMeta(id) { return (window._prActIdx || {})[id] || null; }
-        // findActivityById(id) already exists earlier in app.js — reuse it.
 
-        // ── Structure helpers ──────────────────────────────────────────────
-        function allStages(p) { var out = []; (p.pipelines || []).forEach(function(pl) { (pl.stages || []).forEach(function(s) { out.push(s); }); }); return out; }
-        function allItems(p) { var out = []; allStages(p).forEach(function(s) { (s.items || []).forEach(function(it) { out.push(it); }); }); return out; }
-        function itemName(it) { if (it.type === 'activity') { var m = actMeta(it.linkedActivityId); return m ? m.name : '(activity removed)'; } return it.name || 'Task'; }
-        function itemReq(it) { return Math.max(1, parseInt(it.requiredCount, 10) || 1); }
-        function itemDone(it) { return Math.min(itemReq(it), Math.max(0, it.completedCount || 0)); }
-        function itemComplete(it) { return (it.completedCount || 0) >= itemReq(it); }
-        // Unit progress within a stage (sums against requiredCount) — drives the ring.
-        function stageUnits(s) { var d = 0, t = 0; (s.items || []).forEach(function(it) { d += itemDone(it); t += itemReq(it); }); return { done: d, total: t }; }
-        function stageComplete(s) { var items = s.items || []; return items.length > 0 && items.every(itemComplete); }
-        function currentStageIndex(stages) { for (var i = 0; i < stages.length; i++) { if (!stageComplete(stages[i])) return i; } return stages.length; }
-        // Item-level done/total (for card + island counts).
-        function questItemStats(p) { var items = allItems(p); return { done: items.filter(itemComplete).length, total: items.length, pct: items.length ? Math.round(items.filter(itemComplete).length / items.length * 100) : 0 }; }
-        function questCounts(p) { var items = allItems(p); var act = 0, task = 0; items.forEach(function(it) { if (it.type === 'activity') act++; else task++; }); return { activities: act, tasks: task, total: items.length }; }
+        // ── Tree algorithm ───────────────────────────────────────────────────
+        function itemReq(l) { return Math.max(1, parseInt(l.requiredCount, 10) || 1); }
+        function itemName(l) { if (l.type === 'activity') { var m = actMeta(l.linkedActivityId); return m ? m.name : '(activity removed)'; } return l.name || 'Task'; }
+        function leafDone(l) { return (l.completedCount || 0) >= itemReq(l); }
+        function nodeDone(n) { return n.kind === 'group' ? (n.repsDone || 0) >= (n.repeat || 1) : leafDone(n); }
+        function repComplete(g) { return (g.children || []).every(nodeDone); }
+        function resetNode(n) { if (n.kind === 'group') { n.repsDone = 0; (n.children || []).forEach(resetNode); } else { n.completedCount = 0; n.doneAt = null; } }
+        function settle(n) {
+            if (n.kind !== 'group') return;
+            (n.children || []).forEach(settle);
+            if (repComplete(n) && (n.repsDone || 0) < (n.repeat || 1)) {
+                n.repsDone = (n.repsDone || 0) + 1;
+                if ((n.repsDone || 0) < (n.repeat || 1)) (n.children || []).forEach(resetNode);
+            }
+        }
+        function settleAll(p) { (p.groups || []).forEach(settle); }
+        function currentIndex(g) { var kids = g.children || []; for (var i = 0; i < kids.length; i++) { if (!nodeDone(kids[i])) return i; } return -1; }
+        function findNode(p, id) {
+            var found = null;
+            (function walk(nodes) {
+                for (var i = 0; i < nodes.length; i++) {
+                    var n = nodes[i];
+                    if (n.id === id) { found = n; return; }
+                    if (n.kind === 'group') { walk(n.children || []); if (found) return; }
+                }
+            })(p.groups || []);
+            return found;
+        }
+        function allLeaves(p) {
+            var out = [];
+            (function walk(nodes) { (nodes || []).forEach(function(n) { if (n.kind === 'group') walk(n.children || []); else out.push(n); }); })(p.groups || []);
+            return out;
+        }
+        function findPath(p, id) {
+            var path = null;
+            (function walk(nodes, trail) {
+                if (path) return;
+                for (var i = 0; i < nodes.length; i++) {
+                    var n = nodes[i];
+                    var trail2 = trail.concat([{ node: n, idx: i }]);
+                    if (n.id === id) { path = trail2; return; }
+                    if (n.kind === 'group') { walk(n.children || [], trail2); if (path) return; }
+                }
+            })(p.groups || [], []);
+            return path;
+        }
+        function crumbFor(p, topGroup, leaf) {
+            var path = findPath(p, leaf.id) || [];
+            var names = path.filter(function(e) { return e.node.kind === 'group'; }).map(function(e) { return e.node.name || 'Group'; });
+            var crumb = names.length ? names.join(' › ') : (topGroup.name || 'Group');
+            if ((topGroup.repeat || 1) > 1) crumb += ' · rep ' + ((topGroup.repsDone || 0) + 1) + ' of ' + topGroup.repeat;
+            if (topGroup.ordered) crumb += ' · step ' + ((path.length ? path[0].idx : 0) + 1);
+            return crumb;
+        }
+
+        // Gold rep-flash / step-flash feedback (spec: diff repsDone before/after
+        // a mutation to know whether a rep just banked, else flash the step).
+        function repsSnapshot(g) { return { r: g.repsDone || 0, k: (g.children || []).filter(function(c) { return c.kind === 'group'; }).map(repsSnapshot) }; }
+        function trackBank(g, before) {
+            var found = null;
+            if ((g.repsDone || 0) > (before.r || 0)) found = g.id;
+            var kids = (g.children || []).filter(function(c) { return c.kind === 'group'; });
+            kids.forEach(function(c, i) { if (before.k && before.k[i]) { var f = trackBank(c, before.k[i]); if (f) found = f; } });
+            return found;
+        }
+
+        // ── Stats ─────────────────────────────────────────────────────────
+        function nodeStats(n) {
+            if (n.kind !== 'group') { var req = itemReq(n); return { total: req, done: Math.min(n.completedCount || 0, req) }; }
+            var t = 0, d = 0;
+            (n.children || []).forEach(function(c) { var s = nodeStats(c); t += s.total; d += s.done; });
+            var rep = n.repeat || 1, reps = n.repsDone || 0;
+            return { total: t * rep, done: t * reps + d };
+        }
+        function questStats(p) {
+            var t = 0, d = 0;
+            (p.groups || []).forEach(function(g) { var s = nodeStats(g); t += s.total; d += s.done; });
+            return { total: t, done: d, pct: t ? Math.round(d / t * 100) : 0 };
+        }
+        function questCounts(p) {
+            var leaves = allLeaves(p), act = 0, task = 0;
+            leaves.forEach(function(l) { if (l.type === 'activity') act++; else task++; });
+            return { activities: act, tasks: task, total: leaves.length };
+        }
         function questPotentialBonus(p) {
             var sum = 0;
-            allItems(p).forEach(function(it) { if (it.type === 'activity') { var m = actMeta(it.linkedActivityId); if (m) sum += (m.baseXP || 0) * itemReq(it); } });
+            (function walk(n, mult) {
+                if (n.kind === 'group') { var m2 = mult * (n.repeat || 1); (n.children || []).forEach(function(c) { walk(c, m2); }); return; }
+                if (n.type === 'activity') { var m = actMeta(n.linkedActivityId); if (m) sum += (m.baseXP || 0) * itemReq(n) * mult; }
+            })({ kind: 'group', repeat: 1, children: p.groups || [] }, 1);
             return Math.round(sum * QUEST_XP_FRACTION);
         }
-        function questDaysActive(p) {
-            var start = new Date(p.lastResetAt || p.createdAt || Date.now());
-            return Math.max(1, Math.floor((Date.now() - start.getTime()) / 86400000) + 1);
-        }
-        function projectCycleReady(p) {
-            var any = false, all = true;
-            allItems(p).forEach(function(it) { if (it.resetMode !== 'once') { any = true; if (!itemComplete(it)) all = false; } });
-            return any && all;
-        }
+        function questDaysActive(p) { var start = new Date(p.lastResetAt || p.createdAt || Date.now()); return Math.max(1, Math.floor((Date.now() - start.getTime()) / 86400000) + 1); }
+        function projectCycleReady(p) { var any = false, all = true; allLeaves(p).forEach(function(l) { if (l.resetMode !== 'once') { any = true; if (!leafDone(l)) all = false; } }); return any && all; }
 
-        // ── Dimensions (multi) ─────────────────────────────────────────────
+        // ── Dimensions (inferred, not picked — brief §"earned, not declared") ─
+        function computeProjectDimensions(groups) {
+            _buildActIdx();
+            var order = [], counts = {};
+            (function walk(nodes) {
+                (nodes || []).forEach(function(n) {
+                    if (n.kind === 'group') { walk(n.children || []); return; }
+                    if (n.type !== 'activity' || !n.linkedActivityId) return;
+                    var m = actMeta(n.linkedActivityId);
+                    if (!m || !m.dimId || m.dimId === 'uncategorized') return;
+                    if (order.indexOf(m.dimId) === -1) order.push(m.dimId);
+                    counts[m.dimId] = (counts[m.dimId] || 0) + 1;
+                });
+            })(groups);
+            var primary = order.length ? order[0] : null, best = order.length ? counts[order[0]] : 0;
+            order.forEach(function(id) { if (counts[id] > best) { best = counts[id]; primary = id; } });
+            return { dimensionIds: order, dimensionId: primary };
+        }
         function projectDimHexes(p) {
             var out = [];
-            (p.dimensionIds || []).forEach(function(id) {
-                var dim = (window.userData.dimensions || []).find(function(d) { return d.id === id; });
-                if (dim) { var hex = (typeof DIM_HEX_MAP !== 'undefined' && DIM_HEX_MAP[dim.color]) || null; if (hex) out.push(hex); }
-            });
+            (p.dimensionIds || []).forEach(function(id) { var dim = (window.userData.dimensions || []).find(function(d) { return d.id === id; }); if (dim) { var hex = DIM_HEX_MAP[dim.color]; if (hex) out.push(hex); } });
             return out;
         }
         function projectDimNames(p) {
@@ -16203,52 +16336,21 @@
             (p.dimensionIds || []).forEach(function(id) { var dim = (window.userData.dimensions || []).find(function(d) { return d.id === id; }); if (dim) out.push(dim.name); });
             return out;
         }
-        function projectTintStyle(p) {
-            var hexes = projectDimHexes(p);
-            var badge = hexes[0] || '#5a9fd4';
-            if (!hexes.length) return ' style="--pr-badge:' + badge + ';"';
-            if (hexes.length === 1) return ' style="--pr-tint:' + hexes[0] + ';--pr-tint-grad:' + hexes[0] + ';--pr-badge:' + badge + ';"';
-            var stops = hexes.map(function(h, i) { return h + ' ' + Math.round(i / (hexes.length - 1) * 100) + '%'; }).join(', ');
-            return ' style="--pr-tint:' + hexes[0] + ';--pr-tint-grad:linear-gradient(180deg, ' + stops + ');--pr-badge:' + badge + ';"';
-        }
-        // Dimensions are inferred, not picked: scan every linked-activity item,
-        // dedupe dimensionIds in first-appearance order, and take the most
-        // frequent as the primary tint (ties broken by first appearance).
-        function computeProjectDimensions(pipelines) {
-            _buildActIdx();
-            var order = [], counts = {};
-            (pipelines || []).forEach(function(pl) {
-                (pl.stages || []).forEach(function(s) {
-                    (s.items || []).forEach(function(it) {
-                        if (it.type !== 'activity' || !it.linkedActivityId) return;
-                        var m = actMeta(it.linkedActivityId);
-                        if (!m || !m.dimId || m.dimId === 'uncategorized') return;
-                        if (order.indexOf(m.dimId) === -1) order.push(m.dimId);
-                        counts[m.dimId] = (counts[m.dimId] || 0) + 1;
-                    });
-                });
-            });
-            var primary = order.length ? order[0] : null, best = order.length ? counts[order[0]] : 0;
-            order.forEach(function(id) { if (counts[id] > best) { best = counts[id]; primary = id; } });
-            return { dimensionIds: order, dimensionId: primary };
+        // Dimension strip: distinct dimensions → solid segments, hard-stop
+        // boundary (no blending). One dim → solid. None → brand fallback.
+        function projectStripStyle(p) {
+            var cols = projectDimHexes(p);
+            if (!cols.length) cols = ['#5a9fd4', '#8e3b5f'];
+            if (cols.length === 1) return 'background:' + cols[0] + ';';
+            var seg = 100 / cols.length, parts = [];
+            cols.forEach(function(c, i) { parts.push(c + ' ' + (seg * i).toFixed(2) + '%'); parts.push(c + ' ' + (seg * (i + 1)).toFixed(2) + '%'); });
+            return 'background:linear-gradient(158deg,' + parts.join(',') + ');';
         }
 
-        // ── Cadence ────────────────────────────────────────────────────────
-        // Cadence is a single binary — oneoff vs recurring. No calendar/frequency
-        // dimension: a recurring quest's cycle ends when its items are done, not
-        // on a date. Item-level pacing comes free from linked Activities' own
-        // frequency/timesPerCycle fields.
-        function prFreqLabel(p) {
-            var c = p && p.cadence;
-            return (c && c.type === 'recurring') ? 'Recurring' : 'One-off';
-        }
-
-        function prCheckSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'; }
-        function prPipeGlyph() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2"/><circle cx="19" cy="6" r="2.2"/><circle cx="19" cy="18" r="2.2"/><path d="M7 11l10-4"/><path d="M7 13l10 4"/></svg>'; }
-
-        // Deterministic flavor line (phrase bank keyed to milestones).
+        // ── Cadence / flavor ──────────────────────────────────────────────
+        function prFreqLabel(p) { var c = p && p.cadence; return (c && c.type === 'recurring') ? 'Repeating' : 'One-off'; }
         function questFlavor(p) {
-            var c = p.currentCycle || 1, days = questDaysActive(p), stats = questItemStats(p);
+            var c = p.currentCycle || 1, days = questDaysActive(p), stats = questStats(p);
             if (p.status === 'completed') return 'Sealed. A finished quest.';
             if (c >= 12) return c + ' cycles in — you don’t skip this anymore.';
             if (c >= 6) return c + ' cycles deep. This is who you are now.';
@@ -16258,9 +16360,18 @@
             if (days >= 21) return 'Three weeks of showing up.';
             return '';
         }
+        function cadenceFooterText(p) {
+            var isRecurring = p.cadence && p.cadence.type === 'recurring';
+            if (!isRecurring) return 'One-off quest — finishes when everything is done.';
+            var hist = p.cycleHistory || [];
+            var cycleNum = p.currentCycle || 1;
+            if (!hist.length) return 'Cycle ' + cycleNum + ' — seals when everything in it is done.';
+            var last = hist[hist.length - 1];
+            var days = (last.startedAt && last.completedAt) ? Math.max(1, Math.round((new Date(last.completedAt) - new Date(last.startedAt)) / 86400000)) : null;
+            return 'Cycle ' + cycleNum + (days !== null ? ' — last one took ' + days + ' day' + (days === 1 ? '' : 's') + '.' : '.');
+        }
 
         // ═══ Passive progress + real bonus XP (from completeActivity/undoActivity) ═══
-        var _prFlashStage = null; // stageId to gold-flash on next render
         function updateQuestProgress(activityId, earnedXP) {
             var projects = (window.userData && window.userData.projects) || [];
             if (!projects.length) return;
@@ -16271,21 +16382,16 @@
             var totalGain = 0;
             projects.forEach(function(p) {
                 if (p.status !== 'active') return;
+                migrateProject(p);
                 var gained = 0;
-                allStages(p).forEach(function(s) {
-                    var before = stageComplete(s);
-                    (s.items || []).forEach(function(it) {
-                        if (it.type === 'activity' && it.linkedActivityId === activityId && (it.completedCount || 0) < itemReq(it)) {
-                            it.completedCount = (it.completedCount || 0) + 1; it.doneAt = new Date().toISOString(); gained += per;
-                        }
-                    });
-                    if (!before && stageComplete(s)) _prFlashStage = s.id;
+                allLeaves(p).forEach(function(leaf) {
+                    if (leaf.type === 'activity' && leaf.linkedActivityId === activityId && (leaf.completedCount || 0) < itemReq(leaf)) {
+                        leaf.completedCount = (leaf.completedCount || 0) + 1; leaf.doneAt = new Date().toISOString(); gained += per;
+                    }
                 });
                 if (gained > 0) { p.questXP = (p.questXP || 0) + gained; p.questLevel = questLevelFromXP(p.questXP); totalGain += gained; }
+                settleAll(p);
             });
-            // Pay the bonus into real character XP. No level-up loop here:
-            // completeActivity normalizes currentXP in its own loop right after
-            // this hook returns (it runs before that loop).
             if (totalGain > 0 && window.userData) {
                 window.userData.currentXP = (window.userData.currentXP || 0) + totalGain;
                 window.userData.totalXP = (window.userData.totalXP || 0) + totalGain;
@@ -16300,16 +16406,16 @@
             var totalRefund = 0;
             projects.forEach(function(p) {
                 if (p.status !== 'active') return;
+                migrateProject(p);
                 var lost = 0;
-                allItems(p).forEach(function(it) {
-                    if (it.type === 'activity' && it.linkedActivityId === activityId && (it.completedCount || 0) > 0) {
-                        it.completedCount = Math.max(0, (it.completedCount || 0) - 1); lost += per;
+                allLeaves(p).forEach(function(leaf) {
+                    if (leaf.type === 'activity' && leaf.linkedActivityId === activityId && (leaf.completedCount || 0) > 0) {
+                        leaf.completedCount = Math.max(0, (leaf.completedCount || 0) - 1); lost += per;
                     }
                 });
                 if (lost > 0) { p.questXP = Math.max(0, (p.questXP || 0) - lost); p.questLevel = questLevelFromXP(p.questXP); totalRefund += lost; }
+                settleAll(p); // note: undo can't un-bank an already-banked rep (hard-reset model)
             });
-            // Refund the bonus, with a self-contained level-down (undoActivity's
-            // own loop has already run by the time this hook is called).
             if (totalRefund > 0 && window.userData) {
                 window.userData.currentXP = (window.userData.currentXP || 0) - totalRefund;
                 window.userData.totalXP = Math.max(0, (window.userData.totalXP || 0) - totalRefund);
@@ -16341,8 +16447,8 @@
                             '<span class="pr-empty-node"></span><span class="pr-empty-line dim"></span>' +
                             '<span class="pr-empty-node"></span>' +
                         '</div>' +
-                        '<div class="pr-empty-title">Turn a big goal into a pipeline</div>' +
-                        '<div class="pr-empty-text">A Quest groups your activities into <strong>stages</strong> you move through, and pays you bonus XP as you go. One stage for a simple checklist, or chain several — Research → Script → Shoot → Edit → Publish — and repeat it every cycle.</div>' +
+                        '<div class="pr-empty-title">Turn a big goal into a quest</div>' +
+                        '<div class="pr-empty-text">A Quest is built from <strong>groups</strong> of activities and tasks — a checklist, a sequence, or a repeating pipeline — and pays you bonus XP as you go. One group for a simple checklist, or chain several — Research → Script → Shoot → Edit → Publish — and repeat it every cycle.</div>' +
                         '<button class="pr-empty-cta" onclick="openProjectModal()">' +
                             '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>' +
                             'Start your first quest' +
@@ -16381,46 +16487,38 @@
             renderProjects();
         };
 
-        // A pipeline rendered as a glowing flow-chain (used on the card).
-        // Shows up to 4 nodes; extra collapse to a +N marker.
-        function renderFlowChain(p, pipeline, opts) {
-            opts = opts || {};
-            var stages = pipeline.stages || [];
-            var cur = currentStageIndex(stages);
-            var MAX = 4;
-            var overflow = stages.length > MAX;
-            var shown = overflow ? stages.slice(0, MAX) : stages;
-            var pct = stages.length ? Math.round(Math.min(cur, stages.length) / stages.length * 100) : 0;
-            var nodes = shown.map(function(s, i) {
-                var state = stageComplete(s) ? 'done' : (i === cur ? 'current' : 'future');
-                return '<span class="pr-fnode pr-fnode-' + state + '"></span>';
+        function renderThreadRow(g) {
+            var cur = currentIndex(g);
+            var rep = (g.repeat || 1) > 1;
+            var dots = (g.children || []).map(function(c, idx) {
+                var cls = nodeDone(c) ? 'pr-tdot-done' : (g.ordered && idx === cur ? 'pr-tdot-cur' : '');
+                return '<span class="pr-tdot ' + cls + '"></span>';
             }).join('');
-            var more = overflow ? '<span class="pr-fmore">+' + (stages.length - MAX) + '</span>' : '';
-            var single = shown.length === 1 && !overflow;
-            return '<div class="pr-frow' + (single ? ' pr-frow-single' : '') + '">' +
-                '<span class="pr-ftrack"><span class="pr-ftrack-fill" style="width:' + pct + '%;"></span></span>' +
-                '<span class="pr-fnodes">' + nodes + '</span>' + more +
+            var tagCls = rep ? 'pr-tag-rep' : (g.ordered ? 'pr-tag-ord' : 'pr-tag-un');
+            var tagText = rep ? ('×' + g.repeat) : (g.ordered ? 'in order' : 'any order');
+            return '<div class="pr-thread' + (g.ordered ? ' pr-thread-ordered' : ' pr-thread-un') + '">' +
+                '<span class="pr-thread-name">' + escapeHtml(g.name || 'Group') + '</span>' +
+                '<div class="pr-thread-line"><span class="pr-thread-rail"></span><div class="pr-thread-dots">' + dots + '</div></div>' +
+                '<span class="pr-thread-tag ' + tagCls + '">' + tagText + '</span>' +
             '</div>';
         }
 
         function renderProjectCard(p) {
             var lvl = p.questLevel || questLevelFromXP(p.questXP || 0);
             var counts = questCounts(p);
-            var stats = questItemStats(p);
+            var stats = questStats(p);
             var potential = questPotentialBonus(p);
             var pct = stats.total ? Math.round(stats.done / stats.total * 100) : 0;
             var statusCls = p.status === 'completed' ? ' pr-card-gold' : p.status === 'archived' ? ' pr-card-muted' : p.status === 'paused' ? ' pr-card-paused' : '';
-
             var unit = counts.tasks === 0 ? 'activities' : (counts.activities === 0 ? 'tasks' : 'items');
+            var groupCount = (p.groups || []).length;
 
-            // Detail line — bulleted text (not pills): bonus (green) · cadence · counts
             var bits = [];
             if (potential > 0) bits.push('<span class="pr-cd-bonus">+' + potential + ' XP</span>');
             bits.push('<span>' + escapeHtml(prFreqLabel(p)) + '</span>');
-            bits.push('<span>' + counts.total + ' ' + unit + '</span>');
+            bits.push('<span>' + groupCount + ' group' + (groupCount === 1 ? '' : 's') + '</span>');
             var detailLine = bits.join('<span class="pr-cd-sep">·</span>');
 
-            // Status chip (behind pace / paused / complete) — small, below the bar
             var chip = '';
             if (p.status === 'paused') chip = '<span class="pr-chip pr-chip-muted">Paused</span>';
             if (p.status === 'completed') chip = '<span class="pr-chip pr-chip-gold">Complete</span>';
@@ -16428,17 +16526,18 @@
             var editSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
             var trashSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>';
 
-            var pipesHtml = (p.pipelines || []).map(function(pl) { return renderFlowChain(p, pl); }).join('');
+            var threadsHtml = (p.groups || []).map(renderThreadRow).join('');
 
             return '' +
-            '<div class="pr-card' + statusCls + '"' + projectTintStyle(p) + ' onclick="openProjectDetail(\'' + p.id + '\')">' +
-                '<div class="pr-card-tint"></div>' +
+            '<div class="pr-card' + statusCls + '" onclick="openProjectDetail(\'' + p.id + '\')">' +
+                '<span class="pr-strip" style="' + projectStripStyle(p) + '"></span>' +
                 '<div class="pr-card-body">' +
                     '<div class="pr-card-top">' +
+                        '<span class="pr-card-emoji">' + (p.emoji || DEFAULT_QUEST_EMOJI) + '</span>' +
                         '<div class="pr-card-headings">' +
                             '<div class="pr-card-name-row">' +
                                 '<h3 class="pr-card-name">' + escapeHtml(p.name || 'Untitled quest') + '</h3>' +
-                                '<span class="pr-lv-chip">Lv.&nbsp;' + lvl + '</span>' +
+                                '<span class="pr-chip pr-chip-lv">Lv.&nbsp;' + lvl + '</span>' +
                             '</div>' +
                             '<div class="pr-card-detailline">' + detailLine + '</div>' +
                         '</div>' +
@@ -16453,33 +16552,19 @@
                     '</div>' +
                     '<div class="pr-prog"><div class="pr-prog-fill" style="width:' + pct + '%;"></div></div>' +
                     (chip ? '<div class="pr-card-statuschip">' + chip + '</div>' : '') +
-                    '<div class="pr-card-pipes">' + pipesHtml + '</div>' +
+                    (threadsHtml ? '<div class="pr-card-threads">' + threadsHtml + '</div>' : '') +
                 '</div>' +
             '</div>';
         }
 
         // ═══ DETAIL VIEW ════════════════════════════════════════════════════
-        var _prExpandedStage = {};
-
-        var _prNextDone = {}; // projectId -> last item completed via Next Up
-        var _prNextSkip = {}; // projectId -> { itemId: true } (advance past after one completion)
+        var _prFocusNode = {};    // `${pid}:${groupId}` -> nodeId — which pipeline node the "Do now" panel targets
+        var _prLeafExpanded = {}; // leafId -> bool (inline activity detail)
+        var _prFlashRep = null, _prFlashStep = null; // one-shot gold flash targets
+        var _prNextDone = {}, _prNextSkip = {};       // What's Next state, per project id
 
         window.openProjectDetail = function(id) {
             window._openProjectId = id;
-            var p = findProject(id);
-            if (p) {
-                // Auto-expand the recommended item's stage so the user discovers
-                // nodes are expandable; fall back to the current stage.
-                var wn = computeWhatsNext(p);
-                if (wn && wn.stage) _prExpandedStage[id] = wn.stage.id;
-                else if (!_prExpandedStage[id]) {
-                    var stages = (p.pipelines[0] && p.pipelines[0].stages) || [];
-                    var cur = Math.min(currentStageIndex(stages), Math.max(0, stages.length - 1));
-                    if (stages[cur]) _prExpandedStage[id] = stages[cur].id;
-                }
-            }
-            // History entry so the browser/hardware back button returns to the
-            // list instead of exiting the app.
             try { history.pushState({ questDetail: id }, ''); } catch (e) {}
             renderProjectDetail(id);
             try { window.scrollTo(0, 0); } catch (e) {}
@@ -16498,6 +16583,12 @@
             });
         }
 
+        function renderOrderBanner(p) {
+            var hasOrdered = (p.groups || []).some(function(g) { return g.ordered && (g.children || []).length > 1; });
+            if (!hasOrdered) return '';
+            return '<div class="pr-banner"><span class="pr-banner-dot"></span><p>Steps below show a <b>suggested order</b> — tap any step to see and mark it, even ahead of the current one.</p></div>';
+        }
+
         function renderProjectDetail(id) {
             _buildActIdx();
             var p = findProject(id);
@@ -16509,77 +16600,95 @@
             dv.style.display = '';
             var prevScroll = window.scrollY;
 
-            var isRecurring = p.cadence && p.cadence.type === 'recurring';
-            var dimNames = projectDimNames(p);
-            var stats = questItemStats(p);
+            var stats = questStats(p);
             var potential = questPotentialBonus(p);
             var flavor = questFlavor(p);
             var pct = stats.total ? Math.round(stats.done / stats.total * 100) : 0;
-
-            // Pills: frequency + dimensions (cadence lives in its own line above).
-            var pills = '';
-            pills += '<span class="pr-chip pr-chip-plain">' + escapeHtml(prFreqLabel(p)) + '</span>';
-            dimNames.forEach(function(n) { pills += '<span class="pr-chip pr-chip-dim">' + escapeHtml(n) + '</span>'; });
+            var sealed = p.status === 'completed';
+            var groupCount = (p.groups || []).length;
+            var dim = p.dimensionId ? (window.userData.dimensions || []).find(function(d) { return d.id === p.dimensionId; }) : null;
+            var dimHex = dim ? DIM_HEX_MAP[dim.color] : null;
 
             var header =
                 '<button class="pr-back" onclick="closeProjectDetail()">' +
                     '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>Quests</button>' +
-                '<div class="pr-detail-head"' + projectTintStyle(p) + '>' +
-                    '<div class="pr-detail-tint"></div>' +
-                    '<div class="pr-detail-head-row">' +
-                        '<div class="pr-detail-head-main">' +
-                            '<h1 class="pr-detail-name">' + escapeHtml(p.name || 'Untitled quest') + '</h1>' +
+                '<button class="pr-icon-btn pr-detail-edit" onclick="openProjectModal(\'' + p.id + '\')" aria-label="Edit quest"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>' +
+                '<div class="pr-detail-head' + (sealed ? ' pr-detail-sealed' : '') + '">' +
+                    '<span class="pr-strip" style="' + projectStripStyle(p) + '"></span>' +
+                    '<div class="pr-detail-top">' +
+                        '<span class="pr-detail-emoji">' + (p.emoji || DEFAULT_QUEST_EMOJI) + '</span>' +
+                        '<div class="pr-detail-titles">' +
+                            '<div class="pr-detail-name-row">' +
+                                '<h1 class="pr-detail-name">' + escapeHtml(p.name || 'Untitled quest') + '</h1>' +
+                                '<span class="pr-chip pr-chip-lv">Lv.&nbsp;' + (p.questLevel || 1) + '</span>' +
+                                (dim ? '<span class="pr-detail-dim" style="background:' + hexA(dimHex, .16) + ';color:' + dimHex + ';">' + escapeHtml(dim.name) + '</span>' : '') +
+                            '</div>' +
                             (flavor ? '<div class="pr-detail-flavor">' + escapeHtml(flavor) + '</div>' : '') +
+                            (p.description ? '<div class="pr-detail-desc">' + escapeHtml(p.description) + '</div>' : '') +
+                            '<div class="pr-detail-meta">' +
+                                (potential > 0 ? '<span class="pr-detail-meta-g">+' + potential + ' XP</span> bonus <span class="pr-detail-meta-dot">·</span> ' : '') +
+                                escapeHtml(prFreqLabel(p)) + ' <span class="pr-detail-meta-dot">·</span> ' + groupCount + ' group' + (groupCount === 1 ? '' : 's') +
+                            '</div>' +
                         '</div>' +
-                        (potential > 0 ? '<div class="pr-detail-bonus">+' + potential + '<span class="pr-detail-bonus-unit">XP</span></div>' : '') +
                     '</div>' +
-                    (p.description ? '<div class="pr-detail-desc">' + escapeHtml(p.description) + '</div>' : '') +
-                    // Info line — ambient dashboard texture
-                    '<div class="pr-island">' +
-                        '<span>' + stats.done + '/' + stats.total + ' done</span>' +
-                        '<span class="pr-island-dot">·</span><span>Day ' + questDaysActive(p) + '</span>' +
-                        '<span class="pr-island-dot">·</span><span>+' + (p.questXP || 0) + ' XP earned</span>' +
-                    '</div>' +
-                    '<div class="pr-detail-divider"></div>' +
-                    '<div class="pr-detail-pills">' + pills + '</div>' +
-                    '<div class="pr-prog pr-prog-lg"><div class="pr-prog-fill" style="width:' + pct + '%;"></div></div>' +
+                    (sealed
+                        ? '<div class="pr-sealed-badge">' + prCheckSvg() + 'Quest complete — XP banked</div>'
+                        : '<div class="pr-detail-prog-row"><span class="pr-detail-prog-lbl">Progress</span><span class="pr-detail-prog-num">' + pct + '%</span></div><div class="pr-prog pr-prog-lg"><div class="pr-prog-fill" style="width:' + pct + '%;"></div></div>'
+                    ) +
                 '</div>';
 
+            var banner = (p.status === 'active') ? renderOrderBanner(p) : '';
             var whatsNext = renderWhatsNext(p);
-            var pipelinesHtml = (p.pipelines || []).map(function(pl) { return renderPipeline(p, pl); }).join('');
+            var groupsHtml = (p.groups || []).map(renderGroupBlock.bind(null, p)).join('');
             var footer = renderProjectFooter(p);
 
-            dv.innerHTML = header + whatsNext + '<div class="pr-pipes">' + pipelinesHtml + '</div>' + footer;
-            _ensureItemDelegation();
-            _prFlashStage = null;
-            requestAnimationFrame(function() { window.scrollTo(0, prevScroll); });
+            dv.innerHTML = header + banner + whatsNext + '<div class="pr-groups">' + groupsHtml + '</div>' + footer;
+            _prFlashRep = null; _prFlashStep = null;
+            requestAnimationFrame(function() { centerPipes(dv); window.scrollTo(0, prevScroll); });
         }
 
-        // ── What's Next — one row, one action; skips unperformable items and
-        //    advances past an item after a single completion. ────────────────
-        function itemPerformable(it) {
-            if (itemComplete(it)) return false;
-            if (it.type === 'task') return true;
-            var act = it.linkedActivityId ? findActivityById(it.linkedActivityId) : null;
+        function centerPipes(root) {
+            (root || document).querySelectorAll('.pr-pipe[data-scroll]').forEach(function(pipe) {
+                var cur = pipe.querySelector('.pr-step-cur') || pipe.querySelector('.pr-step');
+                if (cur) { try { pipe.scrollTo({ left: cur.offsetLeft - (pipe.clientWidth - cur.offsetWidth) / 2, behavior: 'auto' }); } catch (e) {} }
+            });
+        }
+
+        // ── What's Next — recommends the nearest-to-done actionable leaf across
+        //    every top-level group (ordered groups via their live step, unordered
+        //    groups via first-incomplete), skipping unperformable items and
+        //    advancing past an item after one completion. ──────────────────────
+        function itemPerformable(leaf) {
+            if (leafDone(leaf)) return false;
+            if (leaf.type === 'task') return true;
+            var act = leaf.linkedActivityId ? findActivityById(leaf.linkedActivityId) : null;
             if (!act) return true;
             if (typeof canCompleteActivity === 'function' && !canCompleteActivity(act)) return false;
             var allowMulti = act.allowMultiplePerDay && act.frequency !== 'occasional';
-            if (typeof isCompletedToday === 'function' && isCompletedToday(act) && !allowMulti && (it.completedCount || 0) >= 1) return false;
+            if (typeof isCompletedToday === 'function' && isCompletedToday(act) && !allowMulti && (leaf.completedCount || 0) >= 1) return false;
             return true;
+        }
+        function firstPerformableLeaf(node, skip) {
+            if (node.kind !== 'group') { if (nodeDone(node) || skip[node.id]) return null; return itemPerformable(node) ? node : null; }
+            var kids = node.children || [];
+            if (node.ordered) {
+                var idx = currentIndex(node); if (idx < 0) return null;
+                return firstPerformableLeaf(kids[idx], skip);
+            }
+            for (var i = 0; i < kids.length; i++) { if (nodeDone(kids[i])) continue; var r = firstPerformableLeaf(kids[i], skip); if (r) return r; }
+            return null;
         }
         function computeWhatsNext(p) {
             if (!_prNextSkip[p.id]) _prNextSkip[p.id] = {};
             var skip = _prNextSkip[p.id];
             function gather(useSkip) {
                 var cands = [];
-                (p.pipelines || []).forEach(function(pl) {
-                    var stages = pl.stages || []; var cur = currentStageIndex(stages);
-                    if (cur >= stages.length) return;
-                    var stage = stages[cur];
-                    var pending = (stage.items || []).filter(function(it) { return itemPerformable(it) && (!useSkip || !skip[it.id]); });
-                    if (!pending.length) return;
-                    var remaining = (stage.items || []).filter(function(it) { return !itemComplete(it); }).length;
-                    cands.push({ pipeline: pl, stage: stage, item: pending[0], remaining: remaining });
+                (p.groups || []).forEach(function(g) {
+                    if (nodeDone(g)) return;
+                    var leaf = firstPerformableLeaf(g, useSkip ? skip : {});
+                    if (!leaf) return;
+                    var remaining = (g.children || []).filter(function(c) { return !nodeDone(c); }).length;
+                    cands.push({ group: g, leaf: leaf, remaining: remaining });
                 });
                 return cands;
             }
@@ -16589,28 +16698,28 @@
             cands.sort(function(a, b) { return a.remaining - b.remaining; });
             return cands[0];
         }
-        window.tapNextUp = async function(pid, itemId) {
+        window.tapNextUp = async function(pid, leafId) {
             var p = findProject(pid); if (!p) return;
             if (!_prNextSkip[p.id]) _prNextSkip[p.id] = {};
-            _prNextSkip[p.id][itemId] = true;
-            _prNextDone[p.id] = itemId;
-            await tapProjectItem(pid, itemId);
+            _prNextSkip[p.id][leafId] = true;
+            _prNextDone[p.id] = leafId;
+            await window.bumpLeaf(pid, leafId);
         };
-        window.undoNextUp = async function(pid, itemId) {
+        window.undoNextUp = async function(pid, leafId) {
             var p = findProject(pid); if (!p) return;
-            if (_prNextSkip[p.id]) delete _prNextSkip[p.id][itemId];
-            if (_prNextDone[p.id] === itemId) _prNextDone[p.id] = null;
-            await decProjectItem(pid, itemId);
+            if (_prNextSkip[p.id]) delete _prNextSkip[p.id][leafId];
+            if (_prNextDone[p.id] === leafId) _prNextDone[p.id] = null;
+            await window.undoLeaf(pid, leafId);
         };
         function renderWhatsNext(p) {
             if (p.status !== 'active') return '';
             var doneHtml = '';
             var doneId = _prNextDone[p.id];
             if (doneId) {
-                var di = _findItem(p, doneId).item;
+                var di = findNode(p, doneId);
                 if (di) {
                     doneHtml = '<div class="pr-next pr-next-donecard">' +
-                        '<span class="pr-next-donecheck"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>' +
+                        '<span class="pr-next-donecheck">' + prCheckSvg() + '</span>' +
                         '<div class="pr-next-main"><div class="pr-next-kicker pr-next-kicker-done">DONE</div><div class="pr-next-name pr-next-name-done">' + escapeHtml(itemName(di)) + '</div></div>' +
                         '<button class="pr-next-undo" onclick="event.stopPropagation();undoNextUp(\'' + p.id + '\',\'' + doneId + '\')">Undo</button>' +
                     '</div>';
@@ -16624,131 +16733,241 @@
                     liveHtml = '<div class="pr-next pr-next-ready" onclick="completeProjectCycle(\'' + p.id + '\')">' +
                         '<div class="pr-next-main"><div class="pr-next-kicker">READY</div>' +
                         '<div class="pr-next-name">' + (isRec ? 'Seal this cycle' : 'Mark this quest complete') + '</div>' +
-                        '<div class="pr-next-crumb">Everything in the pipeline is done</div></div>' +
-                        '<div class="pr-next-go"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6"/></svg></div></div>';
+                        '<div class="pr-next-crumb">Everything is done</div></div>' +
+                        '<div class="pr-next-go">' + prArrowSvg() + '</div></div>';
                 } else {
                     liveHtml = '<div class="pr-next pr-next-caught"><div class="pr-next-main"><div class="pr-next-kicker">CAUGHT UP</div>' +
                         '<div class="pr-next-name">Nothing to log right now</div>' +
-                        '<div class="pr-next-crumb">Come back later, or finish the rest in the stages below</div></div></div>';
+                        '<div class="pr-next-crumb">Come back later, or finish the rest below</div></div></div>';
                 }
             } else {
-                var it = next.item;
-                var crumb = (next.pipeline.name ? escapeHtml(next.pipeline.name) + ' › ' : '') + escapeHtml(next.stage.name || 'Stage');
+                var leaf = next.leaf;
+                var crumb = crumbFor(p, next.group, leaf);
                 if (next.remaining > 1) crumb += ' <span class="pr-next-left">· ' + next.remaining + ' left</span>';
-                var req = itemReq(it), cc = Math.max(0, it.completedCount || 0);
+                var req = itemReq(leaf), cc = Math.max(0, leaf.completedCount || 0);
                 var counter = req > 1 ? '<span class="pr-next-count">' + cc + '/' + req + '</span>' : '';
-                liveHtml = '<div class="pr-next pr-next-live" onclick="tapNextUp(\'' + p.id + '\',\'' + it.id + '\')">' +
+                liveHtml = '<div class="pr-next pr-next-live" onclick="tapNextUp(\'' + p.id + '\',\'' + leaf.id + '\')">' +
                     '<div class="pr-next-main"><div class="pr-next-kicker">NEXT UP</div>' +
-                    '<div class="pr-next-name">' + escapeHtml(itemName(it)) + counter + '</div>' +
+                    '<div class="pr-next-name">' + escapeHtml(itemName(leaf)) + counter + '</div>' +
                     '<div class="pr-next-crumb">' + crumb + '</div></div>' +
-                    '<div class="pr-next-go"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div></div>';
+                    '<div class="pr-next-go">' + prCheckSvg() + '</div></div>';
             }
             return '<div class="pr-next-stack">' + doneHtml + liveHtml + '</div>';
         }
 
-        function renderPipeline(p, pipeline) {
-            var stages = pipeline.stages || [];
-            var cur = currentStageIndex(stages);
-            var expandedId = _prExpandedStage[p.id];
-            var scrollable = stages.length > 4;
-            var fillPct = stages.length ? Math.round(Math.min(cur, stages.length) / stages.length * 100) : 0;
-
-            var nodes = stages.map(function(s, i) {
-                var u = stageUnits(s);
-                var frac = u.total ? u.done / u.total : 0;
-                var complete = stageComplete(s);
-                var state = complete ? 'done' : (i === cur ? 'current' : 'future');
-                var isOpen = s.id === expandedId;
-                var flash = (s.id === _prFlashStage) ? ' pr-stage-flash' : '';
-                var C = 94.25;
-                var ring = '<svg class="pr-ring" viewBox="0 0 36 36">' +
-                        '<circle class="pr-ring-track" cx="18" cy="18" r="15"></circle>' +
-                        (frac > 0 ? '<circle class="pr-ring-fill" cx="18" cy="18" r="15" style="stroke-dasharray:' + (frac * C).toFixed(2) + ' ' + C + ';"></circle>' : '') +
-                    '</svg>';
-                var inner = complete ? '<span class="pr-node-check">' + prCheckSvg() + '</span>'
-                    : (state === 'current' ? '<span class="pr-node-frac">' + u.done + '/' + u.total + '</span>' : '<span class="pr-node-num">' + (i + 1) + '</span>');
-                return '<button type="button" class="pr-stage pr-stage-' + state + (isOpen ? ' pr-stage-open' : '') + flash + '" onclick="toggleProjectStage(\'' + p.id + '\',\'' + s.id + '\')">' +
-                        '<span class="pr-node">' + ring + inner +
-                            '<span class="pr-node-halo"></span>' +
-                            (state === 'current' ? '<span class="pr-node-glow"></span>' : '') + '</span>' +
-                        '<span class="pr-stage-name">' + escapeHtml(s.name || 'Stage') + '</span>' +
-                    '</button>';
-            }).join('');
-
-            var expandedStage = stages.find(function(s) { return s.id === expandedId; });
-            var tasksPanel = expandedStage ? renderStageItems(p, expandedStage) : '';
-            // Label only when the pipeline has been named (§ spec).
-            var head = pipeline.name ? '<div class="pr-pipe-label"><span class="pr-pipe-glyph">' + prPipeGlyph() + '</span>' + escapeHtml(pipeline.name) + '</div>' : '';
-
-            return '<div class="pr-pipe-wrap">' + head +
-                '<div class="pr-pipe-scroll' + (scrollable ? ' pr-scrollable' : '') + '">' +
-                    '<div class="pr-pipe">' + nodes + '</div>' +
-                '</div>' +
-                (tasksPanel ? '<div class="pr-items-connect">' + tasksPanel + '</div>' : '') +
+        // ── Group / pipeline / checklist rendering (recursive) ─────────────
+        function renderRepDots(g) {
+            var h = '<div class="pr-reps"><span class="pr-reps-label">' + escapeHtml(g.name || 'Group') + ' ' + Math.min((g.repsDone || 0) + (nodeDone(g) ? 0 : 1), g.repeat) + ' of ' + g.repeat + '</span><div class="pr-rep-dots">';
+            for (var i = 0; i < g.repeat; i++) {
+                var cls = i < (g.repsDone || 0) ? 'pr-rep-done' : (i === (g.repsDone || 0) && !nodeDone(g) ? 'pr-rep-cur' : '');
+                var flash = (_prFlashRep === g.id && i === (g.repsDone || 0) - 1) ? ' pr-rep-flash' : '';
+                h += '<span class="pr-rep-dot ' + cls + flash + '">' + (i < (g.repsDone || 0) ? prCheckSvg() : (i + 1)) + '</span>';
+            }
+            h += '</div></div>';
+            return h;
+        }
+        function currentFocusIndex(p, g) {
+            var key = p.id + ':' + g.id;
+            var focusId = _prFocusNode[key];
+            if (focusId) { var idx = (g.children || []).findIndex(function(c) { return c.id === focusId; }); if (idx >= 0) return idx; }
+            return currentIndex(g);
+        }
+        function renderPipelineRow(p, g) {
+            var cur = currentIndex(g);
+            var focusIdx = currentFocusIndex(p, g);
+            var kids = g.children || [];
+            var h = '<div class="pr-pipe-wrap"><div class="pr-pipe"' + (kids.length > 3 ? ' data-scroll' : '') + '>';
+            kids.forEach(function(c, idx) {
+                var cdone = nodeDone(c);
+                var cls = cdone ? 'pr-step-done' : (idx === cur ? 'pr-step-cur' : 'pr-step-future');
+                if (idx === focusIdx && idx !== cur) cls += ' pr-step-focus';
+                var inner, badge = '';
+                if (cdone) inner = prCheckSvg();
+                else if (c.kind === 'group') {
+                    var d = (c.children || []).filter(nodeDone).length;
+                    inner = '<span class="pr-node-frac">' + d + '/' + (c.children || []).length + '</span>';
+                    badge = '<span class="pr-node-badge">' + (c.children || []).length + '</span>';
+                } else if (itemReq(c) > 1) {
+                    inner = '<span class="pr-node-frac">' + (c.completedCount || 0) + '/' + itemReq(c) + '</span>';
+                } else {
+                    inner = String(idx + 1);
+                }
+                var flash = (_prFlashStep === c.id) ? ' pr-step-flash' : '';
+                var name = c.kind === 'group' ? (c.name || 'Group') : itemName(c);
+                h += '<button type="button" class="pr-step ' + cls + flash + '" onclick="tapPipelineNode(\'' + p.id + '\',\'' + g.id + '\',\'' + c.id + '\',' + (idx === cur) + ')">' +
+                    '<span class="pr-node">' + (idx === cur && !cdone ? '<span class="pr-node-glow"></span>' : '') + inner + badge + '</span>' +
+                    '<span class="pr-step-name">' + escapeHtml(name) + '</span>' +
+                '</button>';
+            });
+            h += '</div></div>';
+            return h;
+        }
+        function renderDoNowPanel(p, g) {
+            var idx = currentFocusIndex(p, g);
+            var kids = g.children || [];
+            if (idx < 0 || !kids[idx]) return '';
+            var node = kids[idx];
+            var label = '<div class="pr-now-label">' + prPlaySvg() + 'Do now' + (node.kind === 'group' ? ' · ' + escapeHtml(node.name || 'Group') : '') + '</div>';
+            var body = node.kind === 'group' ? renderGroupBody(p, node) : '<div class="pr-checklist">' + renderLeafCard(p, node) + '</div>';
+            return '<div class="pr-now-panel">' + label + body + '</div>';
+        }
+        function renderGroupBody(p, g) {
+            if (g.ordered) return renderPipelineRow(p, g) + renderDoNowPanel(p, g);
+            return '<div class="pr-checklist">' + renderChecklist(p, g.children || []) + '</div>';
+        }
+        function renderNestedGroupHeader(g) {
+            var repeats = (g.repeat || 1) > 1;
+            return '<div class="pr-nested-head"><span>' + escapeHtml(g.name || 'Group') + '</span>' +
+                (repeats ? '<span class="pr-nested-rep">×' + g.repeat + (nodeDone(g) ? ' · done' : ' · ' + Math.min((g.repsDone || 0) + 1, g.repeat) + '/' + g.repeat) + '</span>' : '') +
+                '<span class="pr-nested-mode">' + (g.ordered ? 'in order' : 'any order') + '</span>' +
             '</div>';
         }
+        function renderChecklist(p, nodes) {
+            var h = '';
+            (nodes || []).forEach(function(c) {
+                if (c.kind === 'group') { h += '<div class="pr-nested-group">' + renderNestedGroupHeader(c) + renderGroupBody(p, c) + '</div>'; }
+                else { h += renderLeafCard(p, c); }
+            });
+            return h;
+        }
+        function renderGroupBlock(p, g) {
+            var gd = (g.children || []).filter(nodeDone).length;
+            var repeats = (g.repeat || 1) > 1;
+            var h = '<div class="pr-group"><div class="pr-group-head">' +
+                '<span class="pr-group-title">' + escapeHtml(g.name || 'Group') + '</span>' +
+                '<span class="pr-group-mode ' + (g.ordered ? 'pr-mode-ord' : 'pr-mode-un') + '">' + (g.ordered ? 'in order' : 'any order') + '</span>' +
+                '<span class="pr-group-frac">' + gd + '/' + (g.children || []).length + '</span>' +
+            '</div>';
+            if (repeats) h += renderRepDots(g);
+            h += renderGroupBody(p, g);
+            h += '</div>';
+            return h;
+        }
 
-        window.toggleProjectStage = function(projectId, stageId) {
-            _prExpandedStage[projectId] = (_prExpandedStage[projectId] === stageId) ? null : stageId;
-            renderProjectDetail(projectId);
-        };
-        var _prItemExpanded = {}; // itemId -> bool (reveal meta, like the main list)
-        window.toggleProjectItemExpand = function(itemId) {
-            _prItemExpanded[itemId] = !_prItemExpanded[itemId];
+        function renderLeafDetail(meta, dimHex) {
+            if (!meta) return '<div class="pr-item-detail"><div class="pr-detail-inner"><div class="pr-drow"><span class="pr-drow-v">Activity no longer exists.</span></div></div></div>';
+            return '<div class="pr-item-detail"><div class="pr-detail-inner">' +
+                '<div class="pr-drow"><span class="pr-drow-k">Dimension</span><span class="pr-dchip" style="background:' + hexA(dimHex, .16) + ';color:' + dimHex + ';">' + escapeHtml(meta.dimName) + '</span></div>' +
+                '<div class="pr-drow"><span class="pr-drow-k">Path</span><span class="pr-drow-v">' + escapeHtml(meta.dimName + ' › ' + meta.pathName) + '</span></div>' +
+                '<div class="pr-drow"><span class="pr-drow-k">Earns</span><span class="pr-drow-v pr-drow-xp">+' + (meta.baseXP || 0) + ' XP each time</span></div>' +
+            '</div></div>';
+        }
+        function renderLeafCard(p, l) {
+            var done = leafDone(l);
+            var req = itemReq(l);
+            var hasCounter = req > 1;
+            var partial = !done && (l.completedCount || 0) > 0;
+            var isAct = l.type === 'activity';
+            var meta = isAct ? actMeta(l.linkedActivityId) : null;
+            var dimHex = (isAct && meta && meta.dimHex) ? meta.dimHex : null;
+            var name = itemName(l);
+            var showUndo = hasCounter && (l.completedCount || 0) > 0;
+            var expanded = !!_prLeafExpanded[l.id];
+            var sealed = p.status === 'completed' || p.status === 'archived';
+            var h = '<div class="pr-item' + (done ? ' pr-item-done' : '') + (expanded ? ' pr-item-expanded' : '') + (sealed ? ' pr-item-locked' : '') + '">' +
+                '<div class="pr-item-row">' +
+                    '<button class="pr-check' + (partial ? ' pr-check-partial' : '') + '" aria-label="Complete" onclick="bumpLeaf(\'' + p.id + '\',\'' + l.id + '\')">' + prCheckSvg() + '</button>' +
+                    '<div class="pr-item-main" onclick="' + (isAct ? 'toggleLeafDetail(\'' + l.id + '\')' : 'bumpLeaf(\'' + p.id + '\',\'' + l.id + '\')') + '">' +
+                        '<div class="pr-item-name-row">' +
+                            (isAct ? '<span class="pr-dimdot" style="background:' + (dimHex || '#8a9099') + '"></span>' : '') +
+                            '<span class="pr-item-name">' + escapeHtml(name) + '</span>' +
+                        '</div>' +
+                    '</div>' +
+                    (showUndo ? '<button class="pr-item-undo" aria-label="Undo one" onclick="event.stopPropagation();undoLeaf(\'' + p.id + '\',\'' + l.id + '\')">' + prUndoSvg() + '</button>' : '') +
+                    (hasCounter ? '<span class="pr-item-counter" onclick="bumpLeaf(\'' + p.id + '\',\'' + l.id + '\')">' + (l.completedCount || 0) + '/' + req + '</span>' : '') +
+                    (isAct ? '<button class="pr-chev" aria-label="Details" onclick="toggleLeafDetail(\'' + l.id + '\')">' + prChevSvg() + '</button>' : '') +
+                '</div>' +
+                (isAct ? renderLeafDetail(meta, dimHex) : '') +
+            '</div>';
+            return h;
+        }
+        window.toggleLeafDetail = function(id) {
+            if (_prLeafExpanded[id]) delete _prLeafExpanded[id]; else _prLeafExpanded[id] = true;
             if (window._openProjectId) renderProjectDetail(window._openProjectId);
         };
+        window.tapPipelineNode = function(pid, gid, nodeId, isCurrent) {
+            var p = findProject(pid); if (!p || p.status !== 'active') return;
+            var g = findNode(p, gid); if (!g || g.kind !== 'group') return;
+            var node = (g.children || []).find(function(c) { return c.id === nodeId; });
+            if (!node) return;
+            if (isCurrent && node.kind === 'leaf') { window.bumpLeaf(pid, nodeId); return; }
+            _prFocusNode[pid + ':' + gid] = nodeId;
+            renderProjectDetail(pid);
+        };
 
-        // In-stage rows rendered to look like the main activity list: a check
-        // ring (progress toward the item's required count within the stage), the
-        // name, and a chevron that reveals dimension path / cadence / counter.
-        function renderStageItems(p, stage) {
-            var sealed = p.status === 'completed' || p.status === 'archived';
-            var items = stage.items || [];
-            var RING = 125.66; // 2π·20
-            var rows;
-            if (items.length === 0) {
-                rows = '<div class="pr-item-empty">No activities or tasks here yet. Edit the quest to add some.</div>';
-            } else {
-                rows = items.map(function(it) {
-                    var name = itemName(it);
-                    var isActivity = it.type === 'activity';
-                    var meta = actMeta(it.linkedActivityId);
-                    var req = itemReq(it), cc = Math.min(itemReq(it), Math.max(0, it.completedCount || 0));
-                    var done = itemComplete(it);
-                    var frac = req ? cc / req : 0;
-                    var offset = RING * (1 - frac);
-                    var dimHex = (isActivity && meta && meta.dimHex) ? meta.dimHex : null;
-                    var expanded = !!_prItemExpanded[it.id];
-
-                    var ringLabel = done
-                        ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
-                        : (req > 1 ? '<span class="pr-arow-cc">' + cc + '/' + req + '</span>' : '');
-                    var ring = '<div class="act-ring-wrap pr-arow-ring">' +
-                        '<svg class="act-ring-svg" viewBox="0 0 48 48">' +
-                            '<circle class="act-ring-bg" cx="24" cy="24" r="20" fill="none" stroke-width="3"/>' +
-                            '<circle class="act-ring-fill" cx="24" cy="24" r="20" fill="none" stroke-width="3" stroke-dasharray="' + RING + '" stroke-dashoffset="' + offset.toFixed(2) + '" transform="rotate(-90 24 24)"/>' +
-                        '</svg><div class="act-ring-label">' + ringLabel + '</div></div>';
-
-                    var badges = [];
-                    if (isActivity && meta) badges.push('<span class="activity-badge badge-frequency">' + escapeHtml(meta.dimName + ' › ' + meta.pathName) + '</span>');
-                    badges.push('<span class="activity-badge pr-badge-kind">' + (isActivity ? 'Activity' : 'Task') + '</span>');
-                    if (p.cadence && p.cadence.type === 'recurring') badges.push('<span class="activity-badge">' + (it.resetMode === 'once' ? 'Once' : 'Per cycle') + '</span>');
-                    if (req > 1) badges.push('<span class="activity-badge badge-xp">' + cc + '/' + req + ' done</span>');
-
-                    return '<div class="pr-arow' + (done ? ' pr-arow-done' : '') + (sealed ? ' pr-arow-locked' : '') + '"' +
-                            (dimHex ? ' style="--dim-color:' + dimHex + ';"' : '') + ' data-pid="' + p.id + '" data-item="' + it.id + '">' +
-                        '<button class="pr-arow-chev" onclick="event.stopPropagation();toggleProjectItemExpand(\'' + it.id + '\')" aria-label="Details">' +
-                            '<svg class="pr-arow-chevicon' + (expanded ? ' expanded' : '') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>' +
-                        '</button>' +
-                        '<div class="pr-arow-col"><div class="pr-arow-name">' + escapeHtml(name) + '</div>' +
-                            (expanded ? '<div class="pr-arow-meta">' + badges.join('') + '</div>' : '') +
-                        '</div>' +
-                        ring +
-                    '</div>';
-                }).join('');
+        // ── Leaf mutation — funnels through one apply step that settles reps,
+        //    computes flash targets, saves, and re-renders. ─────────────────
+        function finishMutation(p, beforeSnap, leafId, alreadySaved) {
+            settleAll(p);
+            var bankedGroupId = null;
+            (p.groups || []).forEach(function(g, i) { var f = trackBank(g, beforeSnap[i]); if (f) bankedGroupId = f; });
+            _prFlashRep = bankedGroupId;
+            _prFlashStep = bankedGroupId ? null : leafId;
+            if (!alreadySaved) debouncedSaveUserData();
+            if (window._openProjectId === p.id) renderProjectDetail(p.id);
+            if (p.status === 'active' && projectCycleReady(p)) {
+                setTimeout(function() { showToast((p.cadence && p.cadence.type === 'recurring') ? '🏁 All done — seal the cycle below' : '🏁 All done — mark the quest complete', 'blue'); }, 280);
             }
-            return '<div class="pr-items">' + rows + '</div>';
         }
+        function snapshotReps(p) { return (p.groups || []).map(repsSnapshot); }
+
+        window.bumpLeaf = async function(pid, leafId) {
+            var p = findProject(pid);
+            if (!p || p.status === 'completed' || p.status === 'archived') return;
+            var leaf = findNode(p, leafId);
+            if (!leaf || leaf.kind !== 'leaf') return;
+            var req = itemReq(leaf);
+
+            if (leaf.type === 'task') {
+                var before = snapshotReps(p);
+                if ((leaf.completedCount || 0) < req) { leaf.completedCount = (leaf.completedCount || 0) + 1; leaf.doneAt = new Date().toISOString(); }
+                else { leaf.completedCount = 0; leaf.doneAt = null; }
+                finishMutation(p, before, leafId);
+                return;
+            }
+
+            var act = leaf.linkedActivityId ? findActivityById(leaf.linkedActivityId) : null;
+            if (!act) { var before2 = snapshotReps(p); leaf.completedCount = (leaf.completedCount || 0) < req ? req : 0; finishMutation(p, before2, leafId); return; }
+
+            if ((leaf.completedCount || 0) < req) {
+                var allowMulti = act.allowMultiplePerDay && act.frequency !== 'occasional';
+                if (typeof isCompletedToday === 'function' && isCompletedToday(act) && !allowMulti) {
+                    if ((leaf.completedCount || 0) === 0) {
+                        var before3 = snapshotReps(p);
+                        leaf.completedCount = 1; leaf.doneAt = new Date().toISOString();
+                        finishMutation(p, before3, leafId);
+                    } else {
+                        showToast('“' + (act.name || 'Activity') + '” is already done for today', 'olive');
+                    }
+                    return;
+                }
+                if (typeof canCompleteActivity === 'function' && !canCompleteActivity(act)) { showToast('“' + (act.name || 'Activity') + '” isn’t available to complete right now', 'olive'); return; }
+                var before4 = snapshotReps(p);
+                await window.completeActivityById(leaf.linkedActivityId);
+                finishMutation(p, before4, leafId, true);
+            } else {
+                var before5 = snapshotReps(p);
+                await window.undoActivityById(leaf.linkedActivityId);
+                finishMutation(p, before5, leafId, true);
+            }
+        };
+        window.undoLeaf = async function(pid, leafId) {
+            var p = findProject(pid);
+            if (!p || p.status === 'completed' || p.status === 'archived') return;
+            var leaf = findNode(p, leafId);
+            if (!leaf || leaf.kind !== 'leaf' || (leaf.completedCount || 0) <= 0) return;
+            if (leaf.type === 'task') {
+                var before = snapshotReps(p);
+                leaf.completedCount = Math.max(0, leaf.completedCount - 1);
+                finishMutation(p, before, leafId);
+                return;
+            }
+            var act = leaf.linkedActivityId ? findActivityById(leaf.linkedActivityId) : null;
+            if (!act) { var before2 = snapshotReps(p); leaf.completedCount = Math.max(0, leaf.completedCount - 1); finishMutation(p, before2, leafId); return; }
+            var before3 = snapshotReps(p);
+            await window.undoActivityById(leaf.linkedActivityId);
+            finishMutation(p, before3, leafId, true);
+        };
 
         function renderProjectFooter(p) {
             var isRecurring = p.cadence && p.cadence.type === 'recurring';
@@ -16756,8 +16975,7 @@
             var out = '<div class="pr-footer">';
             if (p.status === 'active') {
                 var cta = isRecurring ? (ready ? 'Seal Cycle ' + (p.currentCycle || 1) : 'Complete cycle') : (ready ? 'Mark quest complete' : 'Complete quest');
-                out += '<button class="pr-cycle-btn' + (ready ? ' pr-cycle-ready' : '') + '" onclick="completeProjectCycle(\'' + p.id + '\')">' +
-                        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6"/></svg>' + cta + '</button>';
+                out += '<button class="pr-cycle-btn' + (ready ? ' pr-cycle-ready' : '') + '" onclick="completeProjectCycle(\'' + p.id + '\')">' + prCheckSvg() + cta + '</button>';
             } else if (p.status === 'paused') {
                 out += '<button class="pr-cycle-btn" onclick="resumeProject(\'' + p.id + '\')">Resume quest</button>';
             } else if (p.status === 'completed') {
@@ -16777,107 +16995,6 @@
             out += '<div class="pr-footer-cad">' + escapeHtml(cadenceFooterText(p)) + '</div></div>';
             return out;
         }
-        // Momentum framing, not deadline framing — pace derived from sealed
-        // cycles in cycleHistory, never from a calendar window.
-        function cadenceFooterText(p) {
-            var isRecurring = p.cadence && p.cadence.type === 'recurring';
-            if (!isRecurring) return 'One-off quest — finishes when you mark it complete.';
-            var hist = p.cycleHistory || [];
-            var cycleNum = p.currentCycle || 1;
-            if (!hist.length) return 'Cycle ' + cycleNum + ' — seals when everything in it is done.';
-            var last = hist[hist.length - 1];
-            var days = (last.startedAt && last.completedAt)
-                ? Math.max(1, Math.round((new Date(last.completedAt) - new Date(last.startedAt)) / 86400000)) : null;
-            return 'Cycle ' + cycleNum + (days !== null ? ' — last one took ' + days + ' day' + (days === 1 ? '' : 's') + '.' : '.');
-        }
-
-        // ── Item interaction: tap (increment / complete activity), long-press
-        //    or tap-at-max (decrement / undo). Delegated so it survives re-render.
-        var _prPressTimer = null, _prPressFired = false;
-        function _ensureItemDelegation() {
-            var dv = document.getElementById('projectsDetailView');
-            if (!dv || dv._prDelegated) return;
-            dv._prDelegated = true;
-            dv.addEventListener('pointerdown', function(e) {
-                if (e.target.closest && e.target.closest('.pr-arow-chev')) return; // chevron = expand, not complete
-                var row = e.target.closest && e.target.closest('.pr-arow');
-                if (!row || !row.getAttribute('data-item') || row.classList.contains('pr-arow-locked')) return;
-                _prPressFired = false;
-                var pid = row.getAttribute('data-pid'), item = row.getAttribute('data-item');
-                clearTimeout(_prPressTimer);
-                _prPressTimer = setTimeout(function() { _prPressFired = true; try { if (navigator.vibrate) navigator.vibrate(12); } catch (_) {} decProjectItem(pid, item); }, 500);
-            });
-            var cancel = function() { clearTimeout(_prPressTimer); };
-            dv.addEventListener('pointerup', cancel);
-            dv.addEventListener('pointerleave', cancel);
-            dv.addEventListener('pointercancel', cancel);
-            dv.addEventListener('click', function(e) {
-                if (e.target.closest && e.target.closest('.pr-arow-chev')) return;
-                var row = e.target.closest && e.target.closest('.pr-arow');
-                if (!row || !row.getAttribute('data-item') || row.classList.contains('pr-arow-locked')) return;
-                if (_prPressFired) { _prPressFired = false; return; }
-                tapProjectItem(row.getAttribute('data-pid'), row.getAttribute('data-item'));
-            });
-        }
-
-        function _findItem(p, itemId) { var found = null, st = null; allStages(p).forEach(function(s) { (s.items || []).forEach(function(it) { if (it.id === itemId) { found = it; st = s; } }); }); return { item: found, stage: st }; }
-        function _afterItemChange(p, stage) {
-            if (stage && stageComplete(stage)) _prFlashStage = stage.id;
-            saveUserData(); renderProjectDetail(p.id);
-            if (projectCycleReady(p)) setTimeout(function() { showToast((p.cadence && p.cadence.type === 'recurring') ? '🏁 All done — seal the cycle below' : '🏁 All done — mark the quest complete', 'blue'); }, 280);
-        }
-
-        window.tapProjectItem = async function(pid, itemId) {
-            var p = findProject(pid);
-            if (!p || p.status === 'completed' || p.status === 'archived') return;
-            var f = _findItem(p, itemId); var item = f.item; if (!item) return;
-            var req = itemReq(item);
-
-            if (item.type === 'task') {
-                if ((item.completedCount || 0) < req) { item.completedCount = (item.completedCount || 0) + 1; item.doneAt = new Date().toISOString(); }
-                else { item.completedCount = Math.max(0, (item.completedCount || 0) - 1); }
-                _afterItemChange(p, f.stage); return;
-            }
-
-            var act = item.linkedActivityId ? findActivityById(item.linkedActivityId) : null;
-            if (!act) { // missing activity — toggle locally, no XP
-                item.completedCount = (item.completedCount || 0) < req ? req : 0; _afterItemChange(p, f.stage); return;
-            }
-            if ((item.completedCount || 0) < req) {
-                var allowMulti = act.allowMultiplePerDay && act.frequency !== 'occasional';
-                if (typeof isCompletedToday === 'function' && isCompletedToday(act) && !allowMulti) {
-                    // Already completed elsewhere today. Reflect that one completion
-                    // in the quest if we haven't yet; don't let taps over-fill a
-                    // higher requiredCount past the real number of completions.
-                    if ((item.completedCount || 0) === 0) { item.completedCount = 1; item.doneAt = new Date().toISOString(); _afterItemChange(p, f.stage); }
-                    else { showToast('“' + (act.name || 'Activity') + '” is already done for today', 'olive'); }
-                    return;
-                }
-                if (typeof canCompleteActivity === 'function' && !canCompleteActivity(act)) { showToast('“' + (act.name || 'Activity') + '” isn’t available to complete right now', 'olive'); return; }
-                await window.completeActivityById(item.linkedActivityId); // hook increments + pays bonus
-                renderProjectDetail(pid);
-                if (projectCycleReady(p)) setTimeout(function() { showToast((p.cadence && p.cadence.type === 'recurring') ? '🏁 All done — seal the cycle below' : '🏁 All done — mark the quest complete', 'blue'); }, 280);
-            } else {
-                await window.undoActivityById(item.linkedActivityId); // hook decrements + refunds
-                renderProjectDetail(pid);
-            }
-        };
-        window.decProjectItem = async function(pid, itemId) {
-            var p = findProject(pid);
-            if (!p || p.status === 'completed' || p.status === 'archived') return;
-            var f = _findItem(p, itemId); var item = f.item; if (!item || (item.completedCount || 0) <= 0) return;
-            if (item.type === 'task') { item.completedCount = Math.max(0, item.completedCount - 1); saveUserData(); renderProjectDetail(pid); return; }
-            var act = item.linkedActivityId ? findActivityById(item.linkedActivityId) : null;
-            if (!act) { item.completedCount = Math.max(0, item.completedCount - 1); saveUserData(); renderProjectDetail(pid); return; }
-            await window.undoActivityById(item.linkedActivityId);
-            renderProjectDetail(pid);
-        };
-
-        // Zero out a recurring quest's per-cycle items — shared by the cycle-seal
-        // rollover (completeProjectCycle) and an abandon-and-restart (resetProject).
-        // 'once' items are setup work, not part of "starting fresh," so they're
-        // always left untouched.
-        function clearRecurringItems(p) { allItems(p).forEach(function(it) { if (it.resetMode !== 'once') { it.completedCount = 0; it.doneAt = null; } }); }
 
         window.completeProjectCycle = function(projectId) {
             var p = findProject(projectId);
@@ -16886,16 +17003,13 @@
                 var isRec = p.cadence && p.cadence.type === 'recurring';
                 if (!confirm(isRec ? 'Some per-cycle items aren’t done yet. Seal this cycle early and start a fresh one?' : 'Some items aren’t done yet. Mark this quest complete anyway?')) return;
             }
-            var stats = questItemStats(p);
+            var stats = questStats(p);
             p.cycleHistory = p.cycleHistory || [];
             p.cycleHistory.push({ cycleNumber: p.currentCycle || 1, startedAt: p.startedCycleAt || p.createdAt, completedAt: new Date().toISOString(), itemsCompleted: stats.done, itemsTotal: stats.total });
             delete _prNextSkip[p.id]; delete _prNextDone[p.id];
             if (p.cadence && p.cadence.type === 'recurring') {
                 clearRecurringItems(p);
                 p.currentCycle = (p.currentCycle || 1) + 1; p.startedCycleAt = new Date().toISOString();
-                var stages = (p.pipelines[0] && p.pipelines[0].stages) || [];
-                var cur = Math.min(currentStageIndex(stages), stages.length - 1);
-                if (stages[cur]) _prExpandedStage[p.id] = stages[cur].id;
                 saveUserData();
                 showToast('🏆 Cycle ' + (p.currentCycle - 1) + ' shipped — Cycle ' + p.currentCycle + ' begins', 'olive');
             } else {
@@ -16904,17 +17018,18 @@
             }
             renderProjectDetail(projectId);
         };
-
         window.pauseProject = function(id) { var p = findProject(id); if (!p) return; p.status = 'paused'; saveUserData(); showToast('Quest paused', 'olive'); renderProjectDetail(id); };
         window.resumeProject = function(id) { var p = findProject(id); if (!p) return; p.status = 'active'; saveUserData(); showToast('Quest resumed', 'green'); renderProjectDetail(id); };
         window.archiveProject = function(id) { var p = findProject(id); if (!p) return; p.status = 'archived'; saveUserData(); showToast('Quest archived', 'olive'); window.closeProjectDetail(); };
         window.unarchiveProject = function(id) { var p = findProject(id); if (!p) return; p.status = 'active'; saveUserData(); showToast('Quest restored', 'green'); renderProjectDetail(id); };
         window.reopenProject = function(id) { var p = findProject(id); if (!p) return; p.status = 'active'; p.completedAt = null; saveUserData(); showToast('Quest reopened', 'green'); renderProjectDetail(id); };
 
-        // Drop an in-progress cycle/run and restart clean. Never touches XP —
-        // only clears the quest's own tracking counters. A reset is an
-        // abandonment, not a completion, so it never writes to cycleHistory
-        // and (for recurring quests) never increments currentCycle.
+        function clearCycleNode(n) {
+            if (n.kind === 'group') { n.repsDone = 0; (n.children || []).forEach(clearCycleNode); }
+            else if (n.resetMode !== 'once') { n.completedCount = 0; n.doneAt = null; }
+        }
+        function clearRecurringItems(p) { (p.groups || []).forEach(clearCycleNode); }
+
         window.resetProject = function(id) {
             var p = findProject(id); if (!p) return;
             var isRecurring = p.cadence && p.cadence.type === 'recurring';
@@ -16924,14 +17039,11 @@
                 clearRecurringItems(p);
                 p.startedCycleAt = new Date().toISOString();
                 p.resetCount = (p.resetCount || 0) + 1;
-                var stages = (p.pipelines[0] && p.pipelines[0].stages) || [];
-                var cur = Math.min(currentStageIndex(stages), stages.length - 1);
-                if (stages[cur]) _prExpandedStage[p.id] = stages[cur].id;
                 showToast('Cycle reset', 'olive');
             } else {
                 if (p.status !== 'active' && p.status !== 'paused' && p.status !== 'completed') return;
                 if (!confirm('Reset this quest? Progress will clear, but nothing you’ve already earned is lost. This can’t be undone.')) return;
-                allItems(p).forEach(function(it) { it.completedCount = 0; it.doneAt = null; });
+                (p.groups || []).forEach(resetNode);
                 p.status = 'active'; p.completedAt = null;
                 p.lastResetAt = new Date().toISOString();
                 p.startedCycleAt = new Date().toISOString();
@@ -16959,134 +17071,276 @@
         window.openProjectsInfo = function() { var m = document.getElementById('projectsInfoModal'); if (m) m.classList.add('active'); };
         window.closeProjectsInfo = function() { var m = document.getElementById('projectsInfoModal'); if (m) m.classList.remove('active'); };
 
-        // ═══ CREATE / EDIT MODAL + BUILDER ══════════════════════════════════
-        var _projectDraft = null;
+        // ═══ BUILDER (create / edit) ════════════════════════════════════════
+        // The group/item tree is authored directly against the DOM (no parallel
+        // JS draft to keep in sync) so arbitrary-depth nesting and pointer-based
+        // drag reorder — which move real DOM nodes — never fight a second
+        // source of truth. Only top-level quest fields (emoji/name/description/
+        // cadence) are read straight from their inputs, as before.
         var _projectEditingId = null;
-
-        function _blankStage(name) { return { id: prId('st'), name: name || '', items: [] }; }
-        function _blankPipeline() { return { id: prId('pl'), name: '', stages: [_blankStage('To Do')] }; }
 
         window.openProjectModal = function(id) {
             _projectEditingId = (id && typeof id === 'string') ? id : null;
             var editing = _projectEditingId ? findProject(_projectEditingId) : null;
-            if (editing) {
-                _projectDraft = JSON.parse(JSON.stringify(editing));
-                migrateProject(_projectDraft);
-                if (!_projectDraft.pipelines || !_projectDraft.pipelines.length) _projectDraft.pipelines = [_blankPipeline()];
-            } else {
-                _projectDraft = { name: '', description: '', cadence: { type: 'oneoff' }, pipelines: [_blankPipeline()] };
-            }
             document.getElementById('projectModalTitle').textContent = editing ? 'Edit Quest' : 'New Quest';
             document.getElementById('projectSaveBtn').textContent = editing ? 'Save changes' : 'Create quest';
-            document.getElementById('projectName').value = _projectDraft.name || '';
-            document.getElementById('projectDesc').value = _projectDraft.description || '';
-            var cadType = (_projectDraft.cadence && _projectDraft.cadence.type) || 'oneoff';
+            document.getElementById('projectEmoji').value = editing ? (editing.emoji || DEFAULT_QUEST_EMOJI) : DEFAULT_QUEST_EMOJI;
+            document.getElementById('projectName').value = editing ? (editing.name || '') : '';
+            document.getElementById('projectDesc').value = editing ? (editing.description || '') : '';
+            var cadType = editing && editing.cadence ? editing.cadence.type : 'oneoff';
             _applyCadenceUI(cadType);
-            renderProjectBuilder();
+            _buildActIdx();
+            var host = document.getElementById('projectBuilder');
+            host.innerHTML = '';
+            if (editing && (editing.groups || []).length) {
+                editing.groups.forEach(function(g) { addGroupCard(host, g); });
+            } else {
+                addGroupCard(host, null);
+            }
+            renderProjectDimReadout();
             var body = document.querySelector('#projectModal .pl-modal-body'); if (body) body.scrollTop = 0;
             document.getElementById('projectModal').classList.add('active');
         };
-        window.closeProjectModal = function() { document.getElementById('projectModal').classList.remove('active'); _projectDraft = null; _projectEditingId = null; };
+        window.closeProjectModal = function() { document.getElementById('projectModal').classList.remove('active'); _projectEditingId = null; };
 
-        // Dimensions are inferred from the activities in the quest (§7) — this
-        // is a read-only informational line, not a picker.
-        function renderProjectDimReadout() {
-            var wrap = document.getElementById('projectDimReadoutWrap');
-            var host = document.getElementById('projectDimReadout');
-            if (!wrap || !host || !_projectDraft) return;
-            var result = computeProjectDimensions(_projectDraft.pipelines);
-            var names = result.dimensionIds.map(function(id) {
-                var dim = (window.userData.dimensions || []).find(function(d) { return d.id === id; });
-                return dim ? dim.name : null;
-            }).filter(Boolean);
-            if (!names.length) { wrap.style.display = 'none'; host.innerHTML = ''; return; }
-            wrap.style.display = '';
-            host.innerHTML = 'Categories: <strong>' + escapeHtml(names.join(', ')) + '</strong> — set automatically from the activities in this quest.';
-        }
-
-        window.setProjectCadence = function(type) { if (!_projectDraft) return; _projectDraft.cadence = _projectDraft.cadence || {}; _projectDraft.cadence.type = type; _applyCadenceUI(type); renderProjectBuilder(); };
+        window.setProjectCadence = function(type) { _applyCadenceUI(type); };
         function _applyCadenceUI(type) {
             document.getElementById('projectCadenceType').value = type;
             document.querySelectorAll('#projectCadenceSeg .pr-seg-btn').forEach(function(b) { b.classList.toggle('active', b.getAttribute('data-cad') === type); });
             document.getElementById('projectCadenceHint').textContent = type === 'recurring'
                 ? 'Runs in repeating cycles. Per-cycle items reset each time you seal a cycle.'
-                : 'A single run through the pipeline. Marks complete when you finish.';
+                : 'A single run. Marks complete when everything is done.';
         }
 
-        function renderProjectBuilder() {
-            var host = document.getElementById('projectBuilder');
-            if (!host || !_projectDraft) return;
-            _buildActIdx();
-            var pipelines = _projectDraft.pipelines || [];
-            var multi = pipelines.length > 1;
-            // One-off quests never repeat, so the per-cycle/once toggle is meaningless.
-            var isRecurring = _projectDraft.cadence && _projectDraft.cadence.type === 'recurring';
-            host.innerHTML = pipelines.map(function(pl, pi) {
-                var stages = pl.stages || [];
-                var stagesHtml = stages.map(function(s, si) {
-                    var itemsHtml = (s.items || []).map(function(it, ii) {
-                        var isOnce = it.resetMode === 'once';
-                        var req = itemReq(it);
-                        var reqInput = '<input type="number" class="pl-input pr-b-req" min="1" max="99" value="' + req + '" title="Required completions" oninput="projectDraftSetReq(' + pi + ',' + si + ',' + ii + ',this.value)">';
-                        var resetBtn = isRecurring ? '<button type="button" class="pr-b-reset ' + (isOnce ? 'is-once' : 'is-cycle') + '" onclick="projectDraftToggleReset(' + pi + ',' + si + ',' + ii + ')" title="Toggle reset mode">' + (isOnce ? 'once' : 'cycle') + '</button>' : '';
-                        var del = '<button type="button" class="pr-b-x" onclick="projectDraftRemoveItem(' + pi + ',' + si + ',' + ii + ')" aria-label="Remove"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
-                        if (it.type === 'activity') {
-                            var m = actMeta(it.linkedActivityId);
-                            var nm = m ? m.name : '(activity removed)';
-                            return '<div class="pr-b-item pr-b-item-act"><span class="pr-b-item-icon">▹</span>' +
-                                '<span class="pr-b-item-name" title="' + prAttr(nm) + '">' + escapeHtml(nm) + '</span>' + reqInput + resetBtn + del + '</div>';
-                        }
-                        return '<div class="pr-b-item pr-b-item-task"><span class="pr-b-item-icon">☐</span>' +
-                            '<input type="text" class="pl-input pr-b-item-input" value="' + prAttr(it.name) + '" placeholder="Task name" oninput="projectDraftSetTaskName(' + pi + ',' + si + ',' + ii + ',this.value)">' + reqInput + resetBtn + del + '</div>';
-                    }).join('');
-                    var removeStage = stages.length > 1 ? '<button type="button" class="pr-b-x pr-b-x-stage" onclick="projectDraftRemoveStage(' + pi + ',' + si + ')" aria-label="Remove stage"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>' : '';
-                    return '<div class="pr-b-stage"><div class="pr-b-stage-head"><span class="pr-b-stage-num">' + (si + 1) + '</span>' +
-                        '<input type="text" class="pl-input pr-b-stage-name" value="' + prAttr(s.name) + '" placeholder="Stage name" oninput="projectDraftSetStageName(' + pi + ',' + si + ',this.value)">' + removeStage + '</div>' +
-                        '<div class="pr-b-items">' + itemsHtml + '</div>' +
-                        '<div class="pr-b-add-row"><button type="button" class="pr-b-add" onclick="openProjectActivityPicker(' + pi + ',' + si + ')">＋ Activity</button>' +
-                        '<button type="button" class="pr-b-add" onclick="projectDraftAddTask(' + pi + ',' + si + ')">＋ Task</button></div></div>';
-                }).join('');
-                var pipeHead = multi
-                    ? '<div class="pr-b-pipe-head"><span class="pr-b-pipe-badge">Pipeline ' + (pi + 1) + '</span>' +
-                        '<input type="text" class="pl-input pr-b-pipe-name" value="' + prAttr(pl.name) + '" placeholder="Pipeline name (optional)" oninput="projectDraftSetPipeName(' + pi + ',this.value)">' +
-                        '<button type="button" class="pr-b-x pr-b-x-stage" onclick="projectDraftRemovePipeline(' + pi + ')" aria-label="Remove pipeline"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>'
-                    : '';
-                return '<div class="pr-b-pipe">' + pipeHead + stagesHtml +
-                    '<button type="button" class="pr-add-stage-btn" onclick="projectDraftAddStage(' + pi + ')"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add stage</button></div>';
-            }).join('');
+        function renderProjectDimReadout() {
+            var wrap = document.getElementById('projectDimReadoutWrap');
+            var host = document.getElementById('projectDimReadout');
+            if (!wrap || !host) return;
+            var groups = readTopLevelGroups();
+            var result = computeProjectDimensions(groups);
+            var names = result.dimensionIds.map(function(id) { var dim = (window.userData.dimensions || []).find(function(d) { return d.id === id; }); return dim ? dim.name : null; }).filter(Boolean);
+            if (!names.length) { wrap.style.display = 'none'; host.innerHTML = ''; return; }
+            wrap.style.display = '';
+            host.innerHTML = 'Categories: <strong>' + escapeHtml(names.join(', ')) + '</strong> — set automatically from the activities in this quest.';
+        }
+
+        function repSubCopy(v) { return v > 1 ? ('the whole group runs ' + v + ' times — everything inside repeats') : 'runs once'; }
+
+        function wireDragHandle(el) {
+            var h = el.querySelector('[data-draghandle]');
+            if (h) h.addEventListener('pointerdown', function(e) { startDrag(e, el); });
+        }
+
+        function addGroupCard(hostEl, seed) {
+            var gid = seed && seed.id ? seed.id : prId('grp');
+            var ordered = seed ? !!seed.ordered : false;
+            var repeat = seed ? Math.max(1, seed.repeat || 1) : 1;
+            var repsDone = seed ? Math.max(0, seed.repsDone || 0) : 0;
+            var wrap = document.createElement('div');
+            wrap.className = 'pr-b-group' + (repeat > 1 ? ' pr-b-repeating' : '');
+            wrap.setAttribute('data-group', gid);
+            wrap.setAttribute('data-reps-done', repsDone);
+            wrap.innerHTML =
+                '<div class="pr-b-group-head">' +
+                    '<span class="pr-b-handle" data-draghandle aria-label="Drag">' + prDragSvg() + '</span>' +
+                    '<input class="pr-b-group-name" value="' + prAttr(seed ? seed.name : '') + '" placeholder="Name this group — e.g. Nutrition (optional)">' +
+                    '<button type="button" class="pr-b-group-x" aria-label="Remove group" onclick="removeGroupCard(\'' + gid + '\')">' + prXSvg() + '</button>' +
+                '</div>' +
+                '<div class="pr-b-rep-ctrl"><div class="pr-b-rep-txt"><div class="pr-b-rep-title">' + prRepeatSvg() + 'Repeat this whole group</div><div class="pr-b-rep-sub">' + repSubCopy(repeat) + '</div></div>' +
+                    '<div class="pr-b-stepper"><button type="button" aria-label="Fewer" onclick="stepGroupRepeat(\'' + gid + '\',-1)">' + prMinusSvg() + '</button><span class="pr-b-stepper-val">×' + repeat + '</span><button type="button" aria-label="More" onclick="stepGroupRepeat(\'' + gid + '\',1)">' + prPlusSvg() + '</button></div></div>' +
+                '<div class="pr-b-ordtog' + (ordered ? ' pr-b-on' : '') + '" onclick="toggleGroupOrdered(this)" role="switch" aria-checked="' + ordered + '">' +
+                    orderedMiniSvg() +
+                    '<div class="pr-b-ordtog-txt"><div class="pr-b-ordtog-title">These happen in order</div><div class="pr-b-ordtog-sub">' + (ordered ? 'shown as a sequence — any step can still be marked' : 'off — do them in any order') + '</div></div>' +
+                    '<span class="pr-b-switch"></span>' +
+                '</div>' +
+                '<div class="pr-b-zone" data-dropzone data-group="' + gid + '"></div>' +
+                '<div class="pr-b-empty" data-empty>No activities, tasks, or groups yet</div>' +
+                '<div class="pr-b-add-row">' +
+                    '<button type="button" class="pr-b-add-activity" onclick="openActivityPicker(\'' + gid + '\')">' + prLinkSvg() + 'Add activity</button>' +
+                    '<button type="button" class="pr-b-add-task" onclick="addTaskRow(\'' + gid + '\')">' + prPlusSvg() + 'Task</button>' +
+                    '<button type="button" class="pr-b-add-group" onclick="addNestedGroup(\'' + gid + '\')" aria-label="Add group" title="Add a nested group">' + prGroupSvg() + '</button>' +
+                '</div>';
+            wireDragHandle(wrap);
+            hostEl.appendChild(wrap);
+            var zone = wrap.querySelector(':scope > .pr-b-zone');
+            if (seed && (seed.children || []).length) {
+                seed.children.forEach(function(c) {
+                    if (c.kind === 'group') addGroupCard(zone, c);
+                    else addLeafRow(zone, c);
+                });
+            }
+            refreshZoneEmptyState(zone);
+            return wrap;
+        }
+        window.addGroup = function() { addGroupCard(document.getElementById('projectBuilder'), null); };
+        window.addNestedGroup = function(gid) {
+            var zone = document.querySelector('.pr-b-group[data-group="' + gid + '"] > .pr-b-zone');
+            if (!zone) return;
+            addGroupCard(zone, null);
+            refreshZoneEmptyState(zone);
+        };
+        window.removeGroupCard = function(gid) {
+            var el = document.querySelector('.pr-b-group[data-group="' + gid + '"]');
+            if (!el) return;
+            var zone = el.closest('.pr-b-zone');
+            el.remove();
+            if (zone) refreshZoneEmptyState(zone);
             renderProjectDimReadout();
+        };
+        window.toggleGroupOrdered = function(el) {
+            var on = el.classList.toggle('pr-b-on');
+            el.setAttribute('aria-checked', on);
+            el.querySelector('.pr-b-ordtog-sub').textContent = on ? 'shown as a sequence — any step can still be marked' : 'off — do them in any order';
+        };
+        window.stepGroupRepeat = function(gid, delta) {
+            var wrap = document.querySelector('.pr-b-group[data-group="' + gid + '"]');
+            if (!wrap) return;
+            var el = wrap.querySelector(':scope > .pr-b-rep-ctrl .pr-b-stepper-val');
+            var v = parseInt(el.textContent.replace('×', ''), 10) || 1;
+            v = Math.max(1, Math.min(20, v + delta));
+            el.textContent = '×' + v;
+            wrap.classList.toggle('pr-b-repeating', v > 1);
+            wrap.querySelector(':scope > .pr-b-rep-ctrl .pr-b-rep-sub').textContent = repSubCopy(v);
+        };
+
+        function addLeafRow(zoneEl, seed) {
+            var iid = seed && seed.id ? seed.id : prId('lf');
+            var type = seed && seed.type === 'activity' ? 'activity' : 'task';
+            var isAct = type === 'activity';
+            var req = seed ? Math.max(1, seed.requiredCount || 1) : 1;
+            var completedCount = seed ? Math.max(0, seed.completedCount || 0) : 0;
+            var doneAt = seed && seed.doneAt ? seed.doneAt : '';
+            var resetMode = seed && seed.resetMode === 'once' ? 'once' : 'per-cycle';
+            var meta = isAct ? actMeta(seed.linkedActivityId) : null;
+            var dimHex = meta ? meta.dimHex : null;
+            var displayName = isAct ? (meta ? meta.name : '(activity removed)') : (seed ? (seed.name || '') : '');
+            var row = document.createElement('div');
+            row.className = 'pr-b-item';
+            row.setAttribute('data-item', '1');
+            row.setAttribute('data-id', iid);
+            row.setAttribute('data-type', type);
+            row.setAttribute('data-linked-id', isAct ? (seed.linkedActivityId || '') : '');
+            row.setAttribute('data-completed-count', completedCount);
+            row.setAttribute('data-done-at', doneAt);
+            row.setAttribute('data-reset-mode', resetMode);
+            row.innerHTML =
+                '<span class="pr-b-handle" data-draghandle aria-label="Drag">' + prDragSvg() + '</span>' +
+                '<div class="pr-b-item-body">' +
+                    (isAct
+                        ? '<div class="pr-b-item-name pr-b-item-name-static" title="' + prAttr(displayName) + '">' + escapeHtml(displayName) + '</div>'
+                        : '<input class="pr-b-item-name pr-b-item-name-inp" value="' + prAttr(displayName) + '" placeholder="Task name">') +
+                    '<div class="pr-b-item-meta ' + (isAct ? 'pr-meta-act' : 'pr-meta-task') + '">' +
+                        (isAct ? ('<span class="pr-b-mdot" style="background:' + (dimHex || '#8a9099') + '"></span>' + escapeHtml(meta ? meta.dimName : 'Unknown') + ' · linked') : 'one-off task') +
+                    '</div>' +
+                '</div>' +
+                '<span class="pr-b-mini-step" title="Times to complete"><button type="button" aria-label="Fewer" onclick="stepLeafCount(this,-1)">' + prMinusSvg() + '</button><span class="pr-b-mini-val' + (req > 1 ? ' pr-hot' : '') + '">×' + req + '</span><button type="button" aria-label="More" onclick="stepLeafCount(this,1)">' + prPlusSvg() + '</button></span>' +
+                '<button type="button" class="pr-b-item-x" aria-label="Remove" onclick="removeLeafRow(this)">' + prXSvg() + '</button>';
+            wireDragHandle(row);
+            zoneEl.appendChild(row);
+            return row;
+        }
+        window.addTaskRow = function(gid) {
+            var zone = document.querySelector('.pr-b-group[data-group="' + gid + '"] > .pr-b-zone');
+            if (!zone) return;
+            var row = addLeafRow(zone, { type: 'task', name: '', requiredCount: 1, completedCount: 0 });
+            refreshZoneEmptyState(zone);
+            var inp = row.querySelector('.pr-b-item-name-inp'); if (inp) inp.focus();
+        };
+        window.removeLeafRow = function(btn) {
+            var row = btn.closest('.pr-b-item');
+            var zone = row.closest('.pr-b-zone');
+            row.remove();
+            if (zone) refreshZoneEmptyState(zone);
+            renderProjectDimReadout();
+        };
+        window.stepLeafCount = function(btn, delta) {
+            var wrap = btn.closest('.pr-b-mini-step');
+            var v = wrap.querySelector('.pr-b-mini-val');
+            var n = parseInt(v.textContent.replace('×', ''), 10) || 1;
+            n = Math.max(1, Math.min(99, n + delta));
+            v.textContent = '×' + n;
+            v.classList.toggle('pr-hot', n > 1);
+        };
+        function refreshZoneEmptyState(zoneEl) {
+            if (!zoneEl) return;
+            var empty = zoneEl.parentElement ? zoneEl.parentElement.querySelector(':scope > [data-empty]') : null;
+            if (!empty) return;
+            var has = zoneEl.querySelector(':scope > [data-item]') || zoneEl.querySelector(':scope > .pr-b-group');
+            empty.style.display = has ? 'none' : 'block';
         }
 
-        window.projectDraftSetPipeName = function(pi, v) { if (_projectDraft && _projectDraft.pipelines[pi]) _projectDraft.pipelines[pi].name = v; };
-        window.projectDraftSetStageName = function(pi, si, v) { if (_projectDraft && _projectDraft.pipelines[pi] && _projectDraft.pipelines[pi].stages[si]) _projectDraft.pipelines[pi].stages[si].name = v; };
-        window.projectDraftSetTaskName = function(pi, si, ii, v) { var it = _draftItem(pi, si, ii); if (it) it.name = v; };
-        window.projectDraftSetReq = function(pi, si, ii, v) { var it = _draftItem(pi, si, ii); if (it) it.requiredCount = Math.max(1, parseInt(v, 10) || 1); };
-        function _draftItem(pi, si, ii) { try { return _projectDraft.pipelines[pi].stages[si].items[ii]; } catch (e) { return null; } }
-        window.projectDraftToggleReset = function(pi, si, ii) { var it = _draftItem(pi, si, ii); if (!it) return; it.resetMode = it.resetMode === 'once' ? 'per-cycle' : 'once'; renderProjectBuilder(); };
-        window.projectDraftRemoveItem = function(pi, si, ii) { try { _projectDraft.pipelines[pi].stages[si].items.splice(ii, 1); renderProjectBuilder(); } catch (e) {} };
-        window.projectDraftAddTask = function(pi, si) { try { var s = _projectDraft.pipelines[pi].stages[si]; s.items = s.items || []; s.items.push({ id: prId('it'), type: 'task', name: '', resetMode: 'per-cycle', requiredCount: 1, completedCount: 0 }); renderProjectBuilder(); } catch (e) {} };
-        window.projectDraftAddStage = function(pi) { try { _projectDraft.pipelines[pi].stages.push(_blankStage('')); renderProjectBuilder(); } catch (e) {} };
-        window.projectDraftRemoveStage = function(pi, si) { try { var pl = _projectDraft.pipelines[pi]; if (pl.stages.length <= 1) return; pl.stages.splice(si, 1); renderProjectBuilder(); } catch (e) {} };
-        window.projectDraftAddPipeline = function() { if (!_projectDraft) return; _projectDraft.pipelines.push(_blankPipeline()); renderProjectBuilder(); };
-        window.projectDraftRemovePipeline = function(pi) { if (!_projectDraft || _projectDraft.pipelines.length <= 1) return; _projectDraft.pipelines.splice(pi, 1); renderProjectBuilder(); };
+        // ── Drag and drop — pointer-based, cross-zone at any nesting depth
+        //    (drop detection is just elementFromPoint→closest([data-dropzone]),
+        //    which doesn't care how deep the zone is nested). ────────────────
+        var _drag = null;
+        function startDrag(e, row) {
+            e.preventDefault();
+            var rect = row.getBoundingClientRect();
+            var clone = row.cloneNode(true);
+            clone.classList.add('pr-dragging-clone');
+            clone.style.width = rect.width + 'px';
+            clone.style.left = rect.left + 'px';
+            clone.style.top = rect.top + 'px';
+            document.body.appendChild(clone);
+            var ph = document.createElement('div');
+            ph.className = row.classList.contains('pr-b-group') ? 'pr-drop-ph pr-drop-ph-group' : 'pr-drop-ph';
+            ph.style.height = rect.height + 'px';
+            row.after(ph);
+            row.style.display = 'none';
+            _drag = { row: row, clone: clone, ph: ph, dx: e.clientX - rect.left, dy: e.clientY - rect.top };
+            document.addEventListener('pointermove', onDragMove, { passive: false });
+            document.addEventListener('pointerup', onDragUp, { once: true });
+        }
+        function onDragMove(e) {
+            if (!_drag) return;
+            e.preventDefault();
+            _drag.clone.style.left = (e.clientX - _drag.dx) + 'px';
+            _drag.clone.style.top = (e.clientY - _drag.dy) + 'px';
+            var under = document.elementFromPoint(e.clientX, e.clientY);
+            document.querySelectorAll('.pr-zone-hover').forEach(function(z) { z.classList.remove('pr-zone-hover'); });
+            var zone = under && under.closest('[data-dropzone]');
+            if (!zone || (_drag.row.contains && _drag.row.contains(zone))) return;
+            zone.classList.add('pr-zone-hover');
+            var over = under.closest('[data-item],.pr-b-group');
+            if (over && over !== _drag.row && !over.classList.contains('pr-dragging-clone') && zone.contains(over) && !(_drag.row.contains && _drag.row.contains(over))) {
+                var r = over.getBoundingClientRect();
+                if (e.clientY < r.top + r.height / 2) over.before(_drag.ph); else over.after(_drag.ph);
+            } else if (!zone.contains(_drag.ph)) {
+                zone.appendChild(_drag.ph);
+            }
+        }
+        function onDragUp() {
+            if (!_drag) return;
+            document.removeEventListener('pointermove', onDragMove);
+            document.querySelectorAll('.pr-zone-hover').forEach(function(z) { z.classList.remove('pr-zone-hover'); });
+            var destZone = _drag.ph.closest('[data-dropzone]');
+            _drag.ph.replaceWith(_drag.row);
+            _drag.row.style.display = '';
+            _drag.clone.remove();
+            if (destZone) refreshZoneEmptyState(destZone);
+            renderProjectDimReadout();
+            _drag = null;
+        }
 
-        // ── Activity picker ────────────────────────────────────────────────
-        var _prPickerTarget = null;
+        // ── Activity picker sheet — retargeted to a builder zone (by group id)
+        //    instead of pipeline/stage indices. ──────────────────────────────
+        var _prPickerTargetGid = null;
         var _prPickerSelection = {};
-        window.openProjectActivityPicker = function(pi, si) {
-            _prPickerTarget = { pi: pi, si: si }; _prPickerSelection = {};
-            document.getElementById('projectActivitySearch').value = '';
+        window.openActivityPicker = function(gid) {
+            _prPickerTargetGid = gid; _prPickerSelection = {};
+            var input = document.getElementById('projectActivitySearch'); if (input) input.value = '';
             renderProjectActivityPickerList('');
             document.getElementById('projectActivityPicker').classList.add('active');
         };
-        window.closeProjectActivityPicker = function() { document.getElementById('projectActivityPicker').classList.remove('active'); _prPickerTarget = null; };
+        window.closeProjectActivityPicker = function() { document.getElementById('projectActivityPicker').classList.remove('active'); _prPickerTargetGid = null; };
         window.renderProjectActivityPickerList = function(filter) {
             _buildActIdx();
             var host = document.getElementById('projectActivityPickerList');
             var emptyEl = document.getElementById('projectActivityPickerEmpty');
             if (!host) return;
+            var zone = _prPickerTargetGid ? document.querySelector('.pr-b-group[data-group="' + _prPickerTargetGid + '"] > .pr-b-zone') : null;
             var already = {};
-            if (_prPickerTarget) { try { (_projectDraft.pipelines[_prPickerTarget.pi].stages[_prPickerTarget.si].items || []).forEach(function(it) { if (it.type === 'activity') already[it.linkedActivityId] = true; }); } catch (e) {} }
+            if (zone) { zone.querySelectorAll(':scope > [data-item][data-type="activity"]').forEach(function(el) { already[el.getAttribute('data-linked-id')] = true; }); }
             var q = (filter || '').toLowerCase().trim();
             var list = Object.keys(window._prActIdx || {}).map(function(k) { return window._prActIdx[k]; })
                 .filter(function(a) { return !q || a.name.toLowerCase().indexOf(q) !== -1 || (a.dimName + ' ' + a.pathName).toLowerCase().indexOf(q) !== -1; })
@@ -17098,6 +17352,7 @@
                 var sel = _prPickerSelection[a.id];
                 return '<div class="pr-pick-row' + (sel ? ' sel' : '') + (isIn ? ' added' : '') + '" ' + (isIn ? '' : 'onclick="toggleProjectPick(\'' + prAttr(a.id) + '\')"') + '>' +
                     '<span class="pr-pick-check">' + (isIn ? '✓' : (sel ? prCheckSvg() : '')) + '</span>' +
+                    '<span class="pr-pick-dot" style="background:' + (a.dimHex || '#8a9099') + '"></span>' +
                     '<span class="pr-pick-main"><span class="pr-pick-name">' + escapeHtml(a.name) + '</span>' +
                     '<span class="pr-pick-sub">' + escapeHtml(a.dimName + ' › ' + a.pathName) + ' · ' + a.baseXP + ' XP</span></span>' +
                     (isIn ? '<span class="pr-pick-added">added</span>' : '') + '</div>';
@@ -17107,57 +17362,87 @@
         window.toggleProjectPick = function(id) { if (_prPickerSelection[id]) delete _prPickerSelection[id]; else _prPickerSelection[id] = true; renderProjectActivityPickerList(document.getElementById('projectActivitySearch').value); };
         function _prUpdatePickerAddBtn() { var n = Object.keys(_prPickerSelection).length; var btn = document.getElementById('projectActivityPickerAdd'); if (btn) { btn.textContent = n ? 'Add ' + n : 'Add'; btn.disabled = !n; } }
         window.confirmProjectActivityPicker = function() {
-            if (!_prPickerTarget || !_projectDraft) return closeProjectActivityPicker();
-            var ids = Object.keys(_prPickerSelection);
-            try {
-                var stage = _projectDraft.pipelines[_prPickerTarget.pi].stages[_prPickerTarget.si];
-                stage.items = stage.items || [];
-                ids.forEach(function(aid) { stage.items.push({ id: prId('it'), type: 'activity', linkedActivityId: aid, name: '', resetMode: 'per-cycle', requiredCount: 1, completedCount: 0 }); });
-            } catch (e) {}
-            closeProjectActivityPicker(); renderProjectBuilder();
+            if (!_prPickerTargetGid) return closeProjectActivityPicker();
+            var zone = document.querySelector('.pr-b-group[data-group="' + _prPickerTargetGid + '"] > .pr-b-zone');
+            if (zone) {
+                Object.keys(_prPickerSelection).forEach(function(aid) { addLeafRow(zone, { type: 'activity', linkedActivityId: aid, requiredCount: 1, completedCount: 0 }); });
+                refreshZoneEmptyState(zone);
+            }
+            closeProjectActivityPicker();
+            renderProjectDimReadout();
         };
+
+        // ── Save — recursively read the DOM tree into groups[] ─────────────
+        function readLeafRow(el) {
+            var type = el.getAttribute('data-type') === 'activity' ? 'activity' : 'task';
+            var reqEl = el.querySelector(':scope > .pr-b-mini-step .pr-b-mini-val');
+            var req = parseInt((reqEl ? reqEl.textContent : '×1').replace('×', ''), 10) || 1;
+            var completedCount = Math.max(0, Math.min(req, parseInt(el.getAttribute('data-completed-count'), 10) || 0));
+            var doneAt = el.getAttribute('data-done-at') || null;
+            var resetMode = el.getAttribute('data-reset-mode') === 'once' ? 'once' : 'per-cycle';
+            if (type === 'activity') {
+                var linkedId = el.getAttribute('data-linked-id');
+                if (!linkedId) return null;
+                return { id: el.getAttribute('data-id') || prId('lf'), kind: 'leaf', type: 'activity', linkedActivityId: linkedId, name: '', resetMode: resetMode, requiredCount: req, completedCount: completedCount, doneAt: doneAt };
+            }
+            var nameInp = el.querySelector(':scope > .pr-b-item-body > .pr-b-item-name-inp');
+            var name = ((nameInp ? nameInp.value : '') || '').trim();
+            if (!name) return null;
+            return { id: el.getAttribute('data-id') || prId('lf'), kind: 'leaf', type: 'task', linkedActivityId: null, name: name, resetMode: resetMode, requiredCount: req, completedCount: completedCount, doneAt: doneAt };
+        }
+        function readGroupCard(el) {
+            var gid = el.getAttribute('data-group');
+            var nameInp = el.querySelector(':scope > .pr-b-group-head > .pr-b-group-name');
+            var name = ((nameInp ? nameInp.value : '') || '').trim();
+            var ordtog = el.querySelector(':scope > .pr-b-ordtog');
+            var ordered = !!(ordtog && ordtog.classList.contains('pr-b-on'));
+            var stepVal = el.querySelector(':scope > .pr-b-rep-ctrl .pr-b-stepper-val');
+            var repeat = parseInt((stepVal ? stepVal.textContent : '×1').replace('×', ''), 10) || 1;
+            var repsDone = Math.min(repeat, Math.max(0, parseInt(el.getAttribute('data-reps-done'), 10) || 0));
+            var zone = el.querySelector(':scope > .pr-b-zone');
+            var children = readGroupTree(zone);
+            return { id: gid || prId('grp'), kind: 'group', name: name, ordered: ordered, repeat: repeat, repsDone: repsDone, children: children };
+        }
+        function readGroupTree(zoneEl) {
+            var out = [];
+            if (!zoneEl) return out;
+            Array.prototype.forEach.call(zoneEl.children, function(el) {
+                if (el.classList.contains('pr-b-group')) {
+                    var node = readGroupCard(el);
+                    if (node && node.children.length) out.push(node);
+                } else if (el.hasAttribute && el.hasAttribute('data-item')) {
+                    var leaf = readLeafRow(el);
+                    if (leaf) out.push(leaf);
+                }
+            });
+            return out;
+        }
+        function readTopLevelGroups() { return readGroupTree(document.getElementById('projectBuilder')); }
 
         window.saveProject = function(event) {
             if (event && event.preventDefault) event.preventDefault();
-            if (!_projectDraft) return;
             var name = (document.getElementById('projectName').value || '').trim();
             if (!name) { showToast('Give your quest a name', 'red'); return; }
+            var emoji = (document.getElementById('projectEmoji').value || DEFAULT_QUEST_EMOJI).trim() || DEFAULT_QUEST_EMOJI;
             var desc = (document.getElementById('projectDesc').value || '').trim();
             var cadType = document.getElementById('projectCadenceType').value || 'oneoff';
 
-            var pipelines = (_projectDraft.pipelines || []).map(function(pl) {
-                var stages = (pl.stages || []).map(function(s, si) {
-                    var items = (s.items || []).filter(function(it) { return it.type === 'activity' ? !!it.linkedActivityId : (it.name || '').trim(); })
-                        .map(function(it, ii) {
-                            return { id: it.id || prId('it'), order: ii, type: it.type === 'activity' ? 'activity' : 'task',
-                                     linkedActivityId: it.type === 'activity' ? it.linkedActivityId : null,
-                                     name: it.type === 'activity' ? '' : (it.name || '').trim(),
-                                     resetMode: it.resetMode === 'once' ? 'once' : 'per-cycle',
-                                     requiredCount: Math.max(1, parseInt(it.requiredCount, 10) || 1),
-                                     completedCount: Math.max(0, parseInt(it.completedCount, 10) || 0), doneAt: it.doneAt || null };
-                        });
-                    return { id: s.id || prId('st'), name: (s.name || '').trim() || ('Stage ' + (si + 1)), order: si, items: items };
-                }).filter(function(s) { return s.name || s.items.length || (pl.stages.length === 1); });
-                if (stages.length === 0) stages = [_blankStage('To Do')];
-                return { id: pl.id || prId('pl'), name: (pl.name || '').trim(), stages: stages };
-            }).filter(function(pl) { return pl.stages.length; });
-            if (pipelines.length === 0) pipelines = [_blankPipeline()];
+            var groups = readTopLevelGroups();
+            if (!groups.length) groups = [blankGroup()];
 
             var cadence = { type: cadType };
-            // Dimensions are inferred from linked activities, recomputed on
-            // every save — never hand-picked (§7).
-            var dims = computeProjectDimensions(pipelines);
+            var dims = computeProjectDimensions(groups);
 
             if (_projectEditingId) {
                 var p = findProject(_projectEditingId);
                 if (!p) { showToast('Quest not found', 'red'); return; }
-                p.name = name; p.description = desc; p.dimensionIds = dims.dimensionIds; p.dimensionId = dims.dimensionId;
-                p.cadence = cadence; p.pipelines = pipelines; p.questLevel = questLevelFromXP(p.questXP || 0);
+                p.name = name; p.emoji = emoji; p.description = desc; p.dimensionIds = dims.dimensionIds; p.dimensionId = dims.dimensionId;
+                p.cadence = cadence; p.groups = groups; p.schemaVersion = 2; p.questLevel = questLevelFromXP(p.questXP || 0);
                 var savedId = p.id;
                 saveUserData(); closeProjectModal(); showToast('✓ Quest updated', 'green'); openProjectDetail(savedId);
             } else {
-                var proj = { id: prId('proj'), name: name, description: desc, dimensionIds: dims.dimensionIds, dimensionId: dims.dimensionId,
-                    status: 'active', cadence: cadence, pipelines: pipelines, currentCycle: 1, cycleHistory: [],
+                var proj = { id: prId('proj'), name: name, emoji: emoji, description: desc, dimensionIds: dims.dimensionIds, dimensionId: dims.dimensionId,
+                    status: 'active', cadence: cadence, groups: groups, schemaVersion: 2, currentCycle: 1, cycleHistory: [],
                     questXP: 0, questLevel: 1, createdAt: new Date().toISOString(), startedCycleAt: new Date().toISOString() };
                 getProjects().push(proj);
                 saveUserData(); closeProjectModal(); showToast('✓ Quest created', 'green'); openProjectDetail(proj.id);

@@ -1475,52 +1475,45 @@
             </div>
             <form id="projectForm" onsubmit="saveProject(event)">
                 <div class="modal-body pl-modal-body">
-                    <!-- Name -->
+                    <!-- Emoji + name -->
                     <div class="cat-form-group">
                         <label class="pl-field-label">Quest name</label>
-                        <input type="text" id="projectName" class="pl-input" placeholder="e.g., Successful YouTube channel" required>
+                        <div class="pr-b-name-row">
+                            <input type="text" id="projectEmoji" class="pl-input pr-b-emoji-input" value="🎯" maxlength="2" aria-label="Emoji">
+                            <input type="text" id="projectName" class="pl-input pr-b-name-input" placeholder="e.g., Successful YouTube channel" required>
+                        </div>
                     </div>
 
                     <div class="cat-form-group">
                         <label class="pl-field-label">Description <span class="pl-field-optional">optional</span></label>
-                        <input type="text" id="projectDesc" class="pl-input" placeholder="One line on what “done” looks like" maxlength="160">
+                        <textarea id="projectDesc" class="pl-input pr-b-desc" placeholder="What's this quest about?" maxlength="240" rows="2"></textarea>
                     </div>
 
                     <div class="cat-form-group" id="projectDimReadoutWrap" style="display:none;">
                         <p class="pr-cad-hint" id="projectDimReadout"></p>
                     </div>
 
-                    <!-- Cadence -->
+                    <!-- Type -->
                     <div class="cat-form-group">
-                        <label class="pl-field-label">Cadence</label>
+                        <label class="pl-field-label">Type</label>
                         <input type="hidden" id="projectCadenceType" value="oneoff">
                         <div class="pr-seg" id="projectCadenceSeg">
                             <button type="button" class="pr-seg-btn active" data-cad="oneoff" onclick="setProjectCadence('oneoff')">One-off</button>
-                            <button type="button" class="pr-seg-btn" data-cad="recurring" onclick="setProjectCadence('recurring')">Repeats in cycles</button>
+                            <button type="button" class="pr-seg-btn" data-cad="recurring" onclick="setProjectCadence('recurring')">Repeating</button>
                         </div>
-                        <p class="pr-cad-hint" id="projectCadenceHint">A single run through the pipeline. Marks complete when you finish.</p>
+                        <p class="pr-cad-hint" id="projectCadenceHint">A single run. Marks complete when everything is done.</p>
                     </div>
 
-                    <!-- Pipelines / stages / items builder -->
+                    <!-- Groups builder -->
                     <div class="cat-form-group">
                         <div class="pr-builder-head">
-                            <label class="pl-field-label" style="margin:0;">Pipelines</label>
-                            <span class="pr-builder-hint">chains of stages</span>
+                            <label class="pl-field-label" style="margin:0;">Build it</label>
                         </div>
-                        <div class="pr-struct-explainer">
-                            <p class="pr-struct-line">A quest is one or more pipelines — each pipeline is a chain of stages — each stage holds the activities or tasks you'll actually do.</p>
-                            <div class="pr-struct-diagram">
-                                <span class="pr-struct-node">Pipeline</span>
-                                <span class="pr-pipe-glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2"/><circle cx="19" cy="6" r="2.2"/><circle cx="19" cy="18" r="2.2"/><path d="M7 11l10-4"/><path d="M7 13l10 4"/></svg></span>
-                                <span class="pr-struct-node">Stage</span>
-                                <span class="pr-pipe-glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2"/><circle cx="19" cy="6" r="2.2"/><circle cx="19" cy="18" r="2.2"/><path d="M7 11l10-4"/><path d="M7 13l10 4"/></svg></span>
-                                <span class="pr-struct-node">Activity / Task</span>
-                            </div>
-                        </div>
+                        <p class="pr-struct-line">A quest is one or more <strong>groups</strong> of activities and tasks. Add to a group — that's already a working quest. Set a <strong>repeat</strong> to do the whole group several times, turn on <strong>in order</strong> to make it a sequence, or add a <strong>nested group</strong> to break a step into its own tasks.</p>
                         <div id="projectBuilder"></div>
-                        <button type="button" class="pr-add-pipeline-btn" onclick="projectDraftAddPipeline()">
+                        <button type="button" class="pr-add-pipeline-btn" onclick="addGroup()">
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                            Add another pipeline
+                            Add another group
                         </button>
                     </div>
                 </div>
@@ -1538,13 +1531,14 @@
             <div class="modal-header pl-modal-header">
                 <div>
                     <div class="pl-modal-eyebrow">Add activities</div>
-                    <h3 class="modal-title">Pick activities for this stage</h3>
+                    <h3 class="modal-title">Pick activities for this group</h3>
                 </div>
                 <button class="pl-modal-close" type="button" onclick="closeProjectActivityPicker()" aria-label="Close">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                 </button>
             </div>
             <div class="modal-body pl-modal-body">
+                <p class="pr-cad-hint" style="margin:0 0 10px;">Completing a linked activity here logs XP and streaks exactly as on the main screen — nothing is duplicated.</p>
                 <input type="text" id="projectActivitySearch" class="pl-input" placeholder="Search activities…" oninput="renderProjectActivityPickerList(this.value)">
                 <div id="projectActivityPickerList" class="pr-picker-list"></div>
                 <div id="projectActivityPickerEmpty" class="pr-picker-empty" style="display:none;">No activities found. Create activities first, or add a plain task instead.</div>
@@ -1562,14 +1556,14 @@
             <div class="modal-header pl-modal-header">
                 <div>
                     <div class="pl-modal-eyebrow">Quests</div>
-                    <h3 class="modal-title">Turn a big goal into a pipeline</h3>
+                    <h3 class="modal-title">Turn a big goal into a quest</h3>
                 </div>
                 <button class="pl-modal-close" type="button" onclick="closeProjectsInfo()" aria-label="Close">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                 </button>
             </div>
             <div class="modal-body pl-modal-body">
-                <p class="pr-info-lead">An <strong>Activity</strong> is one repeatable action. A <strong>Challenge</strong> is a time-boxed bet. A <strong>Quest</strong> is a structured body of work with <strong>stages</strong> you move through — <em>“where is this, and what’s next?”</em></p>
+                <p class="pr-info-lead">An <strong>Activity</strong> is one repeatable action. A <strong>Challenge</strong> is a time-boxed bet. A <strong>Quest</strong> is a structured body of work built from <strong>groups</strong> you move through — checklists, sequences, or repeating pipelines — <em>“where is this, and what’s next?”</em></p>
                 <div class="pr-info-example">
                     <div class="pr-info-example-title">Example — a YouTube channel</div>
                     <div class="pr-info-pipe">
