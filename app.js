@@ -5335,9 +5335,11 @@
 
             // Update challenge progress
             updateChallengeProgress(activity.id);
-            // Update quest progress — passively marks linked stage items done and
-            // feeds a fraction of this XP into the quest's level (defined below).
-            try { if (typeof updateQuestProgress === 'function') updateQuestProgress(activity.id, earnedXP); } catch(e) {}
+            // Update quest progress — passively marks linked leaves done in any
+            // active quest that references this activity. Quest bonus XP is
+            // paid separately, as a lump sum on quest completion (see
+            // payQuestBonus in the Quests section) — not per completion here.
+            try { if (typeof updateQuestProgress === 'function') updateQuestProgress(activity.id); } catch(e) {}
 
             // Skip-mode activities give POSITIVE XP when performed (penalty is applied when skipped, not here)
             const xpChange = (activity.isNegative && !activity.isSkipNegative) ? -earnedXP : earnedXP;
@@ -5544,8 +5546,9 @@
             
             // Reverse challenge progress for this undo
             undoChallengeProgress(activity.id);
-            // Reverse quest progress for this undo
-            try { if (typeof undoQuestProgress === 'function') undoQuestProgress(activity.id, earnedXP); } catch(e) {}
+            // Reverse quest progress for this undo (leaf completedCount only —
+            // no XP to refund here, quest bonus isn't paid until completion)
+            try { if (typeof undoQuestProgress === 'function') undoQuestProgress(activity.id); } catch(e) {}
 
             // Reverse dimension XP for this undo
             const _dimForUndo = window.userData.dimensions[dimIndex];
@@ -16371,60 +16374,87 @@
             return 'Cycle ' + cycleNum + (days !== null ? ' — last one took ' + days + ' day' + (days === 1 ? '' : 's') + '.' : '.');
         }
 
-        // ═══ Passive progress + real bonus XP (from completeActivity/undoActivity) ═══
-        function updateQuestProgress(activityId, earnedXP) {
+        // ═══ Passive progress (from completeActivity/undoActivity) ═══
+        // A linked activity's own XP is always paid immediately through the
+        // normal completeActivity path — untouched here. The quest's 20%
+        // bonus is NOT trickled in per completion anymore; it's paid as one
+        // lump sum when the quest/cycle is actually sealed (see
+        // completeProjectCycle + payQuestBonus below). This hook only keeps
+        // each linked leaf's progress (completedCount) in sync with real
+        // completions, wherever they happen — main tracker, another quest,
+        // this quest — so the tree/pipeline UI stays accurate.
+        function updateQuestProgress(activityId) {
             var projects = (window.userData && window.userData.projects) || [];
             if (!projects.length) return;
-            _buildActIdx();
-            var act = (typeof findActivityById === 'function') ? findActivityById(activityId) : null;
-            var isNeg = act && act.isNegative && !act.isSkipNegative;
-            var per = isNeg ? 0 : Math.max(0, Math.round((earnedXP || 0) * QUEST_XP_FRACTION));
-            var totalGain = 0;
             projects.forEach(function(p) {
                 if (p.status !== 'active') return;
                 migrateProject(p);
-                var gained = 0;
                 allLeaves(p).forEach(function(leaf) {
                     if (leaf.type === 'activity' && leaf.linkedActivityId === activityId && (leaf.completedCount || 0) < itemReq(leaf)) {
-                        leaf.completedCount = (leaf.completedCount || 0) + 1; leaf.doneAt = new Date().toISOString(); gained += per;
+                        leaf.completedCount = (leaf.completedCount || 0) + 1; leaf.doneAt = new Date().toISOString();
                     }
                 });
-                if (gained > 0) { p.questXP = (p.questXP || 0) + gained; p.questLevel = questLevelFromXP(p.questXP); totalGain += gained; }
                 settleAll(p);
             });
-            if (totalGain > 0 && window.userData) {
-                window.userData.currentXP = (window.userData.currentXP || 0) + totalGain;
-                window.userData.totalXP = (window.userData.totalXP || 0) + totalGain;
-            }
         }
-        function undoQuestProgress(activityId, earnedXP) {
+        function undoQuestProgress(activityId) {
             var projects = (window.userData && window.userData.projects) || [];
             if (!projects.length) return;
-            var act = (typeof findActivityById === 'function') ? findActivityById(activityId) : null;
-            var isNeg = act && act.isNegative && !act.isSkipNegative;
-            var per = isNeg ? 0 : Math.max(0, Math.round((earnedXP || 0) * QUEST_XP_FRACTION));
-            var totalRefund = 0;
             projects.forEach(function(p) {
                 if (p.status !== 'active') return;
                 migrateProject(p);
-                var lost = 0;
                 allLeaves(p).forEach(function(leaf) {
                     if (leaf.type === 'activity' && leaf.linkedActivityId === activityId && (leaf.completedCount || 0) > 0) {
-                        leaf.completedCount = Math.max(0, (leaf.completedCount || 0) - 1); lost += per;
+                        leaf.completedCount = Math.max(0, (leaf.completedCount || 0) - 1);
                     }
                 });
-                if (lost > 0) { p.questXP = Math.max(0, (p.questXP || 0) - lost); p.questLevel = questLevelFromXP(p.questXP); totalRefund += lost; }
                 settleAll(p); // note: undo can't un-bank an already-banked rep (hard-reset model)
             });
-            if (totalRefund > 0 && window.userData) {
-                window.userData.currentXP = (window.userData.currentXP || 0) - totalRefund;
-                window.userData.totalXP = Math.max(0, (window.userData.totalXP || 0) - totalRefund);
-                while (window.userData.currentXP < 0 && (window.userData.level || 1) > 1) {
-                    window.userData.level -= 1;
-                    window.userData.currentXP += (typeof calculateXPForLevel === 'function' ? calculateXPForLevel(window.userData.level) : 0);
-                }
-                if (window.userData.currentXP < 0) window.userData.currentXP = 0;
+        }
+
+        // ═══ Lump-sum quest bonus — paid once, on actual completion ═══
+        // Mirrors the existing completeChallenge/undoChallenge lump-sum XP
+        // pattern (one ledger: quest's own questXP AND the user's real
+        // currentXP/totalXP move together, same level-up/level-down loops
+        // used everywhere else XP is granted).
+        function payQuestBonus(p, amount) {
+            amount = Math.max(0, Math.round(amount || 0));
+            if (amount <= 0) return;
+            p.questXP = (p.questXP || 0) + amount;
+            p.questLevel = questLevelFromXP(p.questXP);
+            if (!window.userData) return;
+            window.userData.currentXP = (window.userData.currentXP || 0) + amount;
+            window.userData.totalXP = (window.userData.totalXP || 0) + amount;
+            var leveledUp = false;
+            while (window.userData.currentXP >= calculateXPForLevel(window.userData.level) && window.userData.level < 100) {
+                window.userData.currentXP -= calculateXPForLevel(window.userData.level);
+                window.userData.level += 1;
+                leveledUp = true;
             }
+            if (window.userData.level >= 100) window.userData.level = 100;
+            if (leveledUp) {
+                window.userData.cardLevelStartedAt = window.userData.levelStartedAt || new Date(Date.now() - 5 * 60 * 1000).toISOString();
+                window.userData.levelStartedAt = new Date().toISOString();
+                try { showLevelUpAnimation(); } catch (e) {}
+            }
+            try { if (typeof updateDashboard === 'function') updateDashboard(); } catch (e) {}
+        }
+        // Refund path exists only for one-off "Reopen quest" (undoing a seal
+        // that hasn't been followed by any redo work yet) — see reopenProject.
+        function refundQuestBonus(p, amount) {
+            amount = Math.max(0, Math.round(amount || 0));
+            if (amount <= 0) return;
+            p.questXP = Math.max(0, (p.questXP || 0) - amount);
+            p.questLevel = questLevelFromXP(p.questXP);
+            if (!window.userData) return;
+            window.userData.currentXP = (window.userData.currentXP || 0) - amount;
+            window.userData.totalXP = Math.max(0, (window.userData.totalXP || 0) - amount);
+            while (window.userData.currentXP < 0 && (window.userData.level || 1) > 1) {
+                window.userData.level -= 1;
+                window.userData.currentXP += calculateXPForLevel(window.userData.level);
+            }
+            if (window.userData.currentXP < 0) window.userData.currentXP = 0;
+            try { if (typeof updateDashboard === 'function') updateDashboard(); } catch (e) {}
         }
 
         // ═══ LIST VIEW ══════════════════════════════════════════════════════
@@ -16996,25 +17026,34 @@
             return out;
         }
 
+        // Bonus XP is a lump sum paid ONLY on a legitimate seal (every
+        // per-cycle / required leaf actually done). Force-sealing early via
+        // the confirm() override below pays zero bonus — the copy says so —
+        // so there's no way to skip work and still collect the payout.
         window.completeProjectCycle = function(projectId) {
             var p = findProject(projectId);
             if (!p || p.status !== 'active') return;
-            if (!projectCycleReady(p)) {
+            var ready = projectCycleReady(p);
+            if (!ready) {
                 var isRec = p.cadence && p.cadence.type === 'recurring';
-                if (!confirm(isRec ? 'Some per-cycle items aren’t done yet. Seal this cycle early and start a fresh one?' : 'Some items aren’t done yet. Mark this quest complete anyway?')) return;
+                if (!confirm(isRec ? 'Some per-cycle items aren’t done yet. Seal this cycle early and start a fresh one? You won’t earn this cycle’s bonus XP.' : 'Some items aren’t done yet. Mark this quest complete anyway? You won’t earn the bonus XP.')) return;
             }
+            var bonus = ready ? questPotentialBonus(p) : 0;
             var stats = questStats(p);
             p.cycleHistory = p.cycleHistory || [];
-            p.cycleHistory.push({ cycleNumber: p.currentCycle || 1, startedAt: p.startedCycleAt || p.createdAt, completedAt: new Date().toISOString(), itemsCompleted: stats.done, itemsTotal: stats.total });
+            p.cycleHistory.push({ cycleNumber: p.currentCycle || 1, startedAt: p.startedCycleAt || p.createdAt, completedAt: new Date().toISOString(), itemsCompleted: stats.done, itemsTotal: stats.total, bonusXp: bonus });
             delete _prNextSkip[p.id]; delete _prNextDone[p.id];
+            p.lastBonusPaid = bonus;
+            payQuestBonus(p, bonus);
+            var bonusMsg = bonus > 0 ? (' — +' + bonus + ' XP') : '';
             if (p.cadence && p.cadence.type === 'recurring') {
                 clearRecurringItems(p);
                 p.currentCycle = (p.currentCycle || 1) + 1; p.startedCycleAt = new Date().toISOString();
                 saveUserData();
-                showToast('🏆 Cycle ' + (p.currentCycle - 1) + ' shipped — Cycle ' + p.currentCycle + ' begins', 'olive');
+                showToast('🏆 Cycle ' + (p.currentCycle - 1) + ' shipped' + bonusMsg + ' — Cycle ' + p.currentCycle + ' begins', 'olive');
             } else {
                 p.status = 'completed'; p.completedAt = new Date().toISOString(); saveUserData();
-                showToast('🏆 Quest complete — ' + (p.name || ''), 'olive');
+                showToast('🏆 Quest complete' + bonusMsg + ' — ' + (p.name || ''), 'olive');
             }
             renderProjectDetail(projectId);
         };
@@ -17022,7 +17061,19 @@
         window.resumeProject = function(id) { var p = findProject(id); if (!p) return; p.status = 'active'; saveUserData(); showToast('Quest resumed', 'green'); renderProjectDetail(id); };
         window.archiveProject = function(id) { var p = findProject(id); if (!p) return; p.status = 'archived'; saveUserData(); showToast('Quest archived', 'olive'); window.closeProjectDetail(); };
         window.unarchiveProject = function(id) { var p = findProject(id); if (!p) return; p.status = 'active'; saveUserData(); showToast('Quest restored', 'green'); renderProjectDetail(id); };
-        window.reopenProject = function(id) { var p = findProject(id); if (!p) return; p.status = 'active'; p.completedAt = null; saveUserData(); showToast('Quest reopened', 'green'); renderProjectDetail(id); };
+        // Reopening refunds the just-paid bonus (mirrors undo elsewhere in the
+        // app: the inverse of a completion is a real, reversible refund) —
+        // otherwise reopen -> instantly re-complete for free would pay the
+        // lump sum twice for the same work.
+        window.reopenProject = function(id) {
+            var p = findProject(id); if (!p) return;
+            var refund = p.lastBonusPaid || 0;
+            if (refund > 0) { refundQuestBonus(p, refund); p.lastBonusPaid = 0; }
+            p.status = 'active'; p.completedAt = null;
+            saveUserData();
+            showToast(refund > 0 ? 'Quest reopened — −' + refund + ' XP refunded' : 'Quest reopened', 'green');
+            renderProjectDetail(id);
+        };
 
         function clearCycleNode(n) {
             if (n.kind === 'group') { n.repsDone = 0; (n.children || []).forEach(clearCycleNode); }
