@@ -15283,8 +15283,9 @@
                 svg += '<polyline points="' + pl.youX + ',' + pl.youY + ' ' + sx + ',' + pl.fanMeetY + ' ' + sx + ',' + pl.frontierY + '" fill="none" stroke="' + pl.color + '" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"' + (pl.line.status === 'retired' ? ' opacity="0.28"' : '') + '/>';
                 // ahead of frontier = faded
                 if (pl.topY < pl.frontierY) svg += '<polyline points="' + sx + ',' + pl.frontierY + ' ' + sx + ',' + pl.topY + '" fill="none" stroke="' + pl.color + '" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.3"/>';
-                // line label along the lower run
-                svg += '<text x="' + (sx + 12) + '" y="' + (pl.fanMeetY - 6) + '" class="tt-ln-l" fill="' + pl.color + '">' + escapeHtml((pl.goal ? (pl.goal.shortName || '') : '').toUpperCase()) + '</text>';
+                // line label along the lower run (kept clear of the YOU node)
+                var lblY = Math.min(pl.fanMeetY - 6, pl.youY - 46);
+                svg += '<text x="' + (sx + 12) + '" y="' + lblY + '" class="tt-ln-l" fill="' + pl.color + '">' + escapeHtml((pl.goal ? (pl.goal.shortName || '') : '').toUpperCase()) + '</text>';
                 svg += '</g>';
             });
             // Interchange connectors (dashed) beneath glyphs.
