@@ -15212,6 +15212,13 @@
                 var otherX = spineX[otherId];
                 out.interchanges.push({ node: nd, x: homePos.x, y: homePos.y, otherX: otherX });
             });
+
+            // Fresh picks (spec §8.8, §7.4) — nodes on no line. They still have to
+            // be VISIBLE (and tappable to accept / attach to a line), so stack
+            // them in a labelled column down the left edge.
+            var fps = (tt.nodes || []).filter(function(nd) { return !nd.lineId && !nd.interchange && nd.lifecycle !== 'archived'; });
+            out.freshPicks = fps.map(function(nd, i) { return { node: nd, x: 46, y: TT_TOP_PAD + 40 + i * 54 }; });
+            if (fps.length) out.height = Math.max(out.height, TT_TOP_PAD + 40 + fps.length * 54 + 30);
             return out;
         }
 
@@ -15304,6 +15311,18 @@
             L.interchanges.forEach(function(ix) {
                 svg += '<polyline points="' + ix.x + ',' + ix.y + ' ' + ((ix.x + ix.otherX) / 2) + ',' + (ix.y - 30) + ' ' + ix.otherX + ',' + ix.y + '" fill="none" stroke="rgba(255,255,255,0.22)" stroke-width="1.6" stroke-dasharray="2,4.5" stroke-linecap="round"/>';
             });
+            // Fresh picks — a labelled column, off any line.
+            if (L.freshPicks && L.freshPicks.length) {
+                svg += '<text x="46" y="' + (TT_TOP_PAD + 16) + '" text-anchor="middle" class="tt-tm-s">FRESH PICKS</text>';
+                L.freshPicks.forEach(function(p) {
+                    var faded = focusSet && !focusSet[p.node.id];
+                    var col = ttDimHexRaw(p.node.dimensionId);
+                    svg += '<g class="tt-node' + (faded ? ' tt-node-faded' : '') + '" onclick="ttOpenNode(\'' + p.node.id + '\')" style="cursor:pointer">'
+                        + ttGlyph(p.node, p.x, p.y, col)
+                        + '<text x="' + (p.x + 15) + '" y="' + (p.y + 3) + '" class="' + (p.node.resolvedAt ? 'tt-n-l tt-n-gold' : 'tt-n-l') + '">' + escapeHtml(ttShort(p.node.title, 15)) + '</text>'
+                        + '</g>';
+                });
+            }
             // YOU node.
             svg += '<g><circle cx="' + L.you.x + '" cy="' + L.you.y + '" r="17" fill="#161616" stroke="#5a9fd4" stroke-width="2.2"/><circle cx="' + L.you.x + '" cy="' + L.you.y + '" r="5.5" fill="#5a9fd4"/><text x="' + L.you.x + '" y="' + (L.you.y + 32) + '" text-anchor="middle" class="tt-you-l">YOU</text></g>';
             // Per-line nodes, stations, terminus.
@@ -15601,6 +15620,8 @@
                 + '<button class="tt-btn tt-btn-ghost" onclick="ttRejectNode(\'' + node.id + '\')">Not for me</button>';
             else actions = '<div class="tt-locked-note">' + ttIcon('lock', 12) + ' ' + escapeHtml(ttLockReason(node, tt)) + '</div>';
             var chainBtn = (state !== 'resolved') ? '<button class="tt-inline-btn" onclick="ttFocusChainFromNode(\'' + node.id + '\')">Trace the path to here</button>' : '';
+            // Fresh picks (no line) can be attached to one so they advance a goal (§10.8).
+            if (!node.lineId && ttActiveLines().length) actions += '<button class="tt-btn tt-btn-ghost" onclick="ttAttachToLine(\'' + node.id + '\')">' + ttIcon('branch', 13) + '<span>Attach to a line</span></button>';
             ttShowSheet('<div class="tt-sheet-body">'
                 + '<div class="tt-sheet-kicker" style="color:' + color + '">' + escapeHtml(typeLabel) + (line ? ' · ' + escapeHtml((ttGoalForLine(line)||{}).shortName || '') : ' · fresh pick') + '</div>'
                 + '<h3 class="tt-sheet-title">' + escapeHtml(node.title) + '</h3>'
@@ -15609,6 +15630,32 @@
                 + chainBtn
                 + '<div class="tt-sheet-actions">' + actions + '</div>'
                 + '</div>');
+        };
+        window.ttAttachToLine = function(nodeId) {
+            var tt = ensureTechTree();
+            var lines = ttActiveLines();
+            if (!lines.length) return;
+            var rows = lines.map(function(l) {
+                var g = ttGoalForLine(l);
+                return '<button class="tt-seg-row" style="--rc:' + l.color + '" onclick="ttDoAttach(\'' + nodeId + '\',\'' + l.id + '\')">'
+                    + '<span class="tt-seg-dot" style="background:' + l.color + '"></span>'
+                    + '<span class="tt-seg-name">' + escapeHtml(g ? g.shortName : 'Line') + '<span class="tt-avail-sub">→ ' + escapeHtml(l.terminus.title) + '</span></span></button>';
+            }).join('');
+            ttShowSheet('<div class="tt-sheet-body"><div class="tt-sheet-kicker">Attach</div><h3 class="tt-sheet-title">Put this on a line</h3>'
+                + '<p class="tt-sheet-desc">It joins the frontier segment of the line you pick, and can then fan new nodes when resolved.</p>'
+                + '<div class="tt-seg-list">' + rows + '</div></div>');
+        };
+        window.ttDoAttach = function(nodeId, lineId) {
+            var tt = ensureTechTree();
+            var node = tt.nodes.find(function(n){return n.id===nodeId;});
+            var line = (tt.lines||[]).find(function(l){return l.id===lineId;});
+            if (!node || !line) return;
+            var next = ttNextUnreachedStation(line);
+            node.lineId = lineId; node.segmentIndex = next ? next.index : 0;
+            evaluateTechTreeMastery();
+            saveUserData().catch(function(){});
+            ttCloseSheet(); renderTechTree();
+            showToast('🧭 Attached to ' + ((ttGoalForLine(line)||{}).shortName || 'line'), 'green');
         };
         function ttNodeNumbers(node) {
             var pl = node.payload || {};
