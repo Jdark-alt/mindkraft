@@ -14855,7 +14855,11 @@
                     try { showToast('🏅 Mastered: ' + act.name, 'green'); } catch (err) {}
                 }
             });
-            var tt = window.userData.techTree;
+            // Guarantee v1→v2 migration has run before evaluating (this pass
+            // also runs on the login path). Persist if migration just happened.
+            var wasV2 = window.userData.techTree && window.userData.techTree.schemaVersion === 2;
+            var tt = ensureTechTree();
+            if (!wasV2) changed = true;
             if (!tt || !tt.nodes) return changed;
             var now = new Date().toISOString();
             var justResolved = [];
