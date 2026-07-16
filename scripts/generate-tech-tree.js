@@ -309,12 +309,14 @@ separate ambitions. Return one "reading" per DISTINCT goal, each with a unique
     (a training habit AND losing 10kg) is ONE goal: the rhythm is the route and
     becomes the segments, not a second line. Splitting is for separate DOMAINS,
     not for the routine-vs-outcome halves of one domain.
-  - "key": a short unique id you assign (e.g. "k1","k2"). When a goal maps 1:1 to
-    one input entry, REUSE that entry's goalId as the key; invent fresh keys for
-    goals you split out. "fromGoalId": the input goalId this came from, or null.
+  - Emit ONE "goals" object per distinct goal. Each goal object CONTAINS its own
+    line — its terminus, its stations, and its nodes are NESTED inside it (STEP
+    2). There are no cross-reference ids to keep in sync: a node belongs to the
+    goal object it sits inside. "fromGoalId": the input goalId this goal was
+    derived from (for lineage), or null.
   - "sharpened": a concrete, DEFENSIBLE reading. Turn "get fit" into "Lose 8kg
     and hold it by December", not a restatement. "shortName": <=14 chars, the
-    line label ("Fitness", "Cooking", "Sleep", "Reading").
+    line label ("Fitness", "Cooking", "Sleep", "Reading") — make each UNIQUE.
   - "kind": "destination" if there is a stated outcome/number/event, OR the goal
     is genuinely BOTH a routine and an outcome. "rhythm" ONLY when there is
     genuinely no outcome at all — a pure way of living like "be a person who
@@ -322,26 +324,26 @@ separate ambitions. Return one "reading" per DISTINCT goal, each with a unique
     defend. "kindReason": REQUIRED and non-null when kind is "rhythm"; else null.
   - Cap: at most ${MAX_GOALS} goals total. If the user names more, keep the ${MAX_GOALS} most distinct.
 
-STEP 2 — BUILD THE MAP.
-  - Emit ONE line per DISTINCT goal (per reading key). Never merge two goals into
-    one line; never leave a goal without a line.
-  - Each line gets 2-4 STATIONS plus a terminus. Station titles are milestones
-    in the user's language ("First video", "Consistent cadence", "Scaling"),
-    NEVER "Tier 2" / "Phase 1".
+STEP 2 — FILL EACH GOAL OBJECT (its line).
+  - Never merge two goals into one; never leave a goal without nodes.
+  - Each goal gets 2-4 STATIONS plus a terminus, nested in the goal object.
+    Station titles are milestones in the user's language ("First video",
+    "Consistent cadence", "Scaling"), NEVER "Tier 2" / "Phase 1".
   - terminus: destination -> { "kind":"flag" }; rhythm -> { "kind":"loop" }.
   - Each station declares "threshold" = resolve ANY N nodes in the segment BELOW
-    it. threshold must be >=2 AND <= the number of nodes you emit into that
-    segment.
-  - Emit 2-4 NODES per segment. Segments deeper than the frontier get the
-    minimum; expansion fills them later.
-  - ONE daily anchor per line maximum. Everything else weekly or lighter. Total
-    new load across all lines must not push weekly load past +${LOAD_BUDGET_HEADROOM}
+    it. threshold must be >=2 AND <= the number of nodes in that segment.
+  - Put 2-4 NODES in each goal's "nodes" array, each with its "segmentIndex"
+    (0 = the segment below station 0). EVERY goal MUST have at least 2 nodes —
+    a line with only stations and no nodes is useless. Segments deeper than the
+    frontier get the minimum; expansion fills them later.
+  - ONE daily anchor per goal maximum. Everything else weekly or lighter. Total
+    new load across all goals must not push weekly load past +${LOAD_BUDGET_HEADROOM}
     (the user is at ${load} actions/week now).
-  - 0-2 INTERCHANGES total, only where two lines genuinely share a seam. Each
-    names exactly two distinct goals and credits a station on BOTH. Never
-    manufacture one for symmetry.
-  - 0-3 FRESH PICKS — nodes with "key":null that serve no station. The
-    quarantine for genuinely serendipitous suggestions that advance nothing.
+  - Top-level "interchanges": 0-2 total, only where two goals genuinely share a
+    seam. Each names exactly two goals by their "shortName" and credits a station
+    on BOTH. Never manufacture one for symmetry.
+  - Top-level "freshPicks": 0-3 nodes that serve no station — the quarantine for
+    genuinely serendipitous suggestions that advance nothing.
 
 NODE RULES:
   - Genuinely new and concrete — never a vague umbrella, never a rebrand of an
@@ -359,22 +361,24 @@ ${PAYLOAD_RULES}
 VISION: also return "vision" — 1-2 sentences, second person, vivid and specific
 to their goals. No motivation-poster fluff.
 
-OUTPUT SCHEMA (a single JSON object, nothing else). Every "lines"/"nodes"/
-"interchanges" entry references a reading by its "key" (NOT goalId):
+OUTPUT SCHEMA (a single JSON object, nothing else). Nodes are NESTED inside the
+goal they belong to — there is no id to keep in sync:
 { "vision": string,
-  "readings": [{ "key":str, "fromGoalId":str|null, "sharpened":str, "shortName":str,
-                 "kind":"destination"|"rhythm", "kindReason":str|null }],
-  "lines": [{ "key":str,
-              "stations":[{ "index":int, "title":str, "threshold":int }],
-              "terminus":{ "title":str, "kind":"flag"|"loop" } }],
-  "nodes": [{ "key":str|null, "segmentIndex":int,
-              "title":str, "description":str, "dimensionId":str,
-              "isTerminus":bool,
-              "prerequisites":[{"type":"node_mastered","nodeTitle":str}|{"type":"activity_mastered","activityId":str}],
-              "payload": <activity|quest|challenge payload> }],
-  "interchanges": [{ "title":str, "description":str, "dimensionId":str,
-                     "keys":[str,str], "stationIndices":[int,int],
-                     "payload": <payload> }] }`;
+  "goals": [{
+     "fromGoalId": str|null, "sharpened": str, "shortName": str,
+     "kind": "destination"|"rhythm", "kindReason": str|null,
+     "terminus": { "title": str, "kind": "flag"|"loop" },
+     "stations": [{ "index": int, "title": str, "threshold": int }],
+     "nodes": [{ "segmentIndex": int, "title": str, "description": str,
+                 "dimensionId": str, "isTerminus": bool,
+                 "prerequisites": [{"type":"node_mastered","nodeTitle":str}|{"type":"activity_mastered","activityId":str}],
+                 "payload": <activity|quest|challenge payload> }]
+  }],
+  "interchanges": [{ "title": str, "description": str, "dimensionId": str,
+                     "betweenShortNames": [str, str], "stationIndices": [int, int],
+                     "payload": <payload> }],
+  "freshPicks": [{ "title": str, "description": str, "dimensionId": str,
+                   "payload": <payload> }] }`;
 
     const input = {
         goals,
@@ -585,7 +589,9 @@ function parseModelJson(raw) {
     const parsed = JSON.parse(text.slice(objStart, text.lastIndexOf('}') + 1));
     return {
         vision: typeof parsed.vision === 'string' ? parsed.vision.trim().slice(0, 300) : null,
-        readings: Array.isArray(parsed.readings) ? parsed.readings : [],
+        goals: Array.isArray(parsed.goals) ? parsed.goals : [],          // nested contract
+        freshPicks: Array.isArray(parsed.freshPicks) ? parsed.freshPicks : [],
+        readings: Array.isArray(parsed.readings) ? parsed.readings : [],  // legacy flat (expand)
         lines: Array.isArray(parsed.lines) ? parsed.lines : [],
         nodes: Array.isArray(parsed.nodes) ? parsed.nodes : [],
         interchanges: Array.isArray(parsed.interchanges) ? parsed.interchanges : [],
@@ -969,6 +975,145 @@ function clampThresholds(lines, nodes) {
     });
 }
 
+// ── Nested materialization (robust: nodes nested under their goal) ──────────
+// The model returns goals, each CONTAINING its terminus/stations/nodes, so there
+// is no key to mismatch. Returns { goals, lines, nodes, mergeSuggestion }.
+function nodeCtx(userData) {
+    const ctx = {
+        dimIds: new Set((userData.dimensions || []).map(d => d.id)),
+        pathIds: new Set(),
+        activityIds: new Set(collectActivities(userData).map(e => e.act.id)),
+        fallbackDim: (userData.dimensions || [])[0] ? userData.dimensions[0].id : 'uncategorized',
+    };
+    (userData.dimensions || []).forEach(d => (d.paths || []).forEach(p => ctx.pathIds.add(p.id)));
+    return ctx;
+}
+function buildNodeRecord(nr, line, ctx, now) {
+    if (!nr || typeof nr.title !== 'string' || !nr.title.trim()) return null;
+    const dimensionId = ctx.dimIds.has(nr.dimensionId) ? nr.dimensionId : ctx.fallbackDim;
+    const payload = validatePayload(nr.payload, {
+        dimIds: ctx.dimIds, pathIds: ctx.pathIds, activityIds: ctx.activityIds,
+        fallbackDim: ctx.fallbackDim, title: nr.title, description: nr.description, dimensionId,
+    });
+    if (!payload) return null;
+    return {
+        node: {
+            id: newId('ttn'), source: 'ai', createdAt: now,
+            lineId: line ? line.id : null,
+            segmentIndex: line ? Math.max(0, parseInt(nr.segmentIndex, 10) || 0) : null,
+            isTerminus: !!nr.isTerminus, lifecycle: 'locked', resolvedAt: null, resolvedVia: null,
+            interchange: null, title: String(nr.title).trim().slice(0, 80),
+            description: String(nr.description || '').slice(0, 240), dimensionId,
+            prerequisites: [], parentNodeId: null, payload,
+        },
+        rawPrereqs: Array.isArray(nr.prerequisites) ? nr.prerequisites : [],
+    };
+}
+function buildLineFor(gr, goal, color, now) {
+    const kind = (gr.terminus && gr.terminus.kind === 'loop') ? 'loop' : 'flag';
+    let stations = (Array.isArray(gr.stations) ? gr.stations : [])
+        .map((s, idx) => ({ id: newId('st'), lineId: null, index: (typeof s.index === 'number') ? s.index : idx,
+            title: String(s.title || 'Milestone').slice(0, 24), threshold: Math.max(2, parseInt(s.threshold, 10) || 2), reachedAt: null }))
+        .sort((a, b) => a.index - b.index).map((s, idx) => (s.index = idx, s));
+    if (!stations.length) stations = [{ id: newId('st'), lineId: null, index: 0, title: 'Getting started', threshold: 2, reachedAt: null }];
+    const line = {
+        id: newId('line'), goalId: goal.id, color, status: 'active',
+        terminus: { title: String((gr.terminus && gr.terminus.title) || goal.shortName || 'Summit').slice(0, 60), kind, nodeId: null },
+        stations, regeneratedAt: null,
+    };
+    stations.forEach(s => (s.lineId = line.id));
+    return line;
+}
+function materializeNested(parsed, userData, existingGoals, colorStart, positional) {
+    const ctx = nodeCtx(userData);
+    const now = nowISO();
+    const goals = [], lines = [], built = [];
+    const byTitle = {}, shortNameToLine = {}, usedExisting = {}, sharpenedTexts = {};
+    const merge = [];
+
+    // Scoped modes (positional) reuse the existing goal(s) in order and never
+    // create extra lines; generate may split, so it maps by lineage.
+    const cap = positional ? Math.max(1, existingGoals.length) : MAX_GOALS;
+    (parsed.goals || []).slice(0, cap).forEach((gr, i) => {
+        if (!gr || typeof gr !== 'object') return;
+        let goal;
+        if (positional) {
+            goal = existingGoals[i] || existingGoals[existingGoals.length - 1] || null;
+        } else {
+            goal = gr.fromGoalId ? existingGoals.find(g => g.id === gr.fromGoalId && !usedExisting[g.id]) : null;
+        }
+        if (goal) usedExisting[goal.id] = true;
+        else goal = { id: newId('goal'), rawText: '', createdAt: now, achievedAt: null, retiredAt: null, sharpenedEditedByUser: false };
+        goal.sharpened = String(gr.sharpened || goal.rawText || 'Goal').slice(0, 200);
+        goal.shortName = String(gr.shortName || goal.rawText || 'Goal').slice(0, 14);
+        goal.kind = gr.kind === 'rhythm' ? 'rhythm' : 'destination';
+        goal.kindReason = goal.kind === 'rhythm' ? (gr.kindReason ? String(gr.kindReason).slice(0, 200) : 'There is no finish line here — a way of living.') : null;
+        if (!goal.rawText) goal.rawText = goal.sharpened;
+        goals.push(goal);
+        const k = goal.sharpened.trim().toLowerCase();
+        if (sharpenedTexts[k]) merge.push([sharpenedTexts[k], goal.id]); else sharpenedTexts[k] = goal.id;
+        // Line + its nested nodes.
+        const line = buildLineFor(gr, goal, LINE_PALETTE[(colorStart + i) % LINE_PALETTE.length], now);
+        lines.push(line);
+        shortNameToLine[goal.shortName.toLowerCase()] = line;
+        (Array.isArray(gr.nodes) ? gr.nodes : []).forEach(nr => {
+            const rec = buildNodeRecord(nr, line, ctx, now);
+            if (rec) { built.push(rec); byTitle[rec.node.title.toLowerCase()] = rec.node; }
+        });
+    });
+
+    // Fresh picks — top-level, no line.
+    (parsed.freshPicks || []).forEach(nr => {
+        const rec = buildNodeRecord(nr, null, ctx, now);
+        if (rec) { built.push(rec); byTitle[rec.node.title.toLowerCase()] = rec.node; }
+    });
+
+    // Interchanges — reference goals by shortName (§5.7.8).
+    (parsed.interchanges || []).forEach(r => {
+        if (!r || typeof r.title !== 'string' || !r.title.trim()) return;
+        const names = Array.isArray(r.betweenShortNames) ? r.betweenShortNames : [];
+        const l0 = shortNameToLine[String(names[0] || '').toLowerCase()];
+        const l1 = shortNameToLine[String(names[1] || '').toLowerCase()];
+        const dimensionId = ctx.dimIds.has(r.dimensionId) ? r.dimensionId : ctx.fallbackDim;
+        const payload = validatePayload(r.payload, { dimIds: ctx.dimIds, pathIds: ctx.pathIds, activityIds: ctx.activityIds,
+            fallbackDim: ctx.fallbackDim, title: r.title, description: r.description, dimensionId });
+        if (!payload) return;
+        const si = Array.isArray(r.stationIndices) ? r.stationIndices : [0, 0];
+        if (l0 && l1 && l0.id !== l1.id) {
+            built.push({ node: { id: newId('ttn'), source: 'ai', createdAt: now, lineId: l0.id,
+                segmentIndex: Math.max(0, parseInt(si[0], 10) || 0), isTerminus: false, lifecycle: 'locked',
+                resolvedAt: null, resolvedVia: null, interchange: { lineIds: [l0.id, l1.id], stationIds: [] },
+                title: String(r.title).trim().slice(0, 80), description: String(r.description || '').slice(0, 240),
+                dimensionId, prerequisites: [], parentNodeId: null, payload }, rawPrereqs: [] });
+        } else if (l0) {
+            built.push({ node: { id: newId('ttn'), source: 'ai', createdAt: now, lineId: l0.id,
+                segmentIndex: Math.max(0, parseInt(si[0], 10) || 0), isTerminus: false, lifecycle: 'locked',
+                resolvedAt: null, resolvedVia: null, interchange: null, title: String(r.title).trim().slice(0, 80),
+                description: String(r.description || '').slice(0, 240), dimensionId, prerequisites: [], parentNodeId: null, payload }, rawPrereqs: [] });
+        }
+    });
+
+    // Prerequisites (drop unresolvable §5.7.7).
+    const activityById = {};
+    collectActivities(userData).forEach(({ act }) => { activityById[act.id] = act; });
+    built.forEach(b => {
+        b.rawPrereqs.forEach(pr => {
+            if (!pr || typeof pr !== 'object') return;
+            if (pr.type === 'activity_mastered' && activityById[pr.activityId]) b.node.prerequisites.push({ type: 'activity_mastered', activityId: pr.activityId });
+            else if (pr.type === 'node_mastered') { const ref = pr.nodeTitle ? byTitle[String(pr.nodeTitle).toLowerCase()] : null; if (ref && ref.id !== b.node.id) b.node.prerequisites.push({ type: 'node_mastered', nodeId: ref.id }); }
+        });
+    });
+    // Cycle detection (§5.7.9).
+    const byId = {};
+    built.forEach(b => { byId[b.node.id] = b.node; });
+    built.forEach(b => { b.node.prerequisites = b.node.prerequisites.filter(pr => pr.type !== 'node_mastered' || !reaches(pr.nodeId, b.node.id, byId, {})); });
+
+    const nodes = built.map(b => b.node);
+    enforceLoadBudget(nodes, userData);       // §5.7.10
+    clampThresholds(lines, nodes);            // §5.7.6
+    return { goals, lines, nodes, mergeSuggestion: merge.length ? merge[0] : null };
+}
+
 // ── Readings — SCOPED modes (add_line/regenerate/revise) ────────────────────
 // Mutates the existing scoped goals in place; matches a reading to a goal by
 // key / goalId / fromGoalId. Returns { keyToGoal, merge }.
@@ -1115,29 +1260,20 @@ async function processGenerateFamily(docRef, userData, req) {
     const raw = await callModel(prompt, budget);
     const parsed = parseModelJson(raw);
 
-    // Readings: GENERATE may SPLIT one entry into several distinct goals (§3.4);
-    // scoped modes (add_line/regenerate/revise) mutate the existing goal(s).
-    let keyToGoal, mergeSuggestion, generatedGoals = null;
-    if (req.type === 'generate') {
-        const built = buildGoalsFromReadings(parsed, scopedGoals);
-        generatedGoals = built.goals;         // the distinct goals — replaces techTree.goals
-        keyToGoal = built.keyToGoal;
-        mergeSuggestion = built.merge;
-    } else {
-        const applied = applyReadings(parsed, scopedGoals);
-        keyToGoal = applied.keyToGoal;
-        mergeSuggestion = applied.merge;
-    }
-
-    const { lines: newLines, keyToLine } = validateLinesStations(parsed, userData, keyToGoal, colorStart);
+    // Nested materialization: each goal object carries its own line + nodes, so
+    // a node can never be orphaned by a key mismatch. GENERATE may split one
+    // entry into several distinct goals (§3.4); scoped modes reuse in order.
+    const built = materializeNested(parsed, userData, scopedGoals, colorStart, req.type !== 'generate');
+    const generatedGoals = built.goals;
+    const mergeSuggestion = built.mergeSuggestion;
+    const newLines = built.lines;
+    let newNodes = built.nodes;
     if (!newLines.length && (req.type === 'generate' || req.type === 'add_line')) {
         throw new Error('Model produced no valid lines');
     }
-    let newNodes = materializeNodes(parsed, userData, keyToLine);
     if (!newNodes.length && req.type === 'generate') {
         throw new Error('Model produced no valid nodes');
     }
-    clampThresholds(newLines, newNodes);
 
     const challenges = validateChallenges(parsed.challenges, userData);
 
@@ -1446,7 +1582,7 @@ async function main() {
 
 // Exported for unit tests; only run the cron when invoked directly.
 module.exports = {
-    buildGoalsFromReadings, applyReadings, validateLinesStations, materializeNodes,
+    materializeNested, buildNodeRecord, buildLineFor, materializeNodes,
     clampThresholds, validatePayload, weeklyLoad, cleanCycleCount,
 };
 
