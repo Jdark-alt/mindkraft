@@ -324,26 +324,25 @@ separate ambitions. Return one "reading" per DISTINCT goal, each with a unique
     defend. "kindReason": REQUIRED and non-null when kind is "rhythm"; else null.
   - Cap: at most ${MAX_GOALS} goals total. If the user names more, keep the ${MAX_GOALS} most distinct.
 
-STEP 2 — FILL EACH GOAL OBJECT (its line).
-  - Never merge two goals into one; never leave a goal without nodes.
-  - Each goal gets 2-4 STATIONS plus a terminus, nested in the goal object.
-    Station titles are milestones in the user's language ("First video",
-    "Consistent cadence", "Scaling"), NEVER "Tier 2" / "Phase 1".
-  - terminus: destination -> { "kind":"flag" }; rhythm -> { "kind":"loop" }.
-  - Each station declares "threshold" = resolve ANY N nodes in the segment BELOW
-    it. threshold must be >=2 AND <= the number of nodes in that segment.
-  - Put 2-4 NODES in each goal's "nodes" array, each with its "segmentIndex"
-    (0 = the segment below station 0). EVERY goal MUST have at least 2 nodes —
-    a line with only stations and no nodes is useless. Segments deeper than the
-    frontier get the minimum; expansion fills them later.
-  - ONE daily anchor per goal maximum. Everything else weekly or lighter. Total
+STEP 2 — SUGGEST A FEW ACTIONS FOR EACH GOAL. Keep it SIMPLE and relevant.
+  - Give each goal a short "target": a plain phrase for what progress looks like
+    ("Lose 8kg", "A steady sleep rhythm"). Not a milestone ladder — one phrase.
+  - Put 2-5 NODES in each goal's "nodes" array. Few and RELEVANT beats many.
+    Never pad a goal to hit a number. Every goal needs at least 2 nodes.
+  - Each node is an activity or a quest (see PAYLOAD). Prefer activities; sprinkle
+    in a quest only where several things genuinely belong together or a short
+    project fits ("Ship video #1", "12-week cut").
+  - PREREQUISITES are OPTIONAL. Add {"type":"node_mastered","nodeTitle":"<exact
+    title of another node for THIS goal>"} only when one node GENUINELY unlocks a
+    later, harder one. These form tiers (drawn as dotted links). MOST nodes need
+    none — do not invent dependencies to look connected.
+  - Keep goals SEPARATE. A sleep node belongs under the sleep goal, NEVER under
+    fitness. If a suggestion doesn't clearly serve one specific goal, put it in
+    top-level "freshPicks" instead of forcing it onto a goal.
+  - ONE daily anchor per goal maximum; everything else weekly or lighter. Total
     new load across all goals must not push weekly load past +${LOAD_BUDGET_HEADROOM}
     (the user is at ${load} actions/week now).
-  - Top-level "interchanges": 0-2 total, only where two goals genuinely share a
-    seam. Each names exactly two goals by their "shortName" and credits a station
-    on BOTH. Never manufacture one for symmetry.
-  - Top-level "freshPicks": 0-3 nodes that serve no station — the quarantine for
-    genuinely serendipitous suggestions that advance nothing.
+  - Top-level "freshPicks": 0-3 standalone suggestions that serve no one goal.
 
 NODE RULES:
   - Genuinely new and concrete — never a vague umbrella, never a rebrand of an
@@ -367,16 +366,11 @@ goal they belong to — there is no id to keep in sync:
   "goals": [{
      "fromGoalId": str|null, "sharpened": str, "shortName": str,
      "kind": "destination"|"rhythm", "kindReason": str|null,
-     "terminus": { "title": str, "kind": "flag"|"loop" },
-     "stations": [{ "index": int, "title": str, "threshold": int }],
-     "nodes": [{ "segmentIndex": int, "title": str, "description": str,
-                 "dimensionId": str, "isTerminus": bool,
+     "target": str,
+     "nodes": [{ "title": str, "description": str, "dimensionId": str,
                  "prerequisites": [{"type":"node_mastered","nodeTitle":str}|{"type":"activity_mastered","activityId":str}],
-                 "payload": <activity|quest|challenge payload> }]
+                 "payload": <activity|quest payload> }]
   }],
-  "interchanges": [{ "title": str, "description": str, "dimensionId": str,
-                     "betweenShortNames": [str, str], "stationIndices": [int, int],
-                     "payload": <payload> }],
   "freshPicks": [{ "title": str, "description": str, "dimensionId": str,
                    "payload": <payload> }] }`;
 
@@ -1010,19 +1004,14 @@ function buildNodeRecord(nr, line, ctx, now) {
     };
 }
 function buildLineFor(gr, goal, color, now) {
-    const kind = (gr.terminus && gr.terminus.kind === 'loop') ? 'loop' : 'flag';
-    let stations = (Array.isArray(gr.stations) ? gr.stations : [])
-        .map((s, idx) => ({ id: newId('st'), lineId: null, index: (typeof s.index === 'number') ? s.index : idx,
-            title: String(s.title || 'Milestone').slice(0, 24), threshold: Math.max(2, parseInt(s.threshold, 10) || 2), reachedAt: null }))
-        .sort((a, b) => a.index - b.index).map((s, idx) => (s.index = idx, s));
-    if (!stations.length) stations = [{ id: newId('st'), lineId: null, index: 0, title: 'Getting started', threshold: 2, reachedAt: null }];
-    const line = {
+    // Simplified: a goal is just a coloured group with a plain "target" label.
+    // No stations/thresholds — tiers come from node prerequisites, drawn client-side.
+    const kind = goal.kind === 'rhythm' ? 'loop' : 'flag';
+    return {
         id: newId('line'), goalId: goal.id, color, status: 'active',
-        terminus: { title: String((gr.terminus && gr.terminus.title) || goal.shortName || 'Summit').slice(0, 60), kind, nodeId: null },
-        stations, regeneratedAt: null,
+        terminus: { title: String(gr.target || (gr.terminus && gr.terminus.title) || goal.shortName || 'Goal').slice(0, 60), kind, nodeId: null },
+        stations: [], regeneratedAt: null,
     };
-    stations.forEach(s => (s.lineId = line.id));
-    return line;
 }
 function materializeNested(parsed, userData, existingGoals, colorStart, positional) {
     const ctx = nodeCtx(userData);
@@ -1413,7 +1402,9 @@ async function processExpand(docRef, userData, req) {
         // Force every emitted node onto this line/segment (monotonic §7.4).
         (parsed.nodes || []).forEach(n => { n.key = line.id; if (n.segmentIndex == null) n.segmentIndex = resolved.segmentIndex; });
         let fanned = materializeNodes({ nodes: parsed.nodes, interchanges: [] }, userData, keyToLine).slice(0, 3);
-        fanned.forEach(n => { n.parentNodeId = resolved.id; n.segmentIndex = resolved.segmentIndex; });
+        // Attach the fan as a new tier UNDER the resolved node (dotted-link child)
+        // so it reads as "resolving this opened these next steps".
+        fanned.forEach(n => { n.parentNodeId = resolved.id; n.segmentIndex = resolved.segmentIndex; n.prerequisites = [{ type: 'node_mastered', nodeId: resolved.id }]; });
         added.push.apply(added, fanned);
     }
 

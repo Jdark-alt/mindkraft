@@ -14935,13 +14935,9 @@
                 }
                 return true;
             });
-            if (!prereqsMet) return false;
-            // Gated by the station below unless in the first segment (§6.5).
-            if ((node.segmentIndex || 0) === 0 || !node.lineId) return true;
-            var line = (tt.lines || []).find(function(l) { return l.id === node.lineId; });
-            if (!line) return true;
-            var prev = (line.stations || []).find(function(s) { return s.index === (node.segmentIndex - 1); });
-            return prev ? !!prev.reachedAt : true;
+            // A node is available once its prerequisites are met — nothing else
+            // gates it (the station machinery was removed for simplicity).
+            return prereqsMet;
         }
 
         // ── Gate + goals (spec §3.1) ─────────────────────────────────────
@@ -15386,8 +15382,8 @@
                 var goals = (tt.goals || []).filter(function(g){return !g.retiredAt;});
                 var rows = (goals.length ? goals.map(function(g,i){return ttGoalRowHtml(g.rawText,i);}) : [ttGoalRowHtml('',0)]).join('');
                 container.innerHTML = '<div class="tt-intro">'
-                    + '<h2 class="tt-intro-title">Your map</h2>'
-                    + '<p class="tt-intro-sub">Name what you\'re working toward. Each goal becomes a line on a transit map — every summit named from day one, the routes built from what you already do.</p>'
+                    + '<h2 class="tt-intro-title">Your growth plan</h2>'
+                    + '<p class="tt-intro-sub">Name what you\'re working toward. The AI suggests a handful of activities and quests for each goal — you review, accept the ones you want, or ask for a revision.</p>'
                     + (tt.lastError ? '<div class="tt-error">' + escapeHtml(tt.lastError) + ' <button class="tt-inline-btn" onclick="ttRetryGenerate()">Retry</button></div>' : '')
                     + '<div id="ttGoalFields" class="tt-goal-fields">' + rows + '</div>'
                     + '<button class="tt-add-goal" onclick="ttAddGoalField()">' + ttIcon('plus', 12) + '<span>Add another goal</span></button>'
@@ -15400,25 +15396,32 @@
                 return;
             }
 
-            // Ready — the map is the interface (spec §8.1, §8.4).
-            var L = ttLayout();
-            var reveal = window._ttPendingReveal ? ' tt-reveal' : '';
+            // Ready — simple per-goal tiered trees (activities + quests, dotted
+            // prerequisite links). Tap a node to review / accept / revise.
             window._ttPendingReveal = null;
-            var star = tt.northStarLineId ? (tt.lines || []).find(function(l){return l.id===tt.northStarLineId;}) : null;
-            var starGoal = star ? ttGoalForLine(star) : null;
-            var html = '<div class="tt-map-wrap' + reveal + '">'
-                + '<div class="tt-map-top">'
-                + '<div class="tt-map-title"><h2>Your map</h2><p>' + ttActiveLines().length + ' line' + (ttActiveLines().length === 1 ? '' : 's') + ' · tap a node for detail, a station for its segment</p></div>'
-                + '<div class="tt-zoom"><button onclick="ttMapZoom(-1)">&minus;</button><button onclick="ttMapZoom(1)">+</button><button onclick="ttMapFit()" title="Fit">' + ttIcon('map', 13) + '</button></div>'
-                + '</div>';
+            var html = '<div class="tt-plan">'
+                + '<div class="tt-map-top"><div class="tt-map-title"><h2>Your growth plan</h2>'
+                + '<p>Tap any suggestion to review it, then accept it or ask for a revision.</p></div></div>';
             if (tt.vision) html += '<div class="tt-reading">' + ttReadingHtml(tt) + '</div>';
-            html += '<div class="tt-map-canvas" id="ttMapCanvas">' + ttBuildMapSVG(L) + '</div>';
-            if (window._ttFocusChain || tt.northStarLineId) {
-                html += '<div class="tt-map-hint">'
-                    + (tt.northStarLineId ? '<span class="tt-hint-star">' + ttIcon('pin', 12) + ' North star: ' + escapeHtml(star ? star.terminus.title : '') + '</span>' : '')
-                    + (window._ttFocusChain ? '<button class="tt-inline-btn" onclick="ttClearFocus()">Show whole map</button>' : '')
-                    + (tt.northStarLineId ? '<button class="tt-inline-btn" onclick="ttClearNorthStar()">Clear</button>' : '')
+            ttActiveLines().forEach(function(line) {
+                var g = ttGoalForLine(line);
+                var goalNodes = tt.nodes.filter(function(n){ return n.lineId === line.id && n.lifecycle !== 'archived'; });
+                var doneCount = goalNodes.filter(function(n){ return n.resolvedAt; }).length;
+                html += '<div class="tt-goal-sec">'
+                    + '<div class="tt-goal-head" style="--gc:' + line.color + '">'
+                    + '<span class="tt-goal-dot" style="background:' + line.color + '"></span>'
+                    + '<span class="tt-goal-name">' + escapeHtml(g ? (g.sharpened || g.shortName) : line.terminus.title) + '</span>'
+                    + (g && g.kind === 'rhythm' ? '<span class="tt-rhythm-tag">no finish line</span>' : '')
+                    + '<button class="tt-goal-menu" onclick="ttGoalMenu(\'' + line.id + '\')" aria-label="Goal options">•••</button>'
+                    + '</div>'
+                    + (goalNodes.length ? ttGoalTreeSVG(line, goalNodes) : '<p class="tt-muted tt-goal-empty">No suggestions yet — Rebuild or add your own.</p>')
                     + '</div>';
+            });
+            // Fresh picks — suggestions not tied to a goal.
+            var freshNodes = tt.nodes.filter(function(n){ return !n.lineId && !n.interchange && n.lifecycle !== 'archived'; });
+            if (freshNodes.length) {
+                html += '<div class="tt-goal-sec"><div class="tt-goal-head" style="--gc:#8a9a5b"><span class="tt-goal-dot" style="background:#8a9a5b"></span><span class="tt-goal-name">Fresh picks</span></div>'
+                    + '<div class="tt-fresh-row">' + freshNodes.map(function(n){ return ttNodeChip(n, ttDimHexRaw(n.dimensionId)); }).join('') + '</div></div>';
             }
             var availCount = tt.nodes.filter(function(n){return n.lifecycle==='available';}).length;
             html += '<div class="tt-map-actions">'
@@ -15441,7 +15444,6 @@
             }
             html += '</div>';
             container.innerHTML = html;
-            setTimeout(function() { var c = document.getElementById('ttMapCanvas'); if (c) ttInitMap(c.querySelector('svg')); }, 0);
         }
         window.renderTechTree = renderTechTree;
         window.ttSyncGoalsAndGenerate = function(){ ttCollectGoalFields(); ttRequestGenerate(); };
@@ -15454,6 +15456,75 @@
             return '<div class="tt-reading-k">We read your goals as</div><div class="tt-reading-v">' + parts + '</div>'
                 + '<button class="tt-inline-btn" onclick="ttEditReadings()">Not right?</button>';
         }
+
+        // ── Simple tiered tree per goal (dotted prerequisite links) ──────
+        // Tier = 1 + longest prerequisite chain. Deliberately plain: a few
+        // nodes, connected where one genuinely unlocks another.
+        function ttComputeTiers(nodes) {
+            var byId = {}; nodes.forEach(function(n){ byId[n.id] = n; });
+            var memo = {};
+            function tier(n, guard) {
+                if (memo[n.id] != null) return memo[n.id];
+                if (guard[n.id]) return 1;
+                guard[n.id] = true;
+                var t = 1;
+                (n.prerequisites || []).forEach(function(pr){
+                    if (pr.type === 'node_mastered' && byId[pr.nodeId]) t = Math.max(t, 1 + tier(byId[pr.nodeId], guard));
+                });
+                delete guard[n.id]; memo[n.id] = t; return t;
+            }
+            nodes.forEach(function(n){ n._tier = tier(n, {}); });
+        }
+        function ttGoalTreeSVG(line, nodes) {
+            ttComputeTiers(nodes);
+            var maxTier = 1; nodes.forEach(function(n){ maxTier = Math.max(maxTier, n._tier); });
+            var byTier = {}; for (var t = 1; t <= maxTier; t++) byTier[t] = [];
+            nodes.forEach(function(n){ byTier[n._tier].push(n); });
+            var maxCols = 1; for (var t2 = 1; t2 <= maxTier; t2++) maxCols = Math.max(maxCols, byTier[t2].length);
+            var COLW = 112, ROWH = 84, PADY = 20, R = 13;
+            var W = Math.max(230, maxCols * COLW);
+            var H = maxTier * ROWH + PADY;
+            var pos = {};
+            for (var t3 = 1; t3 <= maxTier; t3++) {
+                var row = byTier[t3], n = row.length, startX = (W - n * COLW) / 2 + COLW / 2;
+                row.forEach(function(nd, i){ pos[nd.id] = { x: Math.round(startX + i * COLW), y: Math.round(PADY / 2 + (t3 - 0.5) * ROWH) }; });
+            }
+            var svg = '';
+            nodes.forEach(function(nd){
+                (nd.prerequisites || []).forEach(function(pr){
+                    if (pr.type === 'node_mastered' && pos[pr.nodeId]) {
+                        var a = pos[pr.nodeId], b = pos[nd.id];
+                        svg += '<line x1="' + a.x + '" y1="' + (a.y + R) + '" x2="' + b.x + '" y2="' + (b.y - R) + '" stroke="' + line.color + '" stroke-width="1.6" stroke-dasharray="2,4" stroke-linecap="round" opacity="0.5"/>';
+                    }
+                });
+            });
+            nodes.forEach(function(nd){
+                var p = pos[nd.id];
+                svg += '<g class="tt-node" onclick="ttOpenNode(\'' + nd.id + '\')" style="cursor:pointer">'
+                    + ttGlyph(nd, p.x, p.y, line.color)
+                    + '<text x="' + p.x + '" y="' + (p.y + R + 13) + '" text-anchor="middle" class="' + (nd.resolvedAt ? 'tt-n-l tt-n-gold' : 'tt-n-l') + '">' + escapeHtml(ttShort(nd.title, 15)) + '</text>'
+                    + '</g>';
+            });
+            return '<div class="tt-goal-tree"><svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" style="width:100%;max-width:' + W + 'px;height:auto;display:block;margin:0 auto;">' + svg + '</svg></div>';
+        }
+        function ttNodeChip(n, color) {
+            var t = (n.payload && n.payload.type) || 'activity';
+            var icon = n.resolvedAt ? 'star' : (t === 'quest' ? 'branch' : 'circle');
+            return '<button class="tt-fresh-chip" style="--rc:' + color + '" onclick="ttOpenNode(\'' + n.id + '\')">' + ttIcon(icon, 12) + '<span>' + escapeHtml(ttShort(n.title, 22)) + '</span></button>';
+        }
+        window.ttGoalMenu = function(lineId) {
+            var tt = ensureTechTree();
+            var line = (tt.lines || []).find(function(l){ return l.id === lineId; });
+            if (!line) return;
+            var g = ttGoalForLine(line);
+            ttShowSheet('<div class="tt-sheet-body"><div class="tt-sheet-kicker">Goal</div>'
+                + '<h3 class="tt-sheet-title">' + escapeHtml(g ? (g.sharpened || g.shortName) : line.terminus.title) + '</h3>'
+                + '<div class="tt-sheet-actions">'
+                + '<button class="tt-btn tt-btn-ghost" onclick="ttEditReadings()">Edit the reading</button>'
+                + '<button class="tt-btn tt-btn-ghost" onclick="ttRegenerateLine(\'' + lineId + '\')">Regenerate suggestions</button>'
+                + '<button class="tt-btn tt-btn-ghost" onclick="ttRetireLine(\'' + lineId + '\')">Retire this goal</button>'
+                + '</div></div>');
+        };
 
         // ── Pan / zoom + fit-to-view (spec §8.5) ─────────────────────────
         var _ttView = null;
@@ -15619,15 +15690,13 @@
                 + '<button class="tt-btn tt-btn-ghost" onclick="ttReviseNode(\'' + node.id + '\')">Revise</button>'
                 + '<button class="tt-btn tt-btn-ghost" onclick="ttRejectNode(\'' + node.id + '\')">Not for me</button>';
             else actions = '<div class="tt-locked-note">' + ttIcon('lock', 12) + ' ' + escapeHtml(ttLockReason(node, tt)) + '</div>';
-            var chainBtn = (state !== 'resolved') ? '<button class="tt-inline-btn" onclick="ttFocusChainFromNode(\'' + node.id + '\')">Trace the path to here</button>' : '';
-            // Fresh picks (no line) can be attached to one so they advance a goal (§10.8).
-            if (!node.lineId && ttActiveLines().length) actions += '<button class="tt-btn tt-btn-ghost" onclick="ttAttachToLine(\'' + node.id + '\')">' + ttIcon('branch', 13) + '<span>Attach to a line</span></button>';
+            // Fresh picks (no goal) can be attached to one so they advance it.
+            if (!node.lineId && ttActiveLines().length) actions += '<button class="tt-btn tt-btn-ghost" onclick="ttAttachToLine(\'' + node.id + '\')">' + ttIcon('branch', 13) + '<span>Attach to a goal</span></button>';
             ttShowSheet('<div class="tt-sheet-body">'
                 + '<div class="tt-sheet-kicker" style="color:' + color + '">' + escapeHtml(typeLabel) + (line ? ' · ' + escapeHtml((ttGoalForLine(line)||{}).shortName || '') : ' · fresh pick') + '</div>'
                 + '<h3 class="tt-sheet-title">' + escapeHtml(node.title) + '</h3>'
                 + (node.description ? '<p class="tt-sheet-desc">' + escapeHtml(node.description) + '</p>' : '')
                 + '<div class="tt-sheet-meta">' + escapeHtml(ttDimName(node.dimensionId)) + numbers + '</div>'
-                + chainBtn
                 + '<div class="tt-sheet-actions">' + actions + '</div>'
                 + '</div>');
         };
