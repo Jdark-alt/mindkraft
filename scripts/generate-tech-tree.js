@@ -16,9 +16,15 @@
 
 const admin = require('firebase-admin');
 
-const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
-const db = admin.firestore();
+// Lazy init so the pure validation/generation functions can be required in a
+// unit test without a service account. main() calls initAdmin() before any I/O.
+let db = null;
+function initAdmin() {
+    if (db) return;
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    db = admin.firestore();
+}
 
 // Push is best-effort — a map that generated fine must never fail because a
 // notification couldn't be sent. web-push is only wired up when VAPID keys are
@@ -290,23 +296,35 @@ and NODES (the actual practices/quests) in the SEGMENTS between stations.
 
 Output ONLY one valid JSON object — no prose, no markdown fences.
 
-STEP 1 — READ EACH GOAL. For every goal return a "reading":
-  { "goalId", "sharpened", "shortName", "kind", "kindReason" }
-  - "sharpened": a concrete, DEFENSIBLE reading of what they typed. Turn
-    "get healthy" into "Lose 10kg and hold it by December", not a restatement.
-  - "shortName": <=14 chars, the line label ("Health", "Channel", "The job").
+STEP 1 — IDENTIFY EVERY DISTINCT GOAL. The user's entries may each pack SEVERAL
+separate ambitions. Return one "reading" per DISTINCT goal, each with a unique
+"key":
+  { "key", "fromGoalId", "sharpened", "shortName", "kind", "kindReason" }
+  - SPLIT an entry into multiple goals when it names genuinely SEPARATE life
+    domains. "Get fit, cook at home, sleep on a schedule, and read more" is FOUR
+    goals — Fitness, Cooking, Sleep, Reading — each its OWN line. Strength
+    training and reading a book must NEVER share a line. Do not blend unrelated
+    domains just because the user typed them in one sentence.
+  - Do NOT split a single goal that is a routine PLUS its outcome. "Get healthy"
+    (a training habit AND losing 10kg) is ONE goal: the rhythm is the route and
+    becomes the segments, not a second line. Splitting is for separate DOMAINS,
+    not for the routine-vs-outcome halves of one domain.
+  - "key": a short unique id you assign (e.g. "k1","k2"). When a goal maps 1:1 to
+    one input entry, REUSE that entry's goalId as the key; invent fresh keys for
+    goals you split out. "fromGoalId": the input goalId this came from, or null.
+  - "sharpened": a concrete, DEFENSIBLE reading. Turn "get fit" into "Lose 8kg
+    and hold it by December", not a restatement. "shortName": <=14 chars, the
+    line label ("Fitness", "Cooking", "Sleep", "Reading").
   - "kind": "destination" if there is a stated outcome/number/event, OR the goal
-    is genuinely BOTH a routine and an outcome (a routine + losing 10kg is ONE
-    destination reached by rhythms — the rhythm becomes the segments, never a
-    second line). "rhythm" ONLY when there is genuinely no outcome at all — a
-    pure way of living like "be a person who trains". Too vague to tell ->
-    "destination" with the most useful concrete reading you can defend.
-  - "kindReason": REQUIRED and non-null when kind is "rhythm" (why there is no
-    finish line); null otherwise.
+    is genuinely BOTH a routine and an outcome. "rhythm" ONLY when there is
+    genuinely no outcome at all — a pure way of living like "be a person who
+    trains". Too vague -> "destination" with the most useful reading you can
+    defend. "kindReason": REQUIRED and non-null when kind is "rhythm"; else null.
+  - Cap: at most ${MAX_GOALS} goals total. If the user names more, keep the ${MAX_GOALS} most distinct.
 
 STEP 2 — BUILD THE MAP.
-  - Emit ONE line per goal. Never merge two goals into one line; never leave a
-    goal without a line.
+  - Emit ONE line per DISTINCT goal (per reading key). Never merge two goals into
+    one line; never leave a goal without a line.
   - Each line gets 2-4 STATIONS plus a terminus. Station titles are milestones
     in the user's language ("First video", "Consistent cadence", "Scaling"),
     NEVER "Tier 2" / "Phase 1".
@@ -322,7 +340,7 @@ STEP 2 — BUILD THE MAP.
   - 0-2 INTERCHANGES total, only where two lines genuinely share a seam. Each
     names exactly two distinct goals and credits a station on BOTH. Never
     manufacture one for symmetry.
-  - 0-3 FRESH PICKS — nodes with "goalId":null that serve no station. The
+  - 0-3 FRESH PICKS — nodes with "key":null that serve no station. The
     quarantine for genuinely serendipitous suggestions that advance nothing.
 
 NODE RULES:
@@ -341,20 +359,21 @@ ${PAYLOAD_RULES}
 VISION: also return "vision" — 1-2 sentences, second person, vivid and specific
 to their goals. No motivation-poster fluff.
 
-OUTPUT SCHEMA (a single JSON object, nothing else):
+OUTPUT SCHEMA (a single JSON object, nothing else). Every "lines"/"nodes"/
+"interchanges" entry references a reading by its "key" (NOT goalId):
 { "vision": string,
-  "readings": [{ "goalId":str, "sharpened":str, "shortName":str,
+  "readings": [{ "key":str, "fromGoalId":str|null, "sharpened":str, "shortName":str,
                  "kind":"destination"|"rhythm", "kindReason":str|null }],
-  "lines": [{ "goalId":str,
+  "lines": [{ "key":str,
               "stations":[{ "index":int, "title":str, "threshold":int }],
               "terminus":{ "title":str, "kind":"flag"|"loop" } }],
-  "nodes": [{ "goalId":str|null, "segmentIndex":int,
+  "nodes": [{ "key":str|null, "segmentIndex":int,
               "title":str, "description":str, "dimensionId":str,
               "isTerminus":bool,
               "prerequisites":[{"type":"node_mastered","nodeTitle":str}|{"type":"activity_mastered","activityId":str}],
               "payload": <activity|quest|challenge payload> }],
   "interchanges": [{ "title":str, "description":str, "dimensionId":str,
-                     "goalIds":[str,str], "stationIndices":[int,int],
+                     "keys":[str,str], "stationIndices":[int,int],
                      "payload": <payload> }] }`;
 
     const input = {
@@ -731,7 +750,7 @@ function validateLeaf(l, ctx, counter) {
 // ── Node materialization (spec §2.5, §5.7) ──────────────────────────────────
 // Turns raw model nodes into schema-valid v2 nodes with a resolved lineId /
 // segmentIndex / payload. Drops individual bad nodes, never the whole response.
-function materializeNodes(parsed, userData, goalToLine) {
+function materializeNodes(parsed, userData, keyToLine) {
     const activities = collectActivities(userData);
     const ctxBase = {
         dimIds: new Set((userData.dimensions || []).map(d => d.id)),
@@ -747,8 +766,8 @@ function materializeNodes(parsed, userData, goalToLine) {
 
     (parsed.nodes || []).forEach(r => {
         if (!r || typeof r.title !== 'string' || !r.title.trim()) return;
-        const goalId = r.goalId || null;
-        const line = goalId ? goalToLine[goalId] : null;                 // §5.7.1: bad goalId -> fresh pick
+        const nkey = (r.key !== undefined && r.key !== null) ? r.key : (r.goalId != null ? r.goalId : null);
+        const line = nkey != null ? keyToLine[nkey] : null;              // §5.7.1: bad/absent key -> fresh pick
         const dimensionId = ctxBase.dimIds.has(r.dimensionId) ? r.dimensionId : ctxBase.fallbackDim;
         const payload = validatePayload(r.payload, {
             dimIds: ctxBase.dimIds, pathIds: ctxBase.pathIds, activityIds: ctxBase.activityIds,
@@ -777,11 +796,11 @@ function materializeNodes(parsed, userData, goalToLine) {
         byTitle[node.title.toLowerCase()] = node;
     });
 
-    // Interchanges (§5.7.8): must name exactly two distinct existing goals.
+    // Interchanges (§5.7.8): must name exactly two distinct existing lines.
     (parsed.interchanges || []).forEach(r => {
         if (!r || typeof r.title !== 'string' || !r.title.trim()) return;
-        const gids = Array.isArray(r.goalIds) ? r.goalIds : [];
-        const l0 = goalToLine[gids[0]], l1 = goalToLine[gids[1]];
+        const gids = Array.isArray(r.keys) ? r.keys : (Array.isArray(r.goalIds) ? r.goalIds : []);
+        const l0 = keyToLine[gids[0]], l1 = keyToLine[gids[1]];
         const dimensionId = ctxBase.dimIds.has(r.dimensionId) ? r.dimensionId : ctxBase.fallbackDim;
         const payload = validatePayload(r.payload, {
             dimIds: ctxBase.dimIds, pathIds: ctxBase.pathIds, activityIds: ctxBase.activityIds,
@@ -896,12 +915,16 @@ function enforceLoadBudget(nodes, userData) {
 }
 
 // ── Lines / stations (spec §2.3, §2.4, §5.7.6) ──────────────────────────────
-function validateLinesStations(parsed, userData, goals, colorStart) {
+// keyToGoal maps a reading key (which may be an input goalId or a split key) to
+// a Goal. Returns keyToLine so materializeNodes can place nodes by the same key.
+function validateLinesStations(parsed, userData, keyToGoal, colorStart) {
     const lines = [];
-    const goalToLine = {};
+    const keyToLine = {};
+    const usedGoalIds = {};
     (parsed.lines || []).forEach((rl, i) => {
-        const goal = goals.find(g => g.id === rl.goalId);
-        if (!goal || goalToLine[goal.id]) return;                       // one line per goal
+        const key = (rl.key != null) ? rl.key : rl.goalId;
+        const goal = keyToGoal[key];
+        if (!goal || keyToLine[key] || usedGoalIds[goal.id]) return;     // one line per goal
         const kind = (rl.terminus && rl.terminus.kind === 'loop') ? 'loop' : 'flag';
         let stations = (Array.isArray(rl.stations) ? rl.stations : [])
             .map((s, idx) => ({
@@ -928,9 +951,10 @@ function validateLinesStations(parsed, userData, goals, colorStart) {
         };
         stations.forEach(s => (s.lineId = line.id));
         lines.push(line);
-        goalToLine[goal.id] = line;
+        keyToLine[key] = line;
+        usedGoalIds[goal.id] = true;
     });
-    return { lines, goalToLine };
+    return { lines, keyToLine };
 }
 
 // Clamp station thresholds to the node count in their segment (§5.7.6). Runs
@@ -945,26 +969,63 @@ function clampThresholds(lines, nodes) {
     });
 }
 
-// ── Readings (spec §3.4, §3.5) ──────────────────────────────────────────────
+// ── Readings — SCOPED modes (add_line/regenerate/revise) ────────────────────
+// Mutates the existing scoped goals in place; matches a reading to a goal by
+// key / goalId / fromGoalId. Returns { keyToGoal, merge }.
 function applyReadings(parsed, goals) {
     const merge = [];
     const sharpenedTexts = {};
+    const keyToGoal = {};
+    goals.forEach(g => { keyToGoal[g.id] = g; });
     (parsed.readings || []).forEach(r => {
-        const goal = goals.find(g => g.id === r.goalId);
+        const goal = goals.find(g => g.id === r.key || g.id === r.goalId || g.id === r.fromGoalId) || goals[0];
         if (!goal) return;
         goal.sharpened = String(r.sharpened || goal.rawText).slice(0, 200);
         goal.shortName = String(r.shortName || goal.rawText).slice(0, 14);
         goal.kind = r.kind === 'rhythm' ? 'rhythm' : 'destination';
         goal.kindReason = goal.kind === 'rhythm' ? (r.kindReason ? String(r.kindReason).slice(0, 200) : 'There is no finish line here — this is a way of living.') : null;
-        const key = goal.sharpened.trim().toLowerCase();
-        if (sharpenedTexts[key]) merge.push([sharpenedTexts[key], goal.id]);
-        else sharpenedTexts[key] = goal.id;
+        if (r.key != null) keyToGoal[r.key] = goal;
+        const k = goal.sharpened.trim().toLowerCase();
+        if (sharpenedTexts[k]) merge.push([sharpenedTexts[k], goal.id]);
+        else sharpenedTexts[k] = goal.id;
     });
-    // Any goal the model skipped: fail safe (§3.6) — don't block a tree.
     goals.forEach(g => {
         if (!g.sharpened) { g.sharpened = g.rawText; g.kind = g.kind || 'destination'; g.shortName = g.shortName || String(g.rawText).slice(0, 14); }
     });
-    return merge.length ? merge[0] : null; // one merge suggestion, offered once (§3.6)
+    return { keyToGoal, merge: merge.length ? merge[0] : null };
+}
+
+// ── Readings — GENERATE mode (splits one entry into distinct goals §3.4) ─────
+// Builds a fresh goals array from the model's readings, preserving lineage to
+// the user's typed entries via fromGoalId where the model provides it.
+function buildGoalsFromReadings(parsed, existingGoals) {
+    const keyToGoal = {};
+    const goals = [];
+    const usedExisting = {};
+    const merge = [];
+    const sharpenedTexts = {};
+    (parsed.readings || []).slice(0, MAX_GOALS).forEach(r => {
+        const key = (r.key != null) ? r.key : (r.goalId || r.fromGoalId);
+        if (key == null) return;
+        // Reuse an existing goal (preserve id + createdAt) when this reading maps
+        // 1:1 to a typed entry; otherwise mint a new goal for the split.
+        const lineageId = r.fromGoalId || (typeof r.key === 'string' ? r.key : null) || r.goalId;
+        let goal = null;
+        const existing = existingGoals.find(g => g.id === lineageId);
+        if (existing && !usedExisting[existing.id]) { goal = existing; usedExisting[existing.id] = true; }
+        if (!goal) goal = { id: newId('goal'), rawText: '', createdAt: nowISO(), achievedAt: null, retiredAt: null, sharpenedEditedByUser: false };
+        goal.sharpened = String(r.sharpened || goal.rawText || 'Goal').slice(0, 200);
+        goal.shortName = String(r.shortName || goal.rawText || 'Goal').slice(0, 14);
+        goal.kind = r.kind === 'rhythm' ? 'rhythm' : 'destination';
+        goal.kindReason = goal.kind === 'rhythm' ? (r.kindReason ? String(r.kindReason).slice(0, 200) : 'There is no finish line here — this is a way of living.') : null;
+        if (!goal.rawText) goal.rawText = goal.sharpened;  // split goals have no typed rawText of their own
+        keyToGoal[key] = goal;
+        goals.push(goal);
+        const k = goal.sharpened.trim().toLowerCase();
+        if (sharpenedTexts[k]) merge.push([sharpenedTexts[k], goal.id]);
+        else sharpenedTexts[k] = goal.id;
+    });
+    return { goals, keyToGoal, merge: merge.length ? merge[0] : null };
 }
 
 // ── Push (best-effort, spec §4.4, §7.3) ─────────────────────────────────────
@@ -1054,14 +1115,25 @@ async function processGenerateFamily(docRef, userData, req) {
     const raw = await callModel(prompt, budget);
     const parsed = parseModelJson(raw);
 
-    // Apply the model's readings onto the scoped goals (sharpened/shortName/kind).
-    const mergeSuggestion = applyReadings(parsed, scopedGoals);
+    // Readings: GENERATE may SPLIT one entry into several distinct goals (§3.4);
+    // scoped modes (add_line/regenerate/revise) mutate the existing goal(s).
+    let keyToGoal, mergeSuggestion, generatedGoals = null;
+    if (req.type === 'generate') {
+        const built = buildGoalsFromReadings(parsed, scopedGoals);
+        generatedGoals = built.goals;         // the distinct goals — replaces techTree.goals
+        keyToGoal = built.keyToGoal;
+        mergeSuggestion = built.merge;
+    } else {
+        const applied = applyReadings(parsed, scopedGoals);
+        keyToGoal = applied.keyToGoal;
+        mergeSuggestion = applied.merge;
+    }
 
-    const { lines: newLines, goalToLine } = validateLinesStations(parsed, userData, scopedGoals, colorStart);
+    const { lines: newLines, keyToLine } = validateLinesStations(parsed, userData, keyToGoal, colorStart);
     if (!newLines.length && (req.type === 'generate' || req.type === 'add_line')) {
         throw new Error('Model produced no valid lines');
     }
-    let newNodes = materializeNodes(parsed, userData, goalToLine);
+    let newNodes = materializeNodes(parsed, userData, keyToLine);
     if (!newNodes.length && req.type === 'generate') {
         throw new Error('Model produced no valid nodes');
     }
@@ -1119,7 +1191,11 @@ async function processGenerateFamily(docRef, userData, req) {
     const update = {
         'techTree.schemaVersion': 2,
         'techTree.status': 'ready',
-        'techTree.goals': techTree.goals,        // readings mutate goal objects in place
+        // generate replaces goals with the model's split (§3.4); scoped modes
+        // mutate the existing goal objects in place, so keep the array.
+        'techTree.goals': req.type === 'generate'
+            ? generatedGoals.concat((techTree.goals || []).filter(g => g.retiredAt))
+            : techTree.goals,
         'techTree.lines': lines,
         'techTree.nodes': nodes,
         'techTree.connections': connections,
@@ -1193,10 +1269,10 @@ async function processExpand(docRef, userData, req) {
             console.warn('  expand parse failed:', e.message);
             continue;
         }
-        const goalToLine = {}; goalToLine[line.goalId] = line;
-        // Force every emitted node onto this segment (monotonic §7.4).
-        (parsed.nodes || []).forEach(n => { n.goalId = line.goalId; if (n.segmentIndex == null) n.segmentIndex = resolved.segmentIndex; });
-        let fanned = materializeNodes({ nodes: parsed.nodes, interchanges: [] }, userData, goalToLine).slice(0, 3);
+        const keyToLine = {}; keyToLine[line.id] = line;
+        // Force every emitted node onto this line/segment (monotonic §7.4).
+        (parsed.nodes || []).forEach(n => { n.key = line.id; if (n.segmentIndex == null) n.segmentIndex = resolved.segmentIndex; });
+        let fanned = materializeNodes({ nodes: parsed.nodes, interchanges: [] }, userData, keyToLine).slice(0, 3);
         fanned.forEach(n => { n.parentNodeId = resolved.id; n.segmentIndex = resolved.segmentIndex; });
         added.push.apply(added, fanned);
     }
@@ -1321,6 +1397,7 @@ async function preflight() {
 }
 
 async function main() {
+    initAdmin();
     console.log('Map (Tech Tree) worker v2 run at', nowISO());
     console.log('Node', process.version, '| provider:', PROVIDER.name, '| model:', PROVIDER.model,
         '| key configured:', PROVIDER.key ? `yes (${PROVIDER.key.length} chars)` : 'NO — set ' + PROVIDER.keyHint);
@@ -1363,6 +1440,14 @@ async function main() {
     console.log(`Done. Processed: ${processed}, failed: ${failed}, scanned: ${snapshot.size}`);
 }
 
-main()
-    .then(() => process.exit(0))
-    .catch(err => { console.error('Fatal error:', err); process.exit(1); });
+// Exported for unit tests; only run the cron when invoked directly.
+module.exports = {
+    buildGoalsFromReadings, applyReadings, validateLinesStations, materializeNodes,
+    clampThresholds, validatePayload, weeklyLoad, cleanCycleCount,
+};
+
+if (require.main === module) {
+    main()
+        .then(() => process.exit(0))
+        .catch(err => { console.error('Fatal error:', err); process.exit(1); });
+}
