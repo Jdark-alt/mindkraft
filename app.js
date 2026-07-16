@@ -15017,6 +15017,18 @@
             delete tt.lastError;
             ttSubmitRequest({ type: 'generate' });
         };
+        // Re-run the FULL generation from the current goals. This is how a goal
+        // entry that packs several ambitions gets split into distinct lines —
+        // the model re-reads the goal text and splits it (§3.4). Unaccepted
+        // suggestions are replaced; resolved nodes and all real activities /
+        // quests / streaks / XP are untouched.
+        window.ttRebuildMap = function() {
+            var tt = ensureTechTree();
+            if (tt.pendingRequest) { showToast('One request at a time — hang tight', 'olive'); return; }
+            if (!confirm('Rebuild your whole map from your goals?\n\nThe AI re-reads your goals and splits any that pack several ambitions into separate lines. Unaccepted suggestions are replaced. Your activities, quests, streaks and XP are never touched.')) return;
+            tt.loadBudget = { current: ttWeeklyLoad(), updatedAt: new Date().toISOString() };
+            ttSubmitRequest({ type: 'generate' });
+        };
 
         // Add a goal → generate ONE new line, touching nothing else (spec §9.1).
         window.ttAddLine = function() {
@@ -15394,6 +15406,7 @@
                 + '<button class="tt-tb-btn" onclick="ttOpenAvailableList()">' + ttIcon('spark', 12) + '<span>Available' + (availCount ? ' · ' + availCount : '') + '</span></button>'
                 + '<button class="tt-tb-btn" onclick="ttAddLine()">' + ttIcon('plus', 12) + '<span>Add goal</span></button>'
                 + '<button class="tt-tb-btn" onclick="ttOpenCustomNodeForm()">' + ttIcon('edit', 12) + '<span>Add your own</span></button>'
+                + '<button class="tt-tb-btn" onclick="ttRebuildMap()">' + ttIcon('refresh', 12) + '<span>Rebuild</span></button>'
                 + '</div>';
             // Quest-patch proposals (spec §7.7).
             (tt.questPatches || []).filter(function(q){return q.status==='pending';}).forEach(function(q){
