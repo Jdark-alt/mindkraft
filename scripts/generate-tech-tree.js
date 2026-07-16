@@ -1148,8 +1148,12 @@ async function processGenerateFamily(docRef, userData, req) {
     let lines, nodes;
 
     if (req.type === 'generate') {
+        // A full rebuild replaces the frontier, but resolved nodes are immortal
+        // (§9.2) — carry them forward as fresh picks (their old lines are gone).
+        const survivors = oldNodes.filter(n => n.resolvedAt)
+            .map(n => Object.assign({}, n, { lineId: null, segmentIndex: null, interchange: null, parentNodeId: null }));
         lines = newLines;
-        nodes = newNodes;
+        nodes = survivors.concat(newNodes);
     } else if (req.type === 'add_line') {
         lines = oldLines.concat(newLines);
         nodes = oldNodes.concat(newNodes);
