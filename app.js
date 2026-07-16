@@ -15389,7 +15389,9 @@
                     + (tt.northStarLineId ? '<button class="tt-inline-btn" onclick="ttClearNorthStar()">Clear</button>' : '')
                     + '</div>';
             }
+            var availCount = tt.nodes.filter(function(n){return n.lifecycle==='available';}).length;
             html += '<div class="tt-map-actions">'
+                + '<button class="tt-tb-btn" onclick="ttOpenAvailableList()">' + ttIcon('spark', 12) + '<span>Available' + (availCount ? ' · ' + availCount : '') + '</span></button>'
                 + '<button class="tt-tb-btn" onclick="ttAddLine()">' + ttIcon('plus', 12) + '<span>Add goal</span></button>'
                 + '<button class="tt-tb-btn" onclick="ttOpenCustomNodeForm()">' + ttIcon('edit', 12) + '<span>Add your own</span></button>'
                 + '</div>';
@@ -15427,16 +15429,25 @@
             if (!svg) return;
             var vb = svg.getAttribute('viewBox').split(' ').map(Number);
             _ttView = { x: vb[0], y: vb[1], w: vb[2], h: vb[3], W: vb[2], H: vb[3] };
-            var drag = null;
-            svg.addEventListener('pointerdown', function(e) { drag = { x: e.clientX, y: e.clientY, vx: _ttView.x, vy: _ttView.y }; svg.setPointerCapture(e.pointerId); });
+            // NB: never setPointerCapture here — capturing on the <svg> makes the
+            // click fire on the svg instead of the tapped node, so node taps stop
+            // opening the sheet. Instead track a drag threshold and only suppress
+            // the click when the user actually panned (window._ttPanning guard).
+            var drag = null, moved = false;
+            svg.addEventListener('pointerdown', function(e) { drag = { x: e.clientX, y: e.clientY, vx: _ttView.x, vy: _ttView.y }; moved = false; });
             svg.addEventListener('pointermove', function(e) {
                 if (!drag) return;
+                var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+                if (!moved && (Math.abs(dx) + Math.abs(dy)) < 6) return;   // below threshold = still a tap
+                moved = true; window._ttPanning = true;
                 var r = svg.getBoundingClientRect();
-                _ttView.x = drag.vx - (e.clientX - drag.x) * (_ttView.w / r.width);
-                _ttView.y = drag.vy - (e.clientY - drag.y) * (_ttView.h / r.height);
+                _ttView.x = drag.vx - dx * (_ttView.w / r.width);
+                _ttView.y = drag.vy - dy * (_ttView.h / r.height);
                 ttApplyView(svg);
             });
-            svg.addEventListener('pointerup', function(e) { drag = null; try { svg.releasePointerCapture(e.pointerId); } catch (er) {} });
+            function endDrag() { drag = null; if (moved) { setTimeout(function() { window._ttPanning = false; }, 40); } else { window._ttPanning = false; } }
+            svg.addEventListener('pointerup', endDrag);
+            svg.addEventListener('pointerleave', endDrag);
             svg.addEventListener('wheel', function(e) { e.preventDefault(); ttMapZoom(e.deltaY < 0 ? 1 : -1, e); }, { passive: false });
         }
         function ttApplyView(svg) { svg = svg || document.getElementById('ttMapSvg'); if (svg && _ttView) svg.setAttribute('viewBox', _ttView.x + ' ' + _ttView.y + ' ' + _ttView.w + ' ' + _ttView.h); }
@@ -15463,6 +15474,7 @@
             return set;
         }
         window.ttFocusTerminus = function(lineId) {
+            if (window._ttPanning) return;
             var tt = ensureTechTree();
             var line = (tt.lines||[]).find(function(l){return l.id===lineId;});
             if (!line) return;
@@ -15500,6 +15512,7 @@
 
         // ── Segment view (spec §8.4) ─────────────────────────────────────
         window.ttOpenSegment = function(lineId, stationIndex) {
+            if (window._ttPanning) return;
             var tt = ensureTechTree();
             var line = (tt.lines||[]).find(function(l){return l.id===lineId;});
             if (!line) return;
@@ -15526,8 +15539,38 @@
                 + '</div>');
         };
 
+        // ── Available list (spec §8.4 — the offering, browsable) ─────────
+        window.ttOpenAvailableList = function() {
+            if (window._ttPanning) return;
+            var tt = ensureTechTree();
+            function rowFor(n) {
+                var line = n.lineId ? (tt.lines||[]).find(function(l){return l.id===n.lineId;}) : null;
+                var color = line ? line.color : ttDimHexRaw(n.dimensionId);
+                var type = (n.payload && n.payload.type) || 'activity';
+                var tlabel = type === 'quest' ? ((n.payload.spec && n.payload.spec.cadence && n.payload.spec.cadence.type === 'recurring') ? 'Recurring quest' : 'Quest') : (type === 'challenge' ? 'Challenge' : 'Activity');
+                if (n.interchange) tlabel = 'Interchange';
+                var where = line ? ((ttGoalForLine(line)||{}).shortName || '') : 'fresh pick';
+                return '<button class="tt-seg-row" style="--rc:' + color + '" onclick="ttCloseSheet();setTimeout(function(){ttOpenNode(\'' + n.id + '\');},10)">'
+                    + '<span class="tt-seg-dot" style="background:' + color + '"></span>'
+                    + '<span class="tt-seg-name">' + escapeHtml(n.title) + '<span class="tt-avail-sub">' + escapeHtml(tlabel + ' · ' + where) + '</span></span>'
+                    + '<span class="tt-seg-badge tt-seg-open">accept</span></button>';
+            }
+            var avail = tt.nodes.filter(function(n){return n.lifecycle==='available';});
+            var locked = tt.nodes.filter(function(n){return n.lifecycle==='locked';});
+            var html = '<div class="tt-sheet-body"><div class="tt-sheet-kicker">On offer</div><h3 class="tt-sheet-title">What you can accept</h3>'
+                + '<p class="tt-sheet-desc">Suggested activities and quests, ready to add. Accept any — ignore the rest.</p>';
+            if (avail.length) html += '<div class="tt-avail-h">Available · ' + avail.length + '</div><div class="tt-seg-list">' + avail.map(rowFor).join('') + '</div>';
+            else html += '<p class="tt-muted" style="margin-top:12px;">Nothing available to accept right now — resolve a node to fan open new ones.</p>';
+            if (locked.length) html += '<div class="tt-avail-h" style="margin-top:14px;">Locked · ' + locked.length + '</div><div class="tt-seg-list">'
+                + locked.map(function(n){ var line = n.lineId ? (tt.lines||[]).find(function(l){return l.id===n.lineId;}) : null; var color = line?line.color:ttDimHexRaw(n.dimensionId);
+                    return '<button class="tt-seg-row" style="--rc:' + color + ';opacity:.6" onclick="ttCloseSheet();setTimeout(function(){ttOpenNode(\'' + n.id + '\');},10)"><span class="tt-seg-dot" style="background:' + color + ';opacity:.5"></span><span class="tt-seg-name">' + escapeHtml(n.title) + '</span><span class="tt-seg-badge tt-seg-locked">locked</span></button>'; }).join('') + '</div>';
+            html += '</div>';
+            ttShowSheet(html);
+        };
+
         // ── Node sheet (spec §8.4) ───────────────────────────────────────
         window.ttOpenNode = function(nodeId) {
+            if (window._ttPanning) return;
             var tt = ensureTechTree();
             var node = tt.nodes.find(function(n){return n.id===nodeId;});
             if (!node) return;
