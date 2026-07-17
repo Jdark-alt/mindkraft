@@ -274,8 +274,12 @@ QUEST GROUPS (must match the app's shape EXACTLY):
 
 For an "activity" node, payload is:
   { "type":"activity", "spec":{ "name":str,"description":str,"baseXP":1..50,
-    "frequency":"daily|weekly|biweekly|monthly|occasional","dimensionId":str },
-    "mastery":{ "target":int, "windowDays":int|null } }`;
+    "frequency":"daily|weekly|biweekly|monthly|occasional","dimensionId":str,
+    "upgradeOfActivityId":str|null },
+    "mastery":{ "target":int, "windowDays":int|null } }
+  Set "upgradeOfActivityId" ONLY when this activity is a direct higher tier of a
+  REAL existing activity (use its activityId from activeActivities) — the app
+  then offers "replace it and inherit its history" alongside "keep both".`;
 
 function buildGeneratePrompt(userData, opts) {
     const techTree = userData.techTree;
@@ -324,25 +328,47 @@ separate ambitions. Return one "reading" per DISTINCT goal, each with a unique
     defend. "kindReason": REQUIRED and non-null when kind is "rhythm"; else null.
   - Cap: at most ${MAX_GOALS} goals total. If the user names more, keep the ${MAX_GOALS} most distinct.
 
-STEP 2 — SUGGEST A FEW ACTIONS FOR EACH GOAL. Keep it SIMPLE and relevant.
+STEP 2 — WORK BACKWARDS FROM THE GOAL, ALREADY ACHIEVED. Picture this user a
+year on, goal in hand: what did they actually DO, week in and week out, to get
+there? Turn those doings into nodes. Repeatable practices become activities;
+routines with a shape become recurring quests; long complex projects become
+one-off quests.
   - Give each goal a short "target": a plain phrase for what progress looks like
     ("Lose 8kg", "A steady sleep rhythm"). Not a milestone ladder — one phrase.
-  - Put 2-5 NODES in each goal's "nodes" array. Few and RELEVANT beats many.
-    Never pad a goal to hit a number. Every goal needs at least 2 nodes.
-  - Each node is an activity or a quest (see PAYLOAD). Prefer activities; sprinkle
-    in a quest only where several things genuinely belong together or a short
-    project fits ("Ship video #1", "12-week cut").
-  - PREREQUISITES are OPTIONAL. Add {"type":"node_mastered","nodeTitle":"<exact
-    title of another node for THIS goal>"} only when one node GENUINELY unlocks a
-    later, harder one. These form tiers (drawn as dotted links). MOST nodes need
-    none — do not invent dependencies to look connected.
+  - Put 2-5 NODES in each goal's "nodes" array, aiming for this mix per goal
+    (fewer beats padding; every goal needs at least 2):
+    · 2-3 ROOTED: build directly on activities the user already does — say the
+      connection in the description.
+    · 1-2 HIGHER TIER: a sharper, harder form of something simpler ("Read" ->
+      "Read one chapter of medieval fiction a day"). A higher tier MUST carry a
+      prerequisite on what it levels up — {"type":"activity_mastered",
+      "activityId":..} for a real activity (also set "upgradeOfActivityId" in
+      its spec), or {"type":"node_mastered","nodeTitle":..} for another node of
+      THIS goal. These form the tiers drawn as dotted links.
+  - QUESTS: 1-3 across the whole plan, chosen by the goal's nature. Start each
+    SMALL — a seed with a few gentle parts; it GROWS at every regeneration as
+    the user masters nodes, so never front-load everything. A rhythm goal's
+    quest matures into a recurring routine (weekly cadence — e.g. one ordered
+    group of daily mobility work, one 3x/week checklist for supplements and
+    nutrition). A project goal ("write a book") gets a one-off quest that opens
+    at "write 250 words a day" scale and, over its growth, will come to cover
+    everything up to being published — one-time tasks welcome there.
+  - SERENDIPITY: the best suggestion CONNECTS unrelated things the user already
+    does into something new and unexpected (they run and they study French ->
+    "French podcasts on easy runs"). Aim for at least one cross-domain fusion
+    somewhere in the plan; surprise is a feature.
+  - Other prerequisites stay OPTIONAL — add one only when a node GENUINELY
+    unlocks a later, harder one. MOST rooted nodes need none; do not invent
+    dependencies to look connected.
   - Keep goals SEPARATE. A sleep node belongs under the sleep goal, NEVER under
     fitness. If a suggestion doesn't clearly serve one specific goal, put it in
     top-level "freshPicks" instead of forcing it onto a goal.
   - ONE daily anchor per goal maximum; everything else weekly or lighter. Total
     new load across all goals must not push weekly load past +${LOAD_BUDGET_HEADROOM}
     (the user is at ${load} actions/week now).
-  - Top-level "freshPicks": 0-3 standalone suggestions that serve no one goal.
+  - Top-level "freshPicks": 1-2 NOVEL suggestions with no tie to any goal or to
+    the user's history — something that would simply be a positive addition to
+    this user's life.
 
 NODE RULES:
   - Genuinely new and concrete — never a vague umbrella, never a rebrand of an
@@ -404,11 +430,15 @@ function buildExpandPrompt(userData, ctx) {
     const load = weeklyLoad(userData);
     const rejections = (userData.techTree.rejections || []).slice(-40).map(r => r.nodeTitle + ' (' + r.reason + ')');
     const { dimensionList } = activePathsAndDims(userData);
-    const system = `You extend a user's Map after they RESOLVED a node. Emit 2-3 sibling nodes
-that the resolved node now makes possible AND that move toward the next station.
+    const system = `You extend a user's growth plan after they MASTERED a node. Emit 2-3 next-step
+nodes that mastering it makes possible — the natural higher tier plus anything
+it unlocks toward the goal.
 
-THE MONOTONIC CONSTRAINT: every node you emit MUST reduce the distance to SOME
-station — not necessarily this one. A node serving nothing is rejected. Vary the
+Prefer a HIGHER-TIER version of what was just mastered (sharper, harder, more
+specific — set "upgradeOfActivityId" when it levels up a real activity), and
+look for one SERENDIPITOUS fusion: connect the mastered thing with an unrelated
+activity from their history into something new and unexpected. Every node MUST
+move the user toward the goal — a node serving nothing is rejected. Vary the
 payload type by what each thing IS. Respect the load budget (the user is at ${load}
 actions/week; do not push past +${LOAD_BUDGET_HEADROOM}). Do not re-suggest
 anything in rejections or already in the segment.
@@ -614,6 +644,7 @@ function validatePayload(raw, ctx) {
                 frequency,
                 dimensionId: dimOf(s.dimensionId || ctx.dimensionId),
                 suggestedPathId: ctx.pathIds.has(s.suggestedPathId) ? s.suggestedPathId : null,
+                upgradeOfActivityId: ctx.activityIds.has(s.upgradeOfActivityId) ? s.upgradeOfActivityId : null,
             },
             mastery: {
                 target: Math.min(60, Math.max(1, parseInt((raw.mastery || {}).target, 10) || masteryTargetFor(frequency))),
@@ -866,8 +897,6 @@ function materializeNodes(parsed, userData, keyToLine) {
     // (deepest, latest) new-activity-bearing nodes until new load fits +8/week.
     enforceLoadBudget(nodes, userData);
 
-    // Station threshold clamp (§5.7.6) happens in validateLinesStations against
-    // the emitted node counts per segment.
     return nodes;
 }
 
@@ -914,51 +943,6 @@ function enforceLoadBudget(nodes, userData) {
     }
 }
 
-// ── Lines / stations (spec §2.3, §2.4, §5.7.6) ──────────────────────────────
-// keyToGoal maps a reading key (which may be an input goalId or a split key) to
-// a Goal. Returns keyToLine so materializeNodes can place nodes by the same key.
-function validateLinesStations(parsed, userData, keyToGoal, colorStart) {
-    const lines = [];
-    const keyToLine = {};
-    const usedGoalIds = {};
-    (parsed.lines || []).forEach((rl, i) => {
-        const key = (rl.key != null) ? rl.key : rl.goalId;
-        const goal = keyToGoal[key];
-        if (!goal || keyToLine[key] || usedGoalIds[goal.id]) return;     // one line per goal
-        const kind = (rl.terminus && rl.terminus.kind === 'loop') ? 'loop' : 'flag';
-        let stations = (Array.isArray(rl.stations) ? rl.stations : [])
-            .map((s, idx) => ({
-                id: newId('st'),
-                lineId: null,
-                index: (typeof s.index === 'number') ? s.index : idx,
-                title: String(s.title || 'Milestone').slice(0, 24),
-                threshold: Math.max(2, parseInt(s.threshold, 10) || 2),
-                reachedAt: null,
-            }))
-            .sort((a, b) => a.index - b.index)
-            .map((s, idx) => (s.index = idx, s));
-        if (!stations.length) {
-            stations = [{ id: newId('st'), lineId: null, index: 0, title: 'Getting started', threshold: 2, reachedAt: null }];
-        }
-        const line = {
-            id: newId('line'),
-            goalId: goal.id,
-            color: LINE_PALETTE[(colorStart + i) % LINE_PALETTE.length],
-            status: 'active',
-            terminus: { title: String((rl.terminus && rl.terminus.title) || goal.shortName || 'Summit').slice(0, 60), kind, nodeId: null },
-            stations,
-            regeneratedAt: null,
-        };
-        stations.forEach(s => (s.lineId = line.id));
-        lines.push(line);
-        keyToLine[key] = line;
-        usedGoalIds[goal.id] = true;
-    });
-    return { lines, keyToLine };
-}
-
-// Clamp station thresholds to the node count in their segment (§5.7.6). Runs
-// after nodes exist so it can count them.
 function clampThresholds(lines, nodes) {
     lines.forEach(line => {
         line.stations.forEach(st => {
@@ -1101,65 +1085,6 @@ function materializeNested(parsed, userData, existingGoals, colorStart, position
     enforceLoadBudget(nodes, userData);       // §5.7.10
     clampThresholds(lines, nodes);            // §5.7.6
     return { goals, lines, nodes, mergeSuggestion: merge.length ? merge[0] : null };
-}
-
-// ── Readings — SCOPED modes (add_line/regenerate/revise) ────────────────────
-// Mutates the existing scoped goals in place; matches a reading to a goal by
-// key / goalId / fromGoalId. Returns { keyToGoal, merge }.
-function applyReadings(parsed, goals) {
-    const merge = [];
-    const sharpenedTexts = {};
-    const keyToGoal = {};
-    goals.forEach(g => { keyToGoal[g.id] = g; });
-    (parsed.readings || []).forEach(r => {
-        const goal = goals.find(g => g.id === r.key || g.id === r.goalId || g.id === r.fromGoalId) || goals[0];
-        if (!goal) return;
-        goal.sharpened = String(r.sharpened || goal.rawText).slice(0, 200);
-        goal.shortName = String(r.shortName || goal.rawText).slice(0, 14);
-        goal.kind = r.kind === 'rhythm' ? 'rhythm' : 'destination';
-        goal.kindReason = goal.kind === 'rhythm' ? (r.kindReason ? String(r.kindReason).slice(0, 200) : 'There is no finish line here — this is a way of living.') : null;
-        if (r.key != null) keyToGoal[r.key] = goal;
-        const k = goal.sharpened.trim().toLowerCase();
-        if (sharpenedTexts[k]) merge.push([sharpenedTexts[k], goal.id]);
-        else sharpenedTexts[k] = goal.id;
-    });
-    goals.forEach(g => {
-        if (!g.sharpened) { g.sharpened = g.rawText; g.kind = g.kind || 'destination'; g.shortName = g.shortName || String(g.rawText).slice(0, 14); }
-    });
-    return { keyToGoal, merge: merge.length ? merge[0] : null };
-}
-
-// ── Readings — GENERATE mode (splits one entry into distinct goals §3.4) ─────
-// Builds a fresh goals array from the model's readings, preserving lineage to
-// the user's typed entries via fromGoalId where the model provides it.
-function buildGoalsFromReadings(parsed, existingGoals) {
-    const keyToGoal = {};
-    const goals = [];
-    const usedExisting = {};
-    const merge = [];
-    const sharpenedTexts = {};
-    (parsed.readings || []).slice(0, MAX_GOALS).forEach(r => {
-        const key = (r.key != null) ? r.key : (r.goalId || r.fromGoalId);
-        if (key == null) return;
-        // Reuse an existing goal (preserve id + createdAt) when this reading maps
-        // 1:1 to a typed entry; otherwise mint a new goal for the split.
-        const lineageId = r.fromGoalId || (typeof r.key === 'string' ? r.key : null) || r.goalId;
-        let goal = null;
-        const existing = existingGoals.find(g => g.id === lineageId);
-        if (existing && !usedExisting[existing.id]) { goal = existing; usedExisting[existing.id] = true; }
-        if (!goal) goal = { id: newId('goal'), rawText: '', createdAt: nowISO(), achievedAt: null, retiredAt: null, sharpenedEditedByUser: false };
-        goal.sharpened = String(r.sharpened || goal.rawText || 'Goal').slice(0, 200);
-        goal.shortName = String(r.shortName || goal.rawText || 'Goal').slice(0, 14);
-        goal.kind = r.kind === 'rhythm' ? 'rhythm' : 'destination';
-        goal.kindReason = goal.kind === 'rhythm' ? (r.kindReason ? String(r.kindReason).slice(0, 200) : 'There is no finish line here — this is a way of living.') : null;
-        if (!goal.rawText) goal.rawText = goal.sharpened;  // split goals have no typed rawText of their own
-        keyToGoal[key] = goal;
-        goals.push(goal);
-        const k = goal.sharpened.trim().toLowerCase();
-        if (sharpenedTexts[k]) merge.push([sharpenedTexts[k], goal.id]);
-        else sharpenedTexts[k] = goal.id;
-    });
-    return { goals, keyToGoal, merge: merge.length ? merge[0] : null };
 }
 
 // ── Push (best-effort, spec §4.4, §7.3) ─────────────────────────────────────
@@ -1408,14 +1333,51 @@ async function processExpand(docRef, userData, req) {
         added.push.apply(added, fanned);
     }
 
+    // Quest growth at regeneration: accepted quests are reconsidered so they
+    // scale toward the goal as the user's tree matures — a recurring routine
+    // gains a pillar, a one-off project gains its next phase.
+    const grownProjects = new Set(patches.map(p => p.projectId));
+    const masteredTitles = ids.map(id => { const n = nodes.find(x => x.id === id); return n ? n.title : null; }).filter(Boolean);
+    const activeQuests = nodes.filter(n => n.lifecycle === 'active' && n.payload
+        && n.payload.type === 'quest' && n.payload.projectId && !grownProjects.has(n.payload.projectId));
+    for (const qn of activeQuests.slice(0, 2)) {
+        const proj = (userData.projects || []).find(p => p.id === qn.payload.projectId);
+        if (!proj || proj.status === 'completed') continue;
+        const recurring = qn.payload.spec && qn.payload.spec.cadence && qn.payload.spec.cadence.type === 'recurring';
+        if (recurring && cleanCycleCount(proj) < 1) continue;   // the seed hasn't been proven yet
+        const line = lines.find(l => l.id === qn.lineId);
+        const patch = await tryQuestPatch(userData, proj, qn, {
+            goal: line ? line.terminus.title : null,
+            masteredTitles,
+        });
+        if (patch) { patches.push(patch); grownProjects.add(proj.id); }
+    }
+
     const update = {
         'techTree.pendingRequest': admin.firestore.FieldValue.delete(),
         'techTree.lastError': admin.firestore.FieldValue.delete(),
         'techTree.lastExpandAt': nowISO(),
         'techTree.status': 'ready',
     };
-    if (added.length) {
-        const allNodes = nodes.concat(added);
+
+    // Queued revisions land here — regeneration is the moment single-node
+    // revisions are addressed, alongside the new fan and quest growth.
+    let allNodes = nodes.concat(added);
+    let revisedCount = 0;
+    if ((techTree.queuedRevisions || []).length) {
+        try {
+            const rev = await processQueuedRevisions(userData, techTree, allNodes);
+            allNodes = rev.nodes;
+            revisedCount = rev.count;
+            update['techTree.queuedRevisions'] = [];
+            if (revisedCount) update['techTree.revisionsUsed'] = (techTree.revisionsUsed || 0) + revisedCount;
+        } catch (e) {
+            // Keep the queue — it retries at the next regeneration.
+            console.warn('  queued revisions failed (kept for next run):', e.message);
+        }
+    }
+
+    if (added.length || revisedCount) {
         update['techTree.nodes'] = allNodes;
         update['techTree.connections'] = buildConnections(allNodes);
     }
@@ -1423,21 +1385,79 @@ async function processExpand(docRef, userData, req) {
         update['techTree.questPatches'] = (techTree.questPatches || []).concat(patches);
     }
     await docRef.update(update);
-    console.log(`  Done — expand: ${added.length} new node(s), ${patches.length} patch proposal(s)`);
-    if (added.length) await sendMapPush(userData, 'Resolving a node opened new paths on your map.');
+    console.log(`  Done — expand: ${added.length} new node(s), ${revisedCount} revised, ${patches.length} patch proposal(s)`);
+    if (revisedCount && added.length) await sendMapPush(userData, 'Your plan grew and your revision landed — come take a look.');
+    else if (revisedCount) await sendMapPush(userData, 'Your revision landed — the new take is ready to review.');
+    else if (added.length) await sendMapPush(userData, 'Mastering that opened new paths on your plan.');
     else if (patches.length) await sendMapPush(userData, 'A quest is ready to grow.');
 }
 
+// Swap each queued-revision node for a fresh take that addresses its note.
+// Resolved / already-accepted nodes are never swapped. Throws on model failure
+// so the caller can keep the queue for the next regeneration.
+async function processQueuedRevisions(userData, techTree, curNodes) {
+    const queued = (techTree.queuedRevisions || []).slice(0, REVISION_LIMIT);
+    const flagged = [];
+    queued.forEach(q => {
+        const n = curNodes.find(x => x.id === q.nodeId && !x.resolvedAt && x.lifecycle !== 'active' && x.lifecycle !== 'archived');
+        if (n) flagged.push({ node: n, note: String(q.note || '').slice(0, 240) });
+    });
+    if (!flagged.length) return { nodes: curNodes, count: 0 };
+
+    const goals = (techTree.goals || []).filter(g => !g.retiredAt);
+    const lineIds = new Set(flagged.map(f => f.node.lineId).filter(Boolean));
+    const revGoalIds = (techTree.lines || []).filter(l => lineIds.has(l.id)).map(l => l.goalId);
+    const goalIds = revGoalIds.length ? revGoalIds : goals.map(g => g.id);
+    const opts = {
+        mode: 'revise', goalIds,
+        nodesToRevise: flagged.map(f => ({ title: f.node.title, description: f.node.description, note: f.note })),
+        note: flagged.map(f => '"' + f.node.title + '": ' + f.note).join(' | '),
+    };
+    const prompt = buildGeneratePrompt(userData, opts);
+    const budget = (PROVIDER.maxTokens && PROVIDER.maxTokens.revise) || MAX_TOKENS.revise;
+    const parsed = parseModelJson(await callModel(prompt, budget));
+    const scopedGoals = goals.filter(g => goalIds.indexOf(g.id) !== -1);
+    const built = materializeNested(parsed, userData, scopedGoals, 0, true);
+    const newNodes = built.nodes;
+    if (!newNodes.length) return { nodes: curNodes, count: 0 };
+
+    // Replace positionally: revision keeps existing lines; each replacement
+    // re-homes to the flagged node's spot. Extras (if any) become fresh picks.
+    const ids = new Set(flagged.map(f => f.node.id));
+    const kept = curNodes.filter(n => !ids.has(n.id));
+    newNodes.forEach((nn, i) => {
+        const old = flagged[i] && flagged[i].node;
+        if (old) {
+            nn.lineId = old.lineId;
+            nn.segmentIndex = old.segmentIndex;
+            if (!nn.prerequisites.length && (old.prerequisites || []).length) nn.prerequisites = old.prerequisites;
+        } else {
+            nn.lineId = null;
+            nn.segmentIndex = null;
+        }
+    });
+    return { nodes: kept.concat(newNodes), count: Math.min(newNodes.length, flagged.length) };
+}
+
 // §7.7 quest patch — a proposal, never a silent write. Ops: add_group only here.
-async function tryQuestPatch(userData, proj, node) {
+async function tryQuestPatch(userData, proj, node, growCtx) {
     const { dimensionList } = activePathsAndDims(userData);
-    const system = `A recurring quest has sealed >=4 clean cycles. Propose ONE new GROUP to add
-that raises the challenge (progressive overload), or return {"skip":true} if
-nothing fits. Never remove anything. Output ONLY:
+    const system = `A quest inside a user's growth plan is being reconsidered at regeneration.
+Propose ONE new GROUP that scales the quest toward the user's goal:
+- recurring quest: raise the challenge (progressive overload) or add a missing
+  pillar — e.g. a 3x/week supplements-and-nutrition checklist beside the daily
+  mobility sequence.
+- one-off quest: add the NEXT PHASE of the project. Later phases may lean on
+  one-time tasks ("query 10 agents"), not just repeatables — by the end the
+  quest should cover everything the goal needs.
+Start small and keep it accept-in-one-tap sized; never remove anything. Return
+{"skip":true} if the quest already fits the user's current level. Output ONLY:
 { "op":"add_group", "group": <group shape>, "rationale": str }  OR  {"skip":true}
 ${PAYLOAD_RULES}`;
     const input = {
-        quest: { name: proj.name, cleanCycles: cleanCycleCount(proj), groupNames: (proj.groups || []).map(g => g.name) },
+        quest: { name: proj.name, cadence: (proj.cadence && proj.cadence.type) || 'oneoff', cleanCycles: cleanCycleCount(proj), groupNames: (proj.groups || []).map(g => g.name) },
+        goal: (growCtx && growCtx.goal) || null,
+        recentlyMastered: (growCtx && growCtx.masteredTitles) || [],
         dimensions: dimensionList,
     };
     let parsed;
