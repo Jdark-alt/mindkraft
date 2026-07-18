@@ -1456,7 +1456,7 @@ async function processExpand(docRef, userData, req) {
         'techTree.schemaVersion': 3,
     };
     if (added.length) {
-        update['techTree.nodes'] = nodes.concat(added).slice(0, MAX_NODES + 10);
+        update['techTree.nodes'] = nodes.concat(added);
     }
     if (patches.length) {
         update['techTree.questPatches'] = (techTree.questPatches || []).concat(patches);

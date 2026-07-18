@@ -15502,7 +15502,7 @@
             // Band chrome: separators + labels (emoji-less small caps).
             L.bands.forEach(function(b, i) {
                 if (i > 0) svg += '<line x1="0" y1="' + b.y0 + '" x2="' + L.width + '" y2="' + b.y0 + '" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>';
-                svg += '<text x="12" y="' + (b.y0 + 17) + '" class="tt-band-l" fill="' + ttDimHexRaw(b.dim.id) + '">◈ ' + escapeHtml(b.dim.name.toUpperCase()) + '</text>';
+                svg += '<text x="12" y="' + (b.y0 + 17) + '" class="tt-band-l" fill="' + ttDimHexRaw(b.dim.id) + '">◈ ' + escapeHtml(String(b.dim.name || 'Other').toUpperCase()) + '</text>';
             });
             // Edges beneath glyphs. Cross-band edges glow — the hero visual.
             L.edges.forEach(function(e) {
