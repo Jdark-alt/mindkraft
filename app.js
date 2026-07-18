@@ -14540,11 +14540,14 @@
         // ════════════════════════════════════════════════════════════════════
 
         // Smart mastery defaults by frequency — starting point, editable.
+        // Horizons stay human: ~2-3 months to clear a node. Dailies get a
+        // roomier window (reps come fast anyway); weekly/monthly must never
+        // stretch half a year.
         var TT_MASTERY_DEFAULTS = {
-            daily:      { count: 15, windowDays: 30 },
+            daily:      { count: 15, windowDays: 45 },
             weekly:     { count: 6,  windowDays: 90 },
-            biweekly:   { count: 4,  windowDays: 120 },
-            monthly:    { count: 3,  windowDays: 180 },
+            biweekly:   { count: 3,  windowDays: 90 },
+            monthly:    { count: 2,  windowDays: 90 },
             occasional: { count: 3,  windowDays: null },
             'one-time': { count: 3,  windowDays: null },
             custom:     { count: 6,  windowDays: 90 },
@@ -15007,7 +15010,34 @@
             if (justResolved.length && tt.status !== 'generating' && !tt.pendingRequest) {
                 ttSubmitRequest({ type: 'expand', payload: { resolvedNodeIds: justResolved.map(function(n) { return n.id; }) } }, true);
             }
+            ttMaybeAutoGrow(tt);
             return changed;
+        }
+
+        // ── Scheduled regrowth ───────────────────────────────────────────
+        // The web grows the more the user uses the app: every few days, if
+        // anything moved since the last growth pass (a node resolved, an
+        // activity mastered, or a new activity created), queue an auto-expand.
+        // The worker fans new nodes, proposes fresh fusions, replenishes
+        // spent wildcards, and audits quests for absorption.
+        var TT_AUTO_GROW_DAYS = 5;
+        function ttMaybeAutoGrow(tt) {
+            if (!tt || tt.pendingRequest || tt.status !== 'ready') return;
+            if (!tt.nodes || !tt.nodes.length) return;
+            var lastGrow = tt.lastExpandAt || tt.lastGeneratedAt;
+            if (!lastGrow) return;
+            var since = new Date(lastGrow).getTime();
+            if ((Date.now() - since) / 86400000 < TT_AUTO_GROW_DAYS) return;
+            var recentResolved = tt.nodes.filter(function(n) {
+                return n.resolvedAt && n.lifecycle !== 'archived' && new Date(n.resolvedAt).getTime() > since;
+            });
+            var activityMoved = ttAllActivities().some(function(e) {
+                var a = e.activity;
+                return (a.techTreeMasteredAt && new Date(a.techTreeMasteredAt).getTime() > since)
+                    || (a.createdAt && new Date(a.createdAt).getTime() > since);
+            });
+            if (!recentResolved.length && !activityMoved) return;
+            ttSubmitRequest({ type: 'expand', payload: { resolvedNodeIds: recentResolved.slice(-3).map(function(n) { return n.id; }), auto: true } }, true);
         }
 
         function ttNodeUnlocked(node, tt) {
@@ -15195,8 +15225,25 @@
         };
 
         // ── Result listener + reveal ─────────────────────────────────────
+        // Belt and suspenders: an onSnapshot listener for the fast path, plus
+        // a 25s getDoc poll (and a visibility-change kick) so a finished
+        // generation is ALWAYS picked up even if the realtime channel drops —
+        // no more being stuck on "Weaving your web" after the worker is done.
         var _ttUnsubscribe = null;
+        var _ttPollTimer = null;
+        function ttApplyRemoteResult(rt, localPendingType) {
+            var wasGenerate = localPendingType === 'generate' || localPendingType === 'add_goal' || localPendingType === 'add_line';
+            window.userData.techTree = rt;
+            ttDetachListener();
+            ttStopResultPoll();
+            if (rt.lastError) { showToast('⚠️ ' + rt.lastError, 'red'); }
+            else if (wasGenerate) { window._ttPendingReveal = true; showToast('🕸️ Your web is ready', 'green'); }
+            else { showToast('🕸️ Your web grew — new nodes are in', 'blue'); }
+            evaluateTechTreeMastery();
+            ttRenderIfVisible();
+        }
         function ttEnsureListener() {
+            ttStartResultPoll();
             if (_ttUnsubscribe || !window.currentUser) return;
             var tt = ensureTechTree();
             if (!tt || !tt.pendingRequest) return;
@@ -15207,17 +15254,30 @@
                 var rt = remote && remote.techTree;
                 if (!rt) return;
                 var localPending = window.userData && window.userData.techTree && window.userData.techTree.pendingRequest;
-                if (localPending && !rt.pendingRequest) {
-                    var wasGenerate = localPending.type === 'generate' || localPending.type === 'add_goal' || localPending.type === 'add_line';
-                    window.userData.techTree = rt;
-                    ttDetachListener();
-                    if (rt.lastError) { showToast('⚠️ ' + rt.lastError, 'red'); }
-                    else { window._ttPendingReveal = wasGenerate; showToast('🕸️ Your web is ready', 'green'); }
-                    evaluateTechTreeMastery();
-                    ttRenderIfVisible();
-                }
+                if (localPending && !rt.pendingRequest) ttApplyRemoteResult(rt, localPending.type);
             }, function(err) { console.warn('techTree listener error', err); });
         }
+        function ttStartResultPoll() {
+            if (_ttPollTimer) return;
+            _ttPollTimer = setInterval(ttPollResultOnce, 25000);
+        }
+        function ttStopResultPoll() { if (_ttPollTimer) { clearInterval(_ttPollTimer); _ttPollTimer = null; } }
+        async function ttPollResultOnce() {
+            try {
+                if (!window.currentUser || !window.userData) return;
+                var localPending = window.userData.techTree && window.userData.techTree.pendingRequest;
+                if (!localPending) { ttStopResultPoll(); return; }
+                var snap = await getDoc(doc(db, 'users', window.currentUser.uid));
+                if (!snap.exists()) return;
+                var rt = snap.data().techTree;
+                if (rt && !rt.pendingRequest) ttApplyRemoteResult(rt, localPending.type);
+            } catch (e) { /* transient — next tick retries */ }
+        }
+        document.addEventListener('visibilitychange', function() {
+            if (document.visibilityState !== 'visible') return;
+            var tt = window.userData && window.userData.techTree;
+            if (tt && tt.pendingRequest) { ttEnsureListener(); ttPollResultOnce(); }
+        });
         function ttDetachListener() { if (_ttUnsubscribe) { try { _ttUnsubscribe(); } catch (e) {} _ttUnsubscribe = null; } }
         window.ttCancelPending = function() {
             var tt = ensureTechTree();
@@ -15226,6 +15286,7 @@
             if (tt.status === 'generating') tt.status = (tt.nodes && tt.nodes.length) ? 'ready' : 'empty';
             saveUserData().catch(function() {});
             ttDetachListener();
+            ttStopResultPoll();
             renderTechTree();
         };
         function ttRenderIfVisible() {
@@ -15381,10 +15442,14 @@
         }
         function ttGlyphRadius(node) {
             var t = (node.payload && node.payload.type) || 'activity';
-            if (ttNodeState(node) === 'locked') return t === 'quest' ? 18 : 11;
+            var st = ttNodeState(node);
+            if (st === 'locked') return t === 'quest' ? 18 : 11;
             if (t === 'quest') return 26;
-            if (node.role === 'fusion') return 19;
-            if (node.role === 'wildcard') return 12;
+            // Accepted fusions/wildcards graduate to the plain activity glyph
+            // — the special mark is an invitation, not a permanent costume.
+            var accepted = st === 'active' || st === 'resolved';
+            if (node.role === 'fusion' && !accepted) return 19;
+            if (node.role === 'wildcard' && !accepted) return 12;
             return 13;
         }
         function ttGlyph(node, x, y, color, defs) {
@@ -15392,7 +15457,10 @@
             var st = ttNodeState(node);
             var g = '';
             var pulse = st === 'available' ? ' class="tt-pulse"' : '';
-            if (node.role === 'wildcard') {
+            var accepted = st === 'active' || st === 'resolved';
+            // Wildcards spark only while on offer; once accepted they live on
+            // the web as ordinary tier-one activities.
+            if (node.role === 'wildcard' && !accepted) {
                 return '<text x="' + x + '" y="' + (y + 7) + '" text-anchor="middle" font-size="22" fill="' + TT_WILD + '"' + (st === 'available' ? ' class="tt-pulse"' : '') + '>✦</text>';
             }
             if (st === 'locked') {
@@ -15401,7 +15469,9 @@
                 g += '<text x="' + x + '" y="' + (y + 4) + '" text-anchor="middle" font-size="9" opacity="0.75">🔒</text>';
                 return g;
             }
-            if (node.role === 'fusion') {
+            // Same graduation for fusions: the ✚ diamond marks the offer; an
+            // accepted fusion renders as a normal circle (or quest square).
+            if (node.role === 'fusion' && !accepted) {
                 var gid = 'ttfg_' + node.id;
                 var colors = ttNodeGoals(node).map(function(gl) { return gl.color; }).filter(Boolean);
                 var cA = colors[0] || color, cB = colors[1] || ttDimHexRaw(node.dimensionId);
@@ -15449,8 +15519,10 @@
             var st = ttNodeState(node);
             if (st === 'resolved') return 'mastered';
             if (st === 'locked') return ttLockHint(node, tt);
-            if (node.role === 'wildcard') return 'wildcard · open';
-            if (st === 'available') return node.role === 'fusion' ? 'fusion · tap' : 'open — tap';
+            if (st === 'available') {
+                if (node.role === 'wildcard') return 'wildcard · open';
+                return node.role === 'fusion' ? 'fusion · tap' : 'open — tap';
+            }
             // active
             var pl = node.payload || {};
             if (pl.type === 'activity' && pl.activityId) {
@@ -15586,6 +15658,20 @@
             // Ready — the web. One SVG canvas inside the scroll container.
             var reveal = !!window._ttPendingReveal;
             window._ttPendingReveal = null;
+            // Growth that landed while the app was closed still gets noticed:
+            // compare the last growth stamp against what this device has seen.
+            if (!reveal && window.currentUser) {
+                var grewAt = [tt.lastGeneratedAt, tt.lastExpandAt].filter(Boolean).sort().pop() || null;
+                if (grewAt) {
+                    var seenKey = 'ttSeenGrow_' + window.currentUser.uid;
+                    var seen = null;
+                    try { seen = localStorage.getItem(seenKey); } catch (e) {}
+                    if (seen !== grewAt) {
+                        try { localStorage.setItem(seenKey, grewAt); } catch (e) {}
+                        if (seen) showToast('🕸️ Your web grew while you were away — look for new nodes', 'blue');
+                    }
+                }
+            }
             var activeGoals = ttActiveGoals();
             var html = '<div class="tt-web' + (reveal ? ' tt-reveal' : '') + '">'
                 + '<div class="tt-web-head">'
@@ -15858,7 +15944,7 @@
             var tt = ensureTechTree(); var node = tt.nodes.find(function(n) { return n.id === nodeId; }); if (!node) return;
             ttCloseSheet();
             if (node.payload.type === 'quest' && node.payload.projectId && typeof openProjectDetail === 'function') { switchTab('challenges'); setTimeout(function() { try { switchSubTab('challenges', 'quests'); } catch (e) {} openProjectDetail(node.payload.projectId); }, 200); }
-            else { switchTab('activities'); setTimeout(function() { try { switchSubTab('activities', 'list'); } catch (e) {} }, 150); }
+            else { switchTab('activities'); setTimeout(function() { try { switchSubTab('activities', 'myActivities'); } catch (e) {} }, 150); }
         };
 
         // ── Sheet 2 — shape it (§7.1): the REAL activity form ────────────
@@ -16028,6 +16114,17 @@
             var act = e.activity;
             node.payload.activityId = activityId;
             node.dimensionId = e.dim.id;
+            // The node now IS this activity — adopt its name and identity so
+            // the web visibly shows the swap (suggestion → your real thing).
+            node.title = act.name;
+            if (act.description) node.description = act.description.slice(0, 240);
+            node.role = 'anchor';
+            if (node.payload.spec) {
+                node.payload.spec.name = act.name;
+                node.payload.spec.frequency = act.frequency || node.payload.spec.frequency;
+                node.payload.spec.baseXP = act.baseXP || node.payload.spec.baseXP;
+                node.payload.spec.dimensionId = e.dim.id;
+            }
             // Apply the node's mastery target ONLY if the activity has none —
             // never overwrite a user's own threshold (§7.3).
             if (!act.techTreeMastery) {
@@ -17912,3 +18009,88 @@
                 saveUserData(); closeProjectModal(); showToast('✓ Quest created', 'green'); openProjectDetail(proj.id);
             }
         };
+
+        // ════════════════════════════════════════════════════════════════════
+        // ── APP-WIDE BACK-BUTTON GUARD ───────────────────────────────────────
+        // On Android (PWA), the hardware back button must never accidentally
+        // exit the app. One guard entry sits in the history stack; pressing
+        // back (1) closes whatever overlay/sheet/modal is on screen, else
+        // (2) returns to the home tab, else (3) warns once — and only the
+        // NEXT press actually leaves. Any tap re-arms the guard.
+        // The profile overlay and quest detail view push their own history
+        // entries with their own popstate handlers; those pops land back ON
+        // the guard state (e.state.mkGuard), which tells us to stand down.
+        // ════════════════════════════════════════════════════════════════════
+        (function() {
+            var HOME_TAB = 'activities';
+            var armed = false;
+
+            function arm() {
+                if (armed) return;
+                try { history.pushState({ mkGuard: 1 }, ''); armed = true; } catch (e) {}
+            }
+
+            // Close the top-most thing on screen. Order matters: sheets and
+            // pickers sit above modals, modals above tabs.
+            function closeTopOverlay() {
+                var sheet = document.getElementById('ttSheet');
+                if (sheet && sheet.style.display === 'flex') { try { ttCloseSheet(); } catch (e) {} return true; }
+                var ov = document.getElementById('ttOverlay');
+                if (ov && ov.style.display === 'flex') { try { ttCloseOverlay(); } catch (e) {} return true; }
+                var menu = document.getElementById('gcActionMenu');
+                if (menu && menu.style.display && menu.style.display !== 'none') {
+                    if (typeof closeGridActionMenu === 'function') { try { closeGridActionMenu(); } catch (e) {} return true; }
+                }
+                // Known modals with dedicated close functions (they reset state).
+                var closers = [
+                    ['projectActivityPicker', 'closeProjectActivityPicker'],
+                    ['activityModal', 'closeActivityModal'],
+                    ['projectModal', 'closeProjectModal'],
+                ];
+                for (var i = 0; i < closers.length; i++) {
+                    var el = document.getElementById(closers[i][0]);
+                    if (el && el.classList.contains('active')) {
+                        var fn = window[closers[i][1]];
+                        if (typeof fn === 'function') { try { fn(); } catch (e) { el.classList.remove('active'); } }
+                        else el.classList.remove('active');
+                        return true;
+                    }
+                }
+                // Anything else styled as an open modal (challenge, dimension,
+                // path, group, info, reward…): try its conventional closer,
+                // fall back to just dismissing it.
+                var open = document.querySelector('.modal.active, [id$="Modal"].active');
+                if (open && open.id) {
+                    var conv = window['close' + open.id.charAt(0).toUpperCase() + open.id.slice(1)];
+                    if (typeof conv === 'function') { try { conv(); } catch (e) { open.classList.remove('active'); } }
+                    else open.classList.remove('active');
+                    return true;
+                }
+                return false;
+            }
+
+            // Any interaction re-arms the guard, so there is always exactly
+            // one buffer entry between the user and leaving the app.
+            document.addEventListener('click', function() { arm(); }, true);
+            arm();
+
+            window.addEventListener('popstate', function(e) {
+                if (e.state && e.state.mkGuard) {
+                    // An entry ABOVE the guard was popped (profile overlay /
+                    // quest detail). Its own handler closed the view — the
+                    // guard is still in place.
+                    armed = true;
+                    return;
+                }
+                // The guard itself was consumed.
+                armed = false;
+                if (closeTopOverlay()) { arm(); return; }
+                if (window.currentTab && window.currentTab !== HOME_TAB) {
+                    try { switchTab(HOME_TAB); } catch (err) {}
+                    arm();
+                    return;
+                }
+                try { showToast('Press back again to exit', 'olive'); } catch (err) {}
+                // Deliberately not re-armed: the next back press exits.
+            });
+        })();

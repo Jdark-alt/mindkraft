@@ -61,8 +61,10 @@ const PROVIDERS = [
         kind: 'anthropic', // native Messages API, not OpenAI-compatible
         key: (process.env.ANTHROPIC_API_KEY || '').trim(),
         base: 'https://api.anthropic.com',
-        model: process.env.TECH_TREE_MODEL || 'claude-haiku-4-5',
-        fallbackModels: [],
+        // Sonnet by default: quest construction (nested groups, linked
+        // leaves) needs the stronger model; Haiku kept as the fallback.
+        model: process.env.TECH_TREE_MODEL || 'claude-sonnet-5',
+        fallbackModels: ['claude-haiku-4-5'],
         maxTokens: { generate: 9000, add_goal: 6000, expand: 3500, regenerate: 6000, revise: 2500, quest_patch: 2500 },
         keyHint: 'ANTHROPIC_API_KEY',
     },
@@ -121,7 +123,7 @@ const WILDCARD_MAX_XP = 8;               // §8: wildcards ≤8 XP
 const ACTIVITY_SNAPSHOT_CAP = 80;        // §6: raised from 60
 const VALID_FREQUENCIES = ['daily', 'weekly', 'biweekly', 'monthly', 'occasional'];
 
-const MAX_TOKENS = { generate: 6000, add_goal: 4500, expand: 3000, regenerate: 4500, revise: 2000, quest_patch: 2000 };
+const MAX_TOKENS = { generate: 8000, add_goal: 5500, expand: 3500, regenerate: 5500, revise: 2000, quest_patch: 2000 };
 function tokenBudget(type) {
     const t = type === 'add_line' ? 'add_goal' : type;
     return (PROVIDER.maxTokens && (PROVIDER.maxTokens[t] || PROVIDER.maxTokens.add_line)) || MAX_TOKENS[t] || 4000;
@@ -176,8 +178,12 @@ function cleanCycleCount(p) {
 // ROLLING WINDOW mastery check (§3): count completions within the trailing
 // windowDays from today. 87 completions ending six months ago must NOT
 // resolve a 30-day-window mastery. windowDays null = lifetime count.
-const MASTERY_TARGET_BY_FREQ = { daily: 15, weekly: 6, biweekly: 4, monthly: 3, occasional: 3 };
-const MASTERY_WINDOW_BY_FREQ = { daily: 30, weekly: 90, biweekly: 120, monthly: 180, occasional: null };
+// Horizons stay human: a node should clear in ~2-3 months. Dailies get a
+// roomier window (reps come fast); weekly/monthly must never stretch half a
+// year just to unlock the next tier.
+const MASTERY_TARGET_BY_FREQ = { daily: 15, weekly: 6, biweekly: 3, monthly: 2, occasional: 3 };
+const MASTERY_WINDOW_BY_FREQ = { daily: 45, weekly: 90, biweekly: 90, monthly: 90, occasional: null };
+const MASTERY_WINDOW_MAX = 120;
 function masteryTargetFor(freq) { return MASTERY_TARGET_BY_FREQ[freq] || 6; }
 function masteryWindowFor(freq) { return MASTERY_WINDOW_BY_FREQ[freq] !== undefined ? MASTERY_WINDOW_BY_FREQ[freq] : 90; }
 function masteryThresholdFor(act) {
@@ -273,7 +279,9 @@ function canProcessRequest(req, techTree, userData) {
     if (type === 'expand') {
         const ids = (req.payload && req.payload.resolvedNodeIds) || (req.payload && req.payload.nodeIds) || [];
         const some = (techTree.nodes || []).some(n => ids.indexOf(n.id) !== -1 && n.resolvedAt);
-        if (!some) return 'Nothing to expand from.';
+        // Auto-growth passes may arrive without ids — the worker picks its
+        // own sources (recent resolutions, absorption, wildcard refills).
+        if (!some && !(req.payload && req.payload.auto)) return 'Nothing to expand from.';
         return null;
     }
     if (type === 'regenerate') {
@@ -321,6 +329,18 @@ function rejectionStrings(techTree) {
         r.nodeTitle + ' (' + (r.reason || 'rejected') + (r.role ? ' · ' + r.role : '') + ')');
 }
 
+// The user's own XP scale — suggestions should feel native to it, not like
+// they came from a different economy.
+function typicalXP(userData) {
+    const xs = collectActivities(userData)
+        .filter(({ act }) => !act.archived && !act.deleted)
+        .map(({ act }) => act.baseXP || 0).filter(x => x > 0).sort((a, b) => a - b);
+    if (!xs.length) return { average: 10, p25: 8, p75: 15 };
+    const avg = Math.round(xs.reduce((s, x) => s + x, 0) / xs.length);
+    const q = p => xs[Math.min(xs.length - 1, Math.floor(p * xs.length))];
+    return { average: avg, p25: q(0.25), p75: q(0.75) };
+}
+
 const PAYLOAD_RULES = `
 PAYLOAD — every node IS one of three things. Choose by what the thing IS, never
 by whether it already exists:
@@ -366,6 +386,7 @@ function buildGeneratePrompt(userData, opts) {
         .map(g => ({ goalId: g.id, rawText: g.rawText, sharpened: g.sharpened || null, kind: g.kind || null }));
 
     const load = weeklyLoad(userData);
+    const xp = typicalXP(userData);
     const userNodes = (techTree.nodes || []).filter(n => n.source === 'user').map(n => n.title);
     const resolvedTitles = (techTree.nodes || []).filter(n => n.resolvedAt).map(n => n.title);
 
@@ -403,13 +424,23 @@ not every user activity becomes one, only the ones woven in.
 
 STEP 3 — GROW THE WEB. Per goal, 4-7 new nodes total in its "nodes" array,
 across these roles:
+  • "quest" (1-2 — NON-NEGOTIABLE: a goal with ZERO quest nodes is an
+    INVALID response). A quest is a routine or project the user drives,
+    payload type "quest". Build it the way a coach would: break the outcome
+    into small steps, then sort each step honestly — a step the user ALREADY
+    does becomes a linked leaf (linkedActivityId on an anchor); a step that
+    deserves its own streak for THIS user becomes a NEW activity leaf
+    (respect the cap); one-off scaffolding stays a task. Example: a user who
+    already scripts, records and edits videos should get a recurring "Ship
+    one video" quest whose cycle links those three activities plus a
+    "publish it" task — or a repeat:12 group for a 12-piece season. Use the
+    shapes that exist: ordered groups (pipelines), repeat counts,
+    requiredCounts. This is the highest-effort part of the response — spend
+    your tokens here.
   • "upgrade" (1-3): take an anchor one notch higher — same time-slot, deeper
     practice — or a worthy alternative to run alongside it. prerequisites:
     [{"type":"activity_mastered","activityId":"<that anchor's id>"}]. Never a
     rebrand; new CONTENT ("a more consistent version of X" is forbidden).
-  • "quest" (1-2, MANDATORY per goal): a routine or project the user drives.
-    payload type "quest". Build leaves preferentially from linkedActivityId
-    references to anchors (see PAYLOAD).
   • "deeper" (1-2): locked behind an upgrade or quest — visible desire.
     prerequisites: [{"type":"node_mastered","nodeTitle":"<exact title of
     another node in YOUR output for this goal>"}].
@@ -420,11 +451,18 @@ Never pad a goal to hit a number; if an activity is too ambiguous, omit it.
 
 STEP 4 — FUSIONS (2-4 per generation, the whole point). Top-level "fusions"
 array. Find PAIRS of anchors in DIFFERENT dimensions whose combination
-unlocks something neither could alone ("Strength training" + "Call a friend"
--> "Join a run club"). Each: { "title", "description", "whyNow",
-"dimensionId", "sourceActivityIds": [id, id], "payload" }. A fusion must be a
-real-world act, not a mashup name. If no honest fusion exists, emit fewer —
-NEVER force one.
+unlocks something neither could alone. THE BAR: a fusion must be a NATURAL,
+recognisable combination — something an average person hears and nods at
+("of course those go together"): a walking phone call, cooking for friends,
+a book club, training with a partner. If explaining the connection takes
+more than one plain sentence, it is a stretch — drop it. Where the
+combination genuinely lives in a third dimension too, say so via goal/
+dimension placement (a social workout IS health + social). Respect the
+user's own style as their activities show it — a yoga person gets
+yoga-shaped fusions, not a run club; never default to gym/running framing.
+Each: { "title", "description", "whyNow", "dimensionId",
+"sourceActivityIds": [id, id], "payload" }. If no honest, natural fusion
+exists, emit fewer — NEVER force one.
 
 STEP 5 — WILDCARDS (exactly 1-2). Top-level "wildcards" array. No goal, no
 prerequisites, always available, tiny load (<=2 actions/week, baseXP <=${WILDCARD_MAX_XP}),
@@ -436,6 +474,18 @@ LOAD RULE: the load budget applies ONLY to nodes born available (anchors cost
 0 — they're already being done; locked tiers are exempt: visibility is free,
 commitment is gated). The user is at ${load} actions/week; available-at-birth
 additions must not exceed +${LOAD_BUDGET_HEADROOM}/week.
+
+XP RULE: match this user's own scale. Their activities average ${xp.average}
+XP (typical range ${xp.p25}-${xp.p75}). Centre suggested baseXP near that
+average — an 8-XP suggestion feels insulting to a user whose average is 20,
+and a 40-XP one feels inflated to a user whose average is 6. Wildcards stay
+small regardless (<=${WILDCARD_MAX_XP} XP).
+
+MASTERY RULE: mastery must be reachable inside 60-90 days at the stated
+frequency — NEVER longer. Daily practices may use up to ~45-day windows with
+higher counts (reps come fast); weekly ≈ 6 in 90 days; biweekly ≈ 3 in 90;
+monthly ≈ 2 in 90. Never set a threshold that makes the user wait half a
+year to clear one node and unlock the tier behind it.
 
 Honour "rejections" (things the user turned down, with their roles — learn
 the pattern). Do not re-suggest resolved or user-added titles.
@@ -466,10 +516,14 @@ OUTPUT SCHEMA (a single JSON object, nothing else):
         paths: pathList,
         activeActivities: activitySnapshot(userData),
         loadBudget: { current: load, headroom: LOAD_BUDGET_HEADROOM },
+        typicalXP: xp,
         rejections: rejectionStrings(techTree),
         userAddedNodeTitles: userNodes,
         alreadyResolved: resolvedTitles,
     };
+    if (opts.questReminder) {
+        input._questReminder = 'Your previous response contained NO quest nodes. That is invalid. Every goal MUST include at least one payload-type "quest" node built per STEP 3 — link the user\'s existing activities as leaves wherever they fit.';
+    }
     if (opts.mode === 'add_goal') {
         input._mode = 'ADD ONE GOAL: weave nodes for the single goal above into the existing web; do not touch other goals. Fusions may pair its anchors with anchors of existing goals (listed in _existingAnchors). Emit 0-1 wildcards only if the web has none.';
         input._existingAnchors = opts.existingAnchors || [];
@@ -710,7 +764,7 @@ function validatePayload(raw, ctx) {
             mastery: {
                 target: Math.min(60, Math.max(1, parseInt((raw.mastery || {}).target, 10) || masteryTargetFor(frequency))),
                 windowDays: (raw.mastery && raw.mastery.windowDays != null)
-                    ? Math.max(1, parseInt(raw.mastery.windowDays, 10) || masteryWindowFor(frequency))
+                    ? Math.min(MASTERY_WINDOW_MAX, Math.max(1, parseInt(raw.mastery.windowDays, 10) || masteryWindowFor(frequency)))
                     : masteryWindowFor(frequency),
             },
         };
@@ -1190,17 +1244,27 @@ async function processGenerateFamily(docRef, userData, req, type) {
     }
 
     const scopedGoals = goals.filter(g => !goalIds || goalIds.indexOf(g.id) !== -1);
-    const prompt = buildGeneratePrompt(userData, opts);
-    const raw = await callModel(prompt, tokenBudget(type));
-    const parsed = parseModelJson(raw);
-
+    const mwOpts = {
+        positional: type !== 'generate',
+        keepColorsOf: type === 'generate' ? [] : goals,
+    };
     // Nested materialization: each goal object carries its own anchors +
     // nodes, so nothing can be orphaned by a key mismatch. GENERATE may split
     // one entry into several distinct goals; scoped modes reuse in order.
-    const built = materializeWeb(parsed, userData, scopedGoals, {
-        positional: type !== 'generate',
-        keepColorsOf: type === 'generate' ? [] : goals,
-    });
+    let parsed = parseModelJson(await callModel(buildGeneratePrompt(userData, opts), tokenBudget(type)));
+    let built = materializeWeb(parsed, userData, scopedGoals, mwOpts);
+    // Quests are non-negotiable (STEP 3). Models love to skip the heavy JSON;
+    // one retry with an explicit reminder catches most of it.
+    const wantsQuest = type === 'generate' || type === 'add_goal' || type === 'regenerate';
+    if (wantsQuest && built.nodes.length && !built.nodes.some(n => n.payload.type === 'quest')) {
+        console.warn('  Response has zero quest nodes — retrying once with quest reminder');
+        opts.questReminder = true;
+        try {
+            const parsed2 = parseModelJson(await callModel(buildGeneratePrompt(userData, opts), tokenBudget(type)));
+            const built2 = materializeWeb(parsed2, userData, scopedGoals, mwOpts);
+            if (built2.nodes.some(n => n.payload.type === 'quest')) { parsed = parsed2; built = built2; }
+        } catch (e) { console.warn('  quest retry failed:', e.message); }
+    }
     let newGoals = built.goals;
     let newNodes = built.nodes;
     if (!newGoals.length && (type === 'generate' || type === 'add_goal')) {
@@ -1317,8 +1381,17 @@ async function processGenerateFamily(docRef, userData, req, type) {
 // ── Expansion (§6.1): fan under mastery + quest absorption ──────────────────
 async function processExpand(docRef, userData, req) {
     const techTree = userData.techTree;
-    const ids = (req.payload && req.payload.resolvedNodeIds) || (req.payload && req.payload.nodeIds) || [];
+    let ids = (req.payload && req.payload.resolvedNodeIds) || (req.payload && req.payload.nodeIds) || [];
     const nodes = techTree.nodes || [];
+    // Auto-growth without explicit ids: fan from whatever resolved since the
+    // last growth pass.
+    if (!ids.length && req.payload && req.payload.auto) {
+        const sinceT = techTree.lastExpandAt ? new Date(techTree.lastExpandAt).getTime() : 0;
+        ids = nodes
+            .filter(n => n.resolvedAt && n.lifecycle !== 'archived' && new Date(n.resolvedAt).getTime() > sinceT)
+            .sort((a, b) => new Date(a.resolvedAt) - new Date(b.resolvedAt))
+            .slice(-2).map(n => n.id);
+    }
     const activities = collectActivities(userData);
     const actById = {};
     activities.forEach(({ act }) => { actById[act.id] = act; });
@@ -1438,6 +1511,19 @@ async function processExpand(docRef, userData, req) {
         added.push.apply(added, fanned);
     }
 
+    // Wildcard replenish: once the old wildcards are accepted or done, the
+    // web owes the user fresh serendipity (max 2 on offer at any time).
+    const openWilds = nodes.filter(n => n.role === 'wildcard' && n.lifecycle === 'available').length;
+    const wildSlots = Math.max(0, 2 - openWilds);
+    if (wildSlots > 0 && nodes.some(n => n.role === 'wildcard' && n.lifecycle !== 'available' && n.lifecycle !== 'archived')) {
+        try {
+            const wilds = await tryWildcardReplenish(userData, techTree, wildSlots, existingTitles);
+            added.push.apply(added, wilds);
+        } catch (e) {
+            console.warn('  wildcard replenish failed:', e.message);
+        }
+    }
+
     // Quest absorption (§6.1): quests grow with the web. One extra proposal
     // pass per expand run; proposals only, never silent writes.
     let absorb = [];
@@ -1499,6 +1585,54 @@ ${PAYLOAD_RULES}`;
         proposedAt: nowISO(),
         status: 'pending',
     };
+}
+
+// Wildcard replenish: a small dedicated call that mints 1-2 fresh wildcards
+// when the previous ones were accepted or finished. Same contract as
+// generation STEP 5: no goal, no prerequisites, tiny load, concrete.
+async function tryWildcardReplenish(userData, techTree, slots, existingTitles) {
+    const { dimensionList } = activePathsAndDims(userData);
+    const xp = typicalXP(userData);
+    const system = `Suggest exactly ${slots} WILDCARD practice(s) for a life-gamification user:
+universally positive, concrete acts their goals would never surface — not
+motivational fluff. No goal, no prerequisites, tiny load (<=2 actions/week,
+baseXP <=${WILDCARD_MAX_XP}; the user's XP scale averages ${xp.average}). Do not repeat
+anything in existingNodeTitles or rejections.
+Output ONLY: { "wildcards": [{ "title":str, "description":str, "whyNow":str,
+  "dimensionId":str, "payload": <activity payload> }] }`;
+    const input = {
+        dimensions: dimensionList,
+        activeActivities: activitySnapshot(userData).map(a => a.name),
+        existingNodeTitles: existingTitles,
+        rejections: rejectionStrings(techTree),
+    };
+    const parsed = parseModelJson(await callModel({ system, user: 'INPUT:\n' + JSON.stringify(input) }, tokenBudget('quest_patch')));
+    const ctx = nodeCtx(userData);
+    const now = nowISO();
+    const out = [];
+    const seen = new Set(existingTitles.map(t => String(t).toLowerCase()));
+    (parsed.wildcards || []).slice(0, slots).forEach(wr => {
+        if (!wr || typeof wr.title !== 'string' || !wr.title.trim()) return;
+        if (seen.has(wr.title.trim().toLowerCase())) return;
+        const dimensionId = ctx.dimIds.has(wr.dimensionId) ? wr.dimensionId : ctx.fallbackDim;
+        const payload = validatePayload(wr.payload, {
+            dimIds: ctx.dimIds, pathIds: ctx.pathIds, activityIds: ctx.activityIds,
+            fallbackDim: ctx.fallbackDim, title: wr.title, description: wr.description, dimensionId,
+        });
+        if (!payload || payload.type !== 'activity') return;
+        payload.spec.baseXP = Math.min(WILDCARD_MAX_XP, payload.spec.baseXP);
+        if (payload.spec.frequency === 'daily') payload.spec.frequency = 'weekly';
+        out.push({
+            id: newId('ttn'), source: 'ai', createdAt: now,
+            role: 'wildcard', goalIds: [], dimensionId,
+            lifecycle: 'available', resolvedAt: null, resolvedVia: null,
+            title: String(wr.title).trim().slice(0, 80),
+            description: String(wr.description || '').slice(0, 240),
+            whyNow: whyNowOf(wr), prerequisites: [], payload,
+        });
+        seen.add(wr.title.trim().toLowerCase());
+    });
+    return out;
 }
 
 // Quest absorption (§6.1, new): activities accepted or mastered since
