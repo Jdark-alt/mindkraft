@@ -1,18 +1,21 @@
-// ── Tech Tree (Map) generation worker — v2 ──────────────────────────────────
+// ── Map generation worker — v3 "The Web" ────────────────────────────────────
 // Runs on a GitHub Actions schedule (see .github/workflows/tech-tree-worker.yml).
 // Picks up userData.techTree.pendingRequest flags written by the client, builds
 // the prompt from the user's REAL Firestore data (never trusts client-supplied
 // context), calls the model through the isolated adapter below, validates the
-// response, writes the resulting lines/stations/nodes back, and clears the flag.
+// response, writes the resulting goals/nodes back, and clears the flag.
 // The worker is the sole authority on cooldowns and rate limits — a tampered
 // client can write a request, but only this script decides whether it's honored.
 //
-// v2 (see mindkraft-tree-v2-spec):
-//   - Goals are first-class; each goal → one Line ending in a named terminus.
-//   - Nodes carry a polymorphic payload: activity | quest | challenge.
-//   - Stations declare a "resolve any N" threshold over the segment below them.
-//   - Request types: generate, add_line, expand, regenerate, revise, quest_patch.
-//   - materializeNodes/validate is the single validator for every request type.
+// v3 (mindkraft-map-v3 spec):
+//   - Activity-centric web: the user's REAL activities are ANCHORS; upgrades,
+//     quests, fusions and wildcards grow out of them.
+//   - Goals are coloured threads (goal.color), not containers. No lines,
+//     stations, terminus or segments — edges derive from prerequisites.
+//   - Node record: role anchor|upgrade|fusion|wildcard|suggestion, goalIds[],
+//     whyNow, lifecycle at birth (§6).
+//   - Request types: generate, add_goal (né add_line), expand, regenerate,
+//     revise. Expansion also proposes quest absorption (link_activity).
 
 const admin = require('firebase-admin');
 
@@ -60,7 +63,7 @@ const PROVIDERS = [
         base: 'https://api.anthropic.com',
         model: process.env.TECH_TREE_MODEL || 'claude-haiku-4-5',
         fallbackModels: [],
-        maxTokens: { generate: 9000, add_line: 6000, expand: 3500, regenerate: 6000, revise: 2500, quest_patch: 2500 },
+        maxTokens: { generate: 9000, add_goal: 6000, expand: 3500, regenerate: 6000, revise: 2500, quest_patch: 2500 },
         keyHint: 'ANTHROPIC_API_KEY',
     },
     {
@@ -69,7 +72,7 @@ const PROVIDERS = [
         base: 'https://generativelanguage.googleapis.com/v1beta/openai',
         model: process.env.TECH_TREE_MODEL || 'gemini-2.5-flash',
         fallbackModels: ['gemini-2.0-flash'],
-        maxTokens: { generate: 9000, add_line: 6000, expand: 4000, regenerate: 6000, revise: 2500, quest_patch: 2500 },
+        maxTokens: { generate: 9000, add_goal: 6000, expand: 4000, regenerate: 6000, revise: 2500, quest_patch: 2500 },
         keyHint: 'GEMINI_API_KEY',
     },
     {
@@ -103,26 +106,30 @@ function advanceProvider() {
     return false;
 }
 
-// ── v2 constants (spec §2, §5, §6, §9) ──────────────────────────────────────
-// Line colour is line identity, NOT dimension colour (spec §2.3). A fixed
-// palette of 5 — the same map cannot legibly carry more than 5 goals (§3.1).
-const LINE_PALETTE = ['#a8446e', '#5a9fd4', '#c98a3f', '#8a9a5b', '#7a6ff0'];
+// ── v3 constants ────────────────────────────────────────────────────────────
+// Goal colour is goal identity. A fixed palette of 5 — the same web cannot
+// legibly carry more than 5 goals.
+const GOAL_PALETTE = ['#a8446e', '#5a9fd4', '#c98a3f', '#8a9a5b', '#7a6ff0'];
 const LOAD_WEIGHT = { daily: 7, weekly: 1, biweekly: 0.5, monthly: 0.25, occasional: 0.25, 'one-time': 0.25 };
-const LOAD_BUDGET_HEADROOM = 8;          // generation may not push load past +8 actions/week (§6.4)
-const MAX_GOALS = 5;                     // §3.1
-const MAX_NEW_ACTIVITIES_PER_QUEST = 3;  // §5.3 hard cap
-const MAX_NODES = 40;                    // hard ceiling across all lines; scope decides the real count
-const REGEN_COOLDOWN_DAYS = 30;          // per-line regenerate cooldown (§9.1)
-const REVISION_LIMIT = 3;                // keep a rate limit, kill the 24h clock (§0.4)
+const LOAD_BUDGET_HEADROOM = 8;          // only nodes AVAILABLE at birth count (§6 LOAD RULE)
+const MAX_GOALS = 5;
+const MAX_NEW_ACTIVITIES_PER_QUEST = 3;  // hard cap, verbatim from v2
+const MAX_NODES = 40;                    // hard ceiling across the whole web
+const REGEN_COOLDOWN_DAYS = 30;          // per-goal regenerate cooldown
+const REVISION_LIMIT = 3;
+const WILDCARD_MAX_XP = 8;               // §8: wildcards ≤8 XP
+const ACTIVITY_SNAPSHOT_CAP = 80;        // §6: raised from 60
 const VALID_FREQUENCIES = ['daily', 'weekly', 'biweekly', 'monthly', 'occasional'];
 
-const MAX_TOKENS = { generate: 6000, add_line: 4500, expand: 3000, regenerate: 4500, revise: 2000, quest_patch: 2000 };
+const MAX_TOKENS = { generate: 6000, add_goal: 4500, expand: 3000, regenerate: 4500, revise: 2000, quest_patch: 2000 };
+function tokenBudget(type) {
+    const t = type === 'add_line' ? 'add_goal' : type;
+    return (PROVIDER.maxTokens && (PROVIDER.maxTokens[t] || PROVIDER.maxTokens.add_line)) || MAX_TOKENS[t] || 4000;
+}
 
-// ── Local date construction (spec §10.14) ───────────────────────────────────
-// NEVER toISOString().slice(0,10) for a *date* — it has caused production
-// incidents. cycleHistory timestamps stay full ISO; only date comparisons
-// localise. The worker runs in UTC, so a plain ISO timestamp is fine for
-// createdAt/resolvedAt (they are instants, not calendar dates).
+// ── Local date construction ─────────────────────────────────────────────────
+// NEVER toISOString().slice(0,10) for a *date*. The worker runs in UTC, so a
+// plain ISO timestamp is fine for createdAt/resolvedAt (instants, not dates).
 function nowISO() { return new Date().toISOString(); }
 
 // ── Helpers over the user's schema ─────────────────────────────────────────
@@ -143,94 +150,161 @@ function activePathsAndDims(userData) {
     return { dimensionList, pathList };
 }
 
-// Weekly load = sum of per-week weights over active activities (spec §6.4).
-// '3x/week'-style custom frequencies weight by their per-week count where the
-// data exposes one; otherwise a conservative default.
+// Weekly load = sum of per-week weights over active activities.
 function weeklyLoad(userData) {
     let sum = 0;
     collectActivities(userData).forEach(({ act }) => {
         if (act.archived || act.deleted) return;
         const f = act.frequency;
-        if (f === 'custom') {
-            const per = customPerWeek(act);
-            sum += per;
-        } else {
-            sum += (LOAD_WEIGHT[f] != null ? LOAD_WEIGHT[f] : 1);
-        }
+        if (f === 'custom') sum += customPerWeek(act);
+        else sum += (LOAD_WEIGHT[f] != null ? LOAD_WEIGHT[f] : 1);
     });
     return Math.round(sum * 10) / 10;
 }
 function customPerWeek(act) {
-    // Custom activities encode a per-week target in a few possible fields
-    // across the app's history; fall back to 3 (a common custom cadence).
     const n = act.customTimesPerWeek || act.timesPerWeek ||
         (Array.isArray(act.customDays) ? act.customDays.length : 0);
     return n > 0 ? Math.min(7, n) : 3;
 }
 
 // "Clean cycle" — a sealed cycle that actually completed its required items.
-// A force-sealed cycle (confirm() override) pays zero bonus and must NOT count
-// toward node resolution or quest patching (spec §6.1, §7.7).
 function cleanCycleCount(p) {
     return ((p && p.cycleHistory) || []).filter(c =>
         c && c.itemsTotal > 0 && c.itemsCompleted >= c.itemsTotal).length;
+}
+
+// ROLLING WINDOW mastery check (§3): count completions within the trailing
+// windowDays from today. 87 completions ending six months ago must NOT
+// resolve a 30-day-window mastery. windowDays null = lifetime count.
+const MASTERY_TARGET_BY_FREQ = { daily: 15, weekly: 6, biweekly: 4, monthly: 3, occasional: 3 };
+const MASTERY_WINDOW_BY_FREQ = { daily: 30, weekly: 90, biweekly: 120, monthly: 180, occasional: null };
+function masteryTargetFor(freq) { return MASTERY_TARGET_BY_FREQ[freq] || 6; }
+function masteryWindowFor(freq) { return MASTERY_WINDOW_BY_FREQ[freq] !== undefined ? MASTERY_WINDOW_BY_FREQ[freq] : 90; }
+function masteryThresholdFor(act) {
+    if (act.techTreeMastery && act.techTreeMastery.count) {
+        return { count: act.techTreeMastery.count, windowDays: act.techTreeMastery.windowDays };
+    }
+    return { count: masteryTargetFor(act.frequency), windowDays: masteryWindowFor(act.frequency) };
+}
+function rollingWindowMet(act) {
+    if (act.techTreeMasteredAt) return true;
+    const th = masteryThresholdFor(act);
+    const target = Math.max(1, th.count || 1);
+    const cutoff = th.windowDays ? Date.now() - th.windowDays * 86400000 : null;
+    const k = (act.completionHistory || []).filter(ev => {
+        if (!ev || ev.isPenalty || (ev.xp || 0) <= 0) return false;
+        return cutoff === null || new Date(ev.date).getTime() >= cutoff;
+    }).length;
+    return k >= target;
 }
 
 function newId(prefix) {
     return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
-// ── Cooldown / gate enforcement (spec §3.1, §7.6, §9.1) ─────────────────────
+// ── Server-side v2 → v3 shape guard ────────────────────────────────────────
+// Mirrors the client migration (idempotent, non-destructive) so the worker
+// can safely process a request written by an old cached client against a v2
+// doc. Persisted by whichever write follows.
+function ensureV3Shape(techTree) {
+    if (!techTree || techTree.schemaVersion === 3) return techTree;
+    const lines = Array.isArray(techTree.lines) ? techTree.lines : [];
+    const lineById = {};
+    lines.forEach(l => { if (l && l.id) lineById[l.id] = l; });
+    (techTree.goals || []).forEach(g => {
+        if (g.color) return;
+        const line = lines.find(l => l.goalId === g.id);
+        if (line && line.color) g.color = line.color;
+    });
+    const used = {};
+    (techTree.goals || []).forEach(g => { if (g.color) used[g.color] = true; });
+    (techTree.goals || []).forEach((g, i) => {
+        if (g.color) return;
+        g.color = GOAL_PALETTE.find(c => !used[c]) || GOAL_PALETTE[i % GOAL_PALETTE.length];
+        used[g.color] = true;
+    });
+    lines.forEach(l => {
+        if (!l || !l.regeneratedAt) return;
+        const g = (techTree.goals || []).find(x => x.id === l.goalId);
+        if (g && !g.regeneratedAt) g.regeneratedAt = l.regeneratedAt;
+    });
+    (techTree.nodes || []).forEach(n => {
+        if (!Array.isArray(n.goalIds)) {
+            const line = n.lineId ? lineById[n.lineId] : null;
+            n.goalIds = (line && line.goalId) ? [line.goalId] : [];
+            if (n.interchange && Array.isArray(n.interchange.lineIds)) {
+                n.interchange.lineIds.forEach(lid => {
+                    const l2 = lineById[lid];
+                    if (l2 && l2.goalId && n.goalIds.indexOf(l2.goalId) === -1) n.goalIds.push(l2.goalId);
+                });
+            }
+        }
+        if (!n.role) n.role = (n.payload && n.payload.activityId) ? 'anchor' : 'suggestion';
+        if (n.whyNow === undefined) n.whyNow = null;
+        if (!n.dimensionId) n.dimensionId = 'uncategorized';
+        if (!Array.isArray(n.prerequisites)) n.prerequisites = [];
+        delete n.lineId; delete n.segmentIndex; delete n.isTerminus;
+        delete n.interchange; delete n.parentNodeId;
+    });
+    delete techTree.lines; delete techTree.northStarLineId;
+    delete techTree.connections; delete techTree.mergeSuggestion;
+    techTree.schemaVersion = 3;
+    return techTree;
+}
+
+// ── Cooldown / gate enforcement ─────────────────────────────────────────────
 
 function canProcessRequest(req, techTree, userData) {
     const activities = collectActivities(userData);
     const goals = (techTree.goals || []).filter(g => !g.retiredAt);
+    const type = req.type === 'add_line' ? 'add_goal' : req.type;
 
-    if (req.type === 'generate') {
+    if (type === 'generate') {
         if (!goals.length) return 'No goals set — add a goal first.';
         if (activities.length < 3) return 'Need at least 3 active activities.';
         return null;
     }
-    if (req.type === 'add_line') {
+    if (type === 'add_goal') {
         const goal = goals.find(g => g.id === (req.payload && req.payload.goalId));
         if (!goal) return 'That goal no longer exists.';
-        if (goals.filter(g => (techTree.lines || []).some(l => l.goalId === g.id && l.status !== 'retired')).length >= MAX_GOALS)
-            return 'The map can hold at most ' + MAX_GOALS + ' lines.';
+        if (goals.length > MAX_GOALS) return 'The web can hold at most ' + MAX_GOALS + ' goals.';
         return null;
     }
-    if (req.type === 'expand') {
-        const ids = (req.payload && req.payload.resolvedNodeIds) || [];
+    if (type === 'expand') {
+        const ids = (req.payload && req.payload.resolvedNodeIds) || (req.payload && req.payload.nodeIds) || [];
         const some = (techTree.nodes || []).some(n => ids.indexOf(n.id) !== -1 && n.resolvedAt);
         if (!some) return 'Nothing to expand from.';
         return null;
     }
-    if (req.type === 'regenerate') {
-        const line = (techTree.lines || []).find(l => l.id === (req.payload && req.payload.lineId));
-        if (!line) return 'That line no longer exists.';
-        const last = line.regeneratedAt || techTree.lastGeneratedAt;
+    if (type === 'regenerate') {
+        const goalId = req.payload && (req.payload.goalId || null);
+        let goal = goalId ? goals.find(g => g.id === goalId) : null;
+        // Legacy v2 clients send lineId; the line is gone post-migration, so
+        // fall back to the first goal rather than stranding the request.
+        if (!goal && req.payload && req.payload.lineId) goal = goals[0];
+        if (!goal) return 'That goal no longer exists.';
+        const last = goal.regeneratedAt || techTree.lastGeneratedAt;
         if (last) {
             const ageDays = (Date.now() - new Date(last).getTime()) / 86400000;
             if (ageDays < REGEN_COOLDOWN_DAYS)
-                return 'This line was regenerated recently — free again in ' +
+                return 'This thread was rewoven recently — free again in ' +
                     Math.ceil(REGEN_COOLDOWN_DAYS - ageDays) + ' days.';
         }
         return null;
     }
-    if (req.type === 'revise') {
+    if (type === 'revise') {
         if ((techTree.revisionsUsed || 0) >= REVISION_LIMIT) return 'Revision limit reached.';
         if (!req.payload || !String(req.payload.note || '').trim()) return 'Revision needs a correction note.';
         return null;
     }
-    if (req.type === 'quest_patch') {
-        return null; // worker validates the target project below
-    }
+    if (type === 'quest_patch') return null;
     return 'Unknown request type.';
 }
 
 // ── Prompt building ─────────────────────────────────────────────────────────
 
 function activitySnapshot(userData) {
-    return collectActivities(userData).slice(0, 60).map(({ act, dim }) => ({
+    return collectActivities(userData).slice(0, ACTIVITY_SNAPSHOT_CAP).map(({ act, dim }) => ({
         activityId: act.id,
         name: act.name,
         description: (act.description || '').slice(0, 120),
@@ -240,6 +314,11 @@ function activitySnapshot(userData) {
         currentStreak: act.currentStreak || 0,
         masteredAt: act.techTreeMasteredAt || null,
     }));
+}
+
+function rejectionStrings(techTree) {
+    return (techTree.rejections || []).slice(-40).map(r =>
+        r.nodeTitle + ' (' + (r.reason || 'rejected') + (r.role ? ' · ' + r.role : '') + ')');
 }
 
 const PAYLOAD_RULES = `
@@ -265,6 +344,8 @@ QUEST GROUPS (must match the app's shape EXACTLY):
   Decide each leaf the same way: scaffolding that dies with the quest -> "task";
   a practice that should outlive it -> "activity" (give it a "spec"); a practice
   the user ALREADY has -> "activity" with "linkedActivityId" set (no spec).
+  Build quest leaves PREFERENTIALLY from linkedActivityId references to the
+  anchors — quests that lean on what the user already does get finished.
   Nobody wants a streak on "make a thumbnail"; nobody wants "sleep window"
   trapped inside one quest.
   HARD CAP: at most ${MAX_NEW_ACTIVITIES_PER_QUEST} NEW activities per quest
@@ -285,94 +366,99 @@ function buildGeneratePrompt(userData, opts) {
         .map(g => ({ goalId: g.id, rawText: g.rawText, sharpened: g.sharpened || null, kind: g.kind || null }));
 
     const load = weeklyLoad(userData);
-    const rejections = (techTree.rejections || []).slice(-40).map(r => r.nodeTitle + ' (' + r.reason + ')');
     const userNodes = (techTree.nodes || []).filter(n => n.source === 'user').map(n => n.title);
     const resolvedTitles = (techTree.nodes || []).filter(n => n.resolvedAt).map(n => n.title);
 
-    const system = `You are the Map generation engine for Mindkraft, a life-planning app whose
-skill map reads like a transit map: each GOAL is a coloured LINE that runs from
-the user to a named TERMINUS (summit), with STATIONS (milestones) along the way
-and NODES (the actual practices/quests) in the SEGMENTS between stations.
+    const system = `You are the Web generation engine for Mindkraft, a life-planning app. The map
+is an ACTIVITY-CENTRIC WEB: the user's REAL activities are the foundation
+(anchors), AI suggestions grow OUT OF those anchors, and goals are coloured
+threads running through the connections — not containers. Serendipity is the
+product: cross-dimensional fusions and a wildcard or two the user's goals
+would never surface.
 
 Output ONLY one valid JSON object — no prose, no markdown fences.
 
-STEP 1 — IDENTIFY EVERY DISTINCT GOAL. The user's entries may each pack SEVERAL
-separate ambitions. Return one "reading" per DISTINCT goal, each with a unique
-"key":
-  { "key", "fromGoalId", "sharpened", "shortName", "kind", "kindReason" }
+STEP 1 — READ THE GOALS. The user's entries may each pack SEVERAL separate
+ambitions. Emit one "goals" object per DISTINCT goal:
   - SPLIT an entry into multiple goals when it names genuinely SEPARATE life
-    domains. "Get fit, cook at home, sleep on a schedule, and read more" is FOUR
-    goals — Fitness, Cooking, Sleep, Reading — each its OWN line. Strength
-    training and reading a book must NEVER share a line. Do not blend unrelated
-    domains just because the user typed them in one sentence.
-  - Do NOT split a single goal that is a routine PLUS its outcome. "Get healthy"
-    (a training habit AND losing 10kg) is ONE goal: the rhythm is the route and
-    becomes the segments, not a second line. Splitting is for separate DOMAINS,
-    not for the routine-vs-outcome halves of one domain.
-  - Emit ONE "goals" object per distinct goal. Each goal object CONTAINS its own
-    line — its terminus, its stations, and its nodes are NESTED inside it (STEP
-    2). There are no cross-reference ids to keep in sync: a node belongs to the
-    goal object it sits inside. "fromGoalId": the input goalId this goal was
-    derived from (for lineage), or null.
+    domains ("Get fit, cook at home, sleep on a schedule" is THREE goals).
+    Do NOT split a single goal that is a routine PLUS its outcome ("get
+    healthy" = one goal).
   - "sharpened": a concrete, DEFENSIBLE reading. Turn "get fit" into "Lose 8kg
-    and hold it by December", not a restatement. "shortName": <=14 chars, the
-    line label ("Fitness", "Cooking", "Sleep", "Reading") — make each UNIQUE.
-  - "kind": "destination" if there is a stated outcome/number/event, OR the goal
-    is genuinely BOTH a routine and an outcome. "rhythm" ONLY when there is
-    genuinely no outcome at all — a pure way of living like "be a person who
-    trains". Too vague -> "destination" with the most useful reading you can
-    defend. "kindReason": REQUIRED and non-null when kind is "rhythm"; else null.
-  - Cap: at most ${MAX_GOALS} goals total. If the user names more, keep the ${MAX_GOALS} most distinct.
+    and hold it by December", not a restatement. "shortName": <=14 chars,
+    UNIQUE across goals. "fromGoalId": the input goalId this was derived from
+    (lineage), or null.
+  - "kind": "destination" if there is a stated outcome/number/event, OR the
+    goal is both routine and outcome. "rhythm" ONLY when there is genuinely no
+    outcome at all. "kindReason": REQUIRED non-null when kind is "rhythm";
+    else null.
+  - Cap: at most ${MAX_GOALS} goals total. Keep the most distinct.
 
-STEP 2 — SUGGEST A FEW ACTIONS FOR EACH GOAL. Keep it SIMPLE and relevant.
-  - Give each goal a short "target": a plain phrase for what progress looks like
-    ("Lose 8kg", "A steady sleep rhythm"). Not a milestone ladder — one phrase.
-  - Put 2-5 NODES in each goal's "nodes" array. Few and RELEVANT beats many.
-    Never pad a goal to hit a number. Every goal needs at least 2 nodes.
-  - Each node is an activity or a quest (see PAYLOAD). Prefer activities; sprinkle
-    in a quest only where several things genuinely belong together or a short
-    project fits ("Ship video #1", "12-week cut").
-  - PREREQUISITES are OPTIONAL. Add {"type":"node_mastered","nodeTitle":"<exact
-    title of another node for THIS goal>"} only when one node GENUINELY unlocks a
-    later, harder one. These form tiers (drawn as dotted links). MOST nodes need
-    none — do not invent dependencies to look connected.
-  - Keep goals SEPARATE. A sleep node belongs under the sleep goal, NEVER under
-    fitness. If a suggestion doesn't clearly serve one specific goal, put it in
-    top-level "freshPicks" instead of forcing it onto a goal.
-  - ONE daily anchor per goal maximum; everything else weekly or lighter. Total
-    new load across all goals must not push weekly load past +${LOAD_BUDGET_HEADROOM}
-    (the user is at ${load} actions/week now).
-  - Top-level "freshPicks": 0-3 standalone suggestions that serve no one goal.
+STEP 2 — CHOOSE ANCHORS. From activeActivities, pick the 2-5 per goal that
+GENUINELY serve it. Emit them in that goal's "anchors" array:
+  { "activityId": str, "whyNow": str }
+An activity may anchor multiple goals. Do NOT invent activities here; only
+reference real activityIds from the input. Anchors are the roots of the web —
+not every user activity becomes one, only the ones woven in.
 
-NODE RULES:
-  - Genuinely new and concrete — never a vague umbrella, never a rebrand of an
-    existing activity ("a more consistent version of X" is forbidden — specify
-    new CONTENT). Get more specific further out: a far node reads like a coach's
-    prescription, not a poster slogan.
-  - Do not force connections; a prerequisite must genuinely enable the thing. A
-    node may depend on another node via {"type":"node_mastered","nodeTitle":".."}
-    (exact title of another node in your output) or on a real existing activity
-    via {"type":"activity_mastered","activityId":".."}. Never invent IDs.
-  - Vary the kind of action across output. Never pad a small goal to hit a cap.
-  - If an activity is too ambiguous to use, omit it rather than guessing.
+STEP 3 — GROW THE WEB. Per goal, 4-7 new nodes total in its "nodes" array,
+across these roles:
+  • "upgrade" (1-3): take an anchor one notch higher — same time-slot, deeper
+    practice — or a worthy alternative to run alongside it. prerequisites:
+    [{"type":"activity_mastered","activityId":"<that anchor's id>"}]. Never a
+    rebrand; new CONTENT ("a more consistent version of X" is forbidden).
+  • "quest" (1-2, MANDATORY per goal): a routine or project the user drives.
+    payload type "quest". Build leaves preferentially from linkedActivityId
+    references to anchors (see PAYLOAD).
+  • "deeper" (1-2): locked behind an upgrade or quest — visible desire.
+    prerequisites: [{"type":"node_mastered","nodeTitle":"<exact title of
+    another node in YOUR output for this goal>"}].
+Each node: { "role", "title", "description" (<=240), "whyNow" (one sharp
+sentence: why this, why now), "dimensionId", "prerequisites", "payload" }.
+Get more specific further out: a deep node reads like a coach's prescription.
+Never pad a goal to hit a number; if an activity is too ambiguous, omit it.
+
+STEP 4 — FUSIONS (2-4 per generation, the whole point). Top-level "fusions"
+array. Find PAIRS of anchors in DIFFERENT dimensions whose combination
+unlocks something neither could alone ("Strength training" + "Call a friend"
+-> "Join a run club"). Each: { "title", "description", "whyNow",
+"dimensionId", "sourceActivityIds": [id, id], "payload" }. A fusion must be a
+real-world act, not a mashup name. If no honest fusion exists, emit fewer —
+NEVER force one.
+
+STEP 5 — WILDCARDS (exactly 1-2). Top-level "wildcards" array. No goal, no
+prerequisites, always available, tiny load (<=2 actions/week, baseXP <=${WILDCARD_MAX_XP}),
+universally positive practices the user's goals would never surface. Not
+motivational fluff — concrete acts. { "title", "description", "whyNow",
+"dimensionId", "payload" (activity) }.
+
+LOAD RULE: the load budget applies ONLY to nodes born available (anchors cost
+0 — they're already being done; locked tiers are exempt: visibility is free,
+commitment is gated). The user is at ${load} actions/week; available-at-birth
+additions must not exceed +${LOAD_BUDGET_HEADROOM}/week.
+
+Honour "rejections" (things the user turned down, with their roles — learn
+the pattern). Do not re-suggest resolved or user-added titles.
 ${PAYLOAD_RULES}
 
-VISION: also return "vision" — 1-2 sentences, second person, vivid and specific
-to their goals. No motivation-poster fluff.
+VISION: also return "vision" — 1-2 sentences, second person, vivid and
+specific to their goals. No motivation-poster fluff.
 
-OUTPUT SCHEMA (a single JSON object, nothing else). Nodes are NESTED inside the
-goal they belong to — there is no id to keep in sync:
-{ "vision": string,
+OUTPUT SCHEMA (a single JSON object, nothing else):
+{ "vision": str,
   "goals": [{
      "fromGoalId": str|null, "sharpened": str, "shortName": str,
      "kind": "destination"|"rhythm", "kindReason": str|null,
-     "target": str,
-     "nodes": [{ "title": str, "description": str, "dimensionId": str,
-                 "prerequisites": [{"type":"node_mastered","nodeTitle":str}|{"type":"activity_mastered","activityId":str}],
+     "anchors": [{ "activityId": str, "whyNow": str }],
+     "nodes": [{ "role":"upgrade"|"quest"|"deeper", "title": str,
+                 "description": str, "whyNow": str, "dimensionId": str,
+                 "prerequisites": [{"type":"activity_mastered","activityId":str}|{"type":"node_mastered","nodeTitle":str}],
                  "payload": <activity|quest payload> }]
   }],
-  "freshPicks": [{ "title": str, "description": str, "dimensionId": str,
-                   "payload": <payload> }] }`;
+  "fusions": [{ "title": str, "description": str, "whyNow": str, "dimensionId": str,
+                "sourceActivityIds": [str, str], "payload": <activity|quest payload> }],
+  "wildcards": [{ "title": str, "description": str, "whyNow": str, "dimensionId": str,
+                  "payload": <activity payload> }] }`;
 
     const input = {
         goals,
@@ -380,50 +466,58 @@ goal they belong to — there is no id to keep in sync:
         paths: pathList,
         activeActivities: activitySnapshot(userData),
         loadBudget: { current: load, headroom: LOAD_BUDGET_HEADROOM },
-        rejections,
+        rejections: rejectionStrings(techTree),
         userAddedNodeTitles: userNodes,
         alreadyResolved: resolvedTitles,
     };
-    if (opts.mode === 'add_line') {
-        input._mode = 'ADD ONE LINE for the single goal above; do not touch other lines.';
+    if (opts.mode === 'add_goal') {
+        input._mode = 'ADD ONE GOAL: weave nodes for the single goal above into the existing web; do not touch other goals. Fusions may pair its anchors with anchors of existing goals (listed in _existingAnchors). Emit 0-1 wildcards only if the web has none.';
+        input._existingAnchors = opts.existingAnchors || [];
     }
     if (opts.mode === 'regenerate') {
-        input._mode = 'REGENERATE this line: replace its unclaimed frontier with a fresh route to the SAME terminus. Build on the alreadyResolved titles; honour rejections.';
-        input._resolvedOnLine = opts.resolvedOnLine || [];
-        input._terminus = opts.terminus || null;
+        input._mode = 'REWEAVE this goal\'s thread: replace its unclaimed suggestions with a fresh set (same contract: anchors, upgrades, mandatory quest, deeper tier). Build on alreadyResolved; honour rejections. Do not emit wildcards.';
+        input._resolvedOnGoal = opts.resolvedOnGoal || [];
     }
     if (opts.mode === 'revise') {
-        input._mode = 'REVISION: the user flagged the node(s) in _nodesToRevise with feedback in _note. Return replacement node(s) that directly address the feedback (not a light reword), following every rule.';
+        input._mode = 'REVISION: the user flagged the node(s) in _nodesToRevise with feedback in _note. Return replacement node(s) in the goal\'s "nodes" array that directly address the feedback (not a light reword), following every rule. Do not emit anchors, fusions or wildcards.';
         input._nodesToRevise = opts.nodesToRevise || [];
         input._note = String(opts.note || '').slice(0, 240);
     }
     return { system, user: 'INPUT:\n' + JSON.stringify(input) };
 }
 
+// Expansion prompt (§6.1): fan 2-3 nodes under a freshly mastered thing.
+// Explicitly allowed to propose new fusions using the mastered node as one
+// source, and to attach prerequisites to real existing activities.
 function buildExpandPrompt(userData, ctx) {
     const load = weeklyLoad(userData);
-    const rejections = (userData.techTree.rejections || []).slice(-40).map(r => r.nodeTitle + ' (' + r.reason + ')');
     const { dimensionList } = activePathsAndDims(userData);
-    const system = `You extend a user's Map after they RESOLVED a node. Emit 2-3 sibling nodes
-that the resolved node now makes possible AND that move toward the next station.
+    const system = `You extend a user's Web after they MASTERED something. Emit 2-3 nodes that
+this mastery now makes possible — the next notch, not a restart.
 
-THE MONOTONIC CONSTRAINT: every node you emit MUST reduce the distance to SOME
-station — not necessarily this one. A node serving nothing is rejected. Vary the
-payload type by what each thing IS. Respect the load budget (the user is at ${load}
-actions/week; do not push past +${LOAD_BUDGET_HEADROOM}). Do not re-suggest
-anything in rejections or already in the segment.
+Allowed: "upgrade" nodes prerequisite on the mastered node; NEW FUSIONS that
+pair the mastered thing with a real activity in a DIFFERENT dimension
+(role "fusion", prerequisites on both); a "quest" if several things genuinely
+belong together. Prerequisites may reference the mastered node by
+{"type":"node_mastered","nodeTitle":"${'${RESOLVED}'}"} — use the EXACT title given
+in input.resolvedNode.title — or any real activity via
+{"type":"activity_mastered","activityId":...}. Never invent activityIds.
+
+Respect the load budget (user is at ${load}/week; do not push past
++${LOAD_BUDGET_HEADROOM}). Do not re-suggest anything in rejections or
+existingNodeTitles. Every node needs "whyNow" — one sharp sentence.
 ${PAYLOAD_RULES}
 
-Output ONLY: { "nodes":[{ "segmentIndex":int, "title":str, "description":str,
-  "dimensionId":str, "prerequisites":[...], "payload": <payload> }] }`;
+Output ONLY: { "nodes":[{ "role":"upgrade"|"fusion"|"quest"|"suggestion",
+  "title":str, "description":str, "whyNow":str, "dimensionId":str,
+  "prerequisites":[...], "payload": <payload> }] }`;
     const input = {
-        resolvedNode: { title: ctx.resolved.title, segmentIndex: ctx.resolved.segmentIndex },
-        workingToward: ctx.terminusTitle,
-        nextStation: ctx.stationTitle,
-        segmentNodes: ctx.segmentTitles,
+        resolvedNode: ctx.resolvedNode,
+        goals: ctx.goals,
         dimensions: dimensionList,
-        activityHistory: ctx.activityHistory || null,
-        rejections,
+        activeActivities: ctx.activities,
+        existingNodeTitles: ctx.existingTitles,
+        rejections: ctx.rejections,
         loadBudget: { current: load, headroom: LOAD_BUDGET_HEADROOM },
     };
     return { system, user: 'INPUT:\n' + JSON.stringify(input) };
@@ -583,17 +677,15 @@ function parseModelJson(raw) {
     const parsed = JSON.parse(text.slice(objStart, text.lastIndexOf('}') + 1));
     return {
         vision: typeof parsed.vision === 'string' ? parsed.vision.trim().slice(0, 300) : null,
-        goals: Array.isArray(parsed.goals) ? parsed.goals : [],          // nested contract
-        freshPicks: Array.isArray(parsed.freshPicks) ? parsed.freshPicks : [],
-        readings: Array.isArray(parsed.readings) ? parsed.readings : [],  // legacy flat (expand)
-        lines: Array.isArray(parsed.lines) ? parsed.lines : [],
-        nodes: Array.isArray(parsed.nodes) ? parsed.nodes : [],
-        interchanges: Array.isArray(parsed.interchanges) ? parsed.interchanges : [],
-        challenges: Array.isArray(parsed.challenges) ? parsed.challenges : [],
+        goals: Array.isArray(parsed.goals) ? parsed.goals : [],
+        fusions: Array.isArray(parsed.fusions) ? parsed.fusions : [],
+        wildcards: Array.isArray(parsed.wildcards) ? parsed.wildcards : [],
+        nodes: Array.isArray(parsed.nodes) ? parsed.nodes : [],           // expand
+        proposals: Array.isArray(parsed.proposals) ? parsed.proposals : [], // absorption
     };
 }
 
-// ── Payload validation (spec §2.6, §2.7, §5.7) ──────────────────────────────
+// ── Payload validation ──────────────────────────────────────────────────────
 // Returns a schema-valid payload, or null to drop the node. Enforces the quest
 // group/leaf shape verbatim and the 3-new-activity cap (excess -> tasks).
 function validatePayload(raw, ctx) {
@@ -629,7 +721,7 @@ function validatePayload(raw, ctx) {
         const counter = { newActs: 0 };
         const groups = (Array.isArray(s.groups) ? s.groups : [])
             .map(g => validateGroup(g, ctx, counter)).filter(Boolean);
-        if (!groups.length) return null;                    // §5.7.3: every quest needs ≥1 valid group
+        if (!groups.length) return null;                    // every quest needs ≥1 valid group
         const cadType = (s.cadence && s.cadence.type === 'recurring') ? 'recurring' : 'oneoff';
         const payload = {
             type: 'quest',
@@ -650,8 +742,6 @@ function validatePayload(raw, ctx) {
 
     if (raw.type === 'challenge') {
         const s = raw.spec || {};
-        // Challenge payloads reference existing activities only (validated by
-        // the caller against real ids); keep a minimal, safe shape.
         const targets = {};
         Object.keys(s.activityTargets || {}).forEach(id => {
             if (ctx.activityIds.has(id)) targets[id] = Math.min(100, Math.max(1, parseInt(s.activityTargets[id], 10) || 1));
@@ -671,22 +761,15 @@ function validatePayload(raw, ctx) {
     return null;
 }
 
-function masteryTargetFor(freq) {
-    return ({ daily: 15, weekly: 6, biweekly: 4, monthly: 3, occasional: 3 })[freq] || 6;
-}
-function masteryWindowFor(freq) {
-    return ({ daily: 30, weekly: 90, biweekly: 120, monthly: 180, occasional: null })[freq] || 90;
-}
-
 // Recursively validate a quest group. Mutates counter.newActs to enforce the
-// 3-new-activity cap (excess new-activity leaves are demoted to tasks §5.7.4).
+// 3-new-activity cap (excess new-activity leaves are demoted to tasks).
 function validateGroup(g, ctx, counter) {
     if (!g || typeof g !== 'object') return null;
     if (g.kind === 'leaf' || g.type) return null; // a bare leaf at group position — skip
     const children = (Array.isArray(g.children) ? g.children : [])
         .map(c => (c && c.kind === 'group') ? validateGroup(c, ctx, counter) : validateLeaf(c, ctx, counter))
         .filter(Boolean);
-    if (!children.length) return null;             // §5.7.3: every group has ≥1 child
+    if (!children.length) return null;             // every group has ≥1 child
     return {
         id: newId('grp'),
         kind: 'group',
@@ -715,7 +798,7 @@ function validateLeaf(l, ctx, counter) {
         // A NEW activity leaf needs a usable spec; count it against the cap.
         const spec = l.spec || {};
         if (counter.newActs >= MAX_NEW_ACTIVITIES_PER_QUEST) {
-            type = 'task'; // §5.7.4 truncate the excess to tasks
+            type = 'task'; // truncate the excess to tasks
         } else if (spec && (spec.baseXP || spec.frequency || spec.dimensionId || l.name)) {
             counter.newActs++;
             return {
@@ -733,7 +816,7 @@ function validateLeaf(l, ctx, counter) {
             type = 'task';
         }
     }
-    // task leaf — §5.7.3 requires a non-empty name
+    // task leaf — requires a non-empty name
     const name = String(l.name || '').trim();
     if (!name) return null;
     const promo = l._promotable && typeof l._promotable === 'object' ? {
@@ -747,145 +830,30 @@ function validateLeaf(l, ctx, counter) {
     };
 }
 
-// ── Node materialization (spec §2.5, §5.7) ──────────────────────────────────
-// Turns raw model nodes into schema-valid v2 nodes with a resolved lineId /
-// segmentIndex / payload. Drops individual bad nodes, never the whole response.
-function materializeNodes(parsed, userData, keyToLine) {
-    const activities = collectActivities(userData);
-    const ctxBase = {
+// ── v3 materialization ──────────────────────────────────────────────────────
+// Turns the model's nested output into schema-valid v3 nodes. Drops individual
+// bad nodes, never the whole response.
+function nodeCtx(userData) {
+    const ctx = {
         dimIds: new Set((userData.dimensions || []).map(d => d.id)),
         pathIds: new Set(),
-        activityIds: new Set(activities.map(e => e.act.id)),
+        activityIds: new Set(collectActivities(userData).map(e => e.act.id)),
         fallbackDim: (userData.dimensions || [])[0] ? userData.dimensions[0].id : 'uncategorized',
     };
-    (userData.dimensions || []).forEach(d => (d.paths || []).forEach(p => ctxBase.pathIds.add(p.id)));
-
-    const now = nowISO();
-    const built = [];
-    const byTitle = {};
-
-    (parsed.nodes || []).forEach(r => {
-        if (!r || typeof r.title !== 'string' || !r.title.trim()) return;
-        const nkey = (r.key !== undefined && r.key !== null) ? r.key : (r.goalId != null ? r.goalId : null);
-        const line = nkey != null ? keyToLine[nkey] : null;              // §5.7.1: bad/absent key -> fresh pick
-        const dimensionId = ctxBase.dimIds.has(r.dimensionId) ? r.dimensionId : ctxBase.fallbackDim;
-        const payload = validatePayload(r.payload, {
-            dimIds: ctxBase.dimIds, pathIds: ctxBase.pathIds, activityIds: ctxBase.activityIds,
-            fallbackDim: ctxBase.fallbackDim, title: r.title, description: r.description, dimensionId,
-        });
-        if (!payload) return;                                            // §5.7.2/.3: bad payload -> drop node
-        const node = {
-            id: newId('ttn'),
-            source: 'ai',
-            createdAt: now,
-            lineId: line ? line.id : null,
-            segmentIndex: line ? Math.max(0, parseInt(r.segmentIndex, 10) || 0) : null,
-            isTerminus: !!r.isTerminus,
-            lifecycle: 'locked',                                         // recomputed by the client
-            resolvedAt: null,
-            resolvedVia: null,
-            interchange: null,
-            title: String(r.title).trim().slice(0, 80),
-            description: String(r.description || '').slice(0, 240),
-            dimensionId,
-            prerequisites: [],
-            parentNodeId: null,
-            payload,
-        };
-        built.push({ node, rawPrereqs: Array.isArray(r.prerequisites) ? r.prerequisites : [] });
-        byTitle[node.title.toLowerCase()] = node;
-    });
-
-    // Interchanges (§5.7.8): must name exactly two distinct existing lines.
-    (parsed.interchanges || []).forEach(r => {
-        if (!r || typeof r.title !== 'string' || !r.title.trim()) return;
-        const gids = Array.isArray(r.keys) ? r.keys : (Array.isArray(r.goalIds) ? r.goalIds : []);
-        const l0 = keyToLine[gids[0]], l1 = keyToLine[gids[1]];
-        const dimensionId = ctxBase.dimIds.has(r.dimensionId) ? r.dimensionId : ctxBase.fallbackDim;
-        const payload = validatePayload(r.payload, {
-            dimIds: ctxBase.dimIds, pathIds: ctxBase.pathIds, activityIds: ctxBase.activityIds,
-            fallbackDim: ctxBase.fallbackDim, title: r.title, description: r.description, dimensionId,
-        });
-        if (!payload) return;
-        const si = Array.isArray(r.stationIndices) ? r.stationIndices : [0, 0];
-        if (l0 && l1 && l0.id !== l1.id) {
-            const node = {
-                id: newId('ttn'), source: 'ai', createdAt: now,
-                lineId: l0.id, segmentIndex: Math.max(0, parseInt(si[0], 10) || 0),
-                isTerminus: false, lifecycle: 'locked', resolvedAt: null, resolvedVia: null,
-                interchange: { lineIds: [l0.id, l1.id], stationIds: [] },
-                title: String(r.title).trim().slice(0, 80),
-                description: String(r.description || '').slice(0, 240),
-                dimensionId, prerequisites: [], parentNodeId: null, payload,
-            };
-            built.push({ node, rawPrereqs: [] });
-            byTitle[node.title.toLowerCase()] = node;
-        } else if (l0) {
-            // §5.7.8 demote to a normal node on the first line
-            const node = {
-                id: newId('ttn'), source: 'ai', createdAt: now,
-                lineId: l0.id, segmentIndex: Math.max(0, parseInt(si[0], 10) || 0),
-                isTerminus: false, lifecycle: 'locked', resolvedAt: null, resolvedVia: null,
-                interchange: null,
-                title: String(r.title).trim().slice(0, 80),
-                description: String(r.description || '').slice(0, 240),
-                dimensionId, prerequisites: [], parentNodeId: null, payload,
-            };
-            built.push({ node, rawPrereqs: [] });
-        }
-    });
-
-    // Resolve prerequisites (drop unresolvable rather than guessing §5.7.7).
-    const activityById = {};
-    activities.forEach(({ act }) => { activityById[act.id] = act; });
-    built.forEach(b => {
-        b.rawPrereqs.forEach(pr => {
-            if (!pr || typeof pr !== 'object') return;
-            if (pr.type === 'activity_mastered' && activityById[pr.activityId]) {
-                b.node.prerequisites.push({ type: 'activity_mastered', activityId: pr.activityId });
-            } else if (pr.type === 'node_mastered') {
-                const ref = pr.nodeTitle ? byTitle[String(pr.nodeTitle).toLowerCase()] : null;
-                if (ref && ref.id !== b.node.id) b.node.prerequisites.push({ type: 'node_mastered', nodeId: ref.id });
-            }
-        });
-    });
-
-    // Cycle detection on prerequisite edges (§5.7.9) — drop the offending edge.
-    const byId = {};
-    built.forEach(b => { byId[b.node.id] = b.node; });
-    built.forEach(b => {
-        b.node.prerequisites = b.node.prerequisites.filter(pr => {
-            if (pr.type !== 'node_mastered') return true;
-            return !reaches(pr.nodeId, b.node.id, byId, {});
-        });
-    });
-
-    const nodes = built.map(b => b.node);
-
-    // Load-budget cap across the whole response (§5.7.10): drop lowest-priority
-    // (deepest, latest) new-activity-bearing nodes until new load fits +8/week.
-    enforceLoadBudget(nodes, userData);
-
-    // Station threshold clamp (§5.7.6) happens in validateLinesStations against
-    // the emitted node counts per segment.
-    return nodes;
+    (userData.dimensions || []).forEach(d => (d.paths || []).forEach(p => ctx.pathIds.add(p.id)));
+    return ctx;
 }
 
-function reaches(fromId, targetId, byId, guard) {
-    if (fromId === targetId) return true;
-    if (guard[fromId]) return false;
-    guard[fromId] = true;
-    const n = byId[fromId];
-    if (!n) return false;
-    return (n.prerequisites || []).some(pr => pr.type === 'node_mastered' && reaches(pr.nodeId, targetId, byId, guard));
+function whyNowOf(raw) {
+    return (raw && typeof raw.whyNow === 'string' && raw.whyNow.trim())
+        ? raw.whyNow.trim().slice(0, 200) : null;
 }
 
+// Weekly load a node would add if fully accepted.
 function nodeNewLoad(node) {
-    // Weekly load a node would add if fully accepted: an activity node, plus any
-    // new-activity leaves inside a quest node.
     let load = 0;
     const w = f => (LOAD_WEIGHT[f] != null ? LOAD_WEIGHT[f] : 1);
-    if (node.payload.type === 'activity') {
+    if (node.payload.type === 'activity' && !node.payload.activityId) {
         load += w(node.payload.spec.frequency);
     } else if (node.payload.type === 'quest') {
         (function walk(children) {
@@ -898,13 +866,14 @@ function nodeNewLoad(node) {
     return load;
 }
 
-function enforceLoadBudget(nodes, userData) {
-    let total = nodes.reduce((s, n) => s + nodeNewLoad(n), 0);
+// The load budget applies ONLY to nodes born available (§6 LOAD RULE).
+// Anchors cost 0; locked tiers are exempt. Drop the heaviest available
+// suggestions until the additions fit.
+function enforceLoadBudget(nodes) {
+    const counted = nodes.filter(n => n.lifecycle === 'available' && n.role !== 'anchor');
+    let total = counted.reduce((s, n) => s + nodeNewLoad(n), 0);
     if (total <= LOAD_BUDGET_HEADROOM) return;
-    // Drop the heaviest / deepest nodes first until it fits. Never drop a node
-    // that is already resolved (fresh generation has none, but expansion may
-    // run alongside existing nodes — those are not in this array).
-    const ranked = nodes.slice().sort((a, b) => (b.segmentIndex || 0) - (a.segmentIndex || 0) || nodeNewLoad(b) - nodeNewLoad(a));
+    const ranked = counted.slice().sort((a, b) => nodeNewLoad(b) - nodeNewLoad(a));
     for (const n of ranked) {
         if (total <= LOAD_BUDGET_HEADROOM) break;
         const load = nodeNewLoad(n);
@@ -914,115 +883,136 @@ function enforceLoadBudget(nodes, userData) {
     }
 }
 
-// ── Lines / stations (spec §2.3, §2.4, §5.7.6) ──────────────────────────────
-// keyToGoal maps a reading key (which may be an input goalId or a split key) to
-// a Goal. Returns keyToLine so materializeNodes can place nodes by the same key.
-function validateLinesStations(parsed, userData, keyToGoal, colorStart) {
-    const lines = [];
-    const keyToLine = {};
-    const usedGoalIds = {};
-    (parsed.lines || []).forEach((rl, i) => {
-        const key = (rl.key != null) ? rl.key : rl.goalId;
-        const goal = keyToGoal[key];
-        if (!goal || keyToLine[key] || usedGoalIds[goal.id]) return;     // one line per goal
-        const kind = (rl.terminus && rl.terminus.kind === 'loop') ? 'loop' : 'flag';
-        let stations = (Array.isArray(rl.stations) ? rl.stations : [])
-            .map((s, idx) => ({
-                id: newId('st'),
-                lineId: null,
-                index: (typeof s.index === 'number') ? s.index : idx,
-                title: String(s.title || 'Milestone').slice(0, 24),
-                threshold: Math.max(2, parseInt(s.threshold, 10) || 2),
-                reachedAt: null,
-            }))
-            .sort((a, b) => a.index - b.index)
-            .map((s, idx) => (s.index = idx, s));
-        if (!stations.length) {
-            stations = [{ id: newId('st'), lineId: null, index: 0, title: 'Getting started', threshold: 2, reachedAt: null }];
+// Prerequisite cycle guard.
+function reaches(fromId, targetId, byId, guard) {
+    if (fromId === targetId) return true;
+    if (guard[fromId]) return false;
+    guard[fromId] = true;
+    const n = byId[fromId];
+    if (!n) return false;
+    return (n.prerequisites || []).some(pr => pr.type === 'node_mastered' && reaches(pr.nodeId, targetId, byId, guard));
+}
+
+// Lifecycle at birth (§6): anchors -> active (resolved if rolling window
+// already met); nodes with met prereqs, fusions with live sources, wildcards
+// -> available; deeper tiers -> locked.
+function lifecycleAtBirth(node, actById, resolvedByAnchor) {
+    if (node.role === 'anchor') return 'active';
+    if (node.role === 'wildcard') return 'available';
+    const met = (node.prerequisites || []).every(pr => {
+        if (pr.type === 'activity_mastered') {
+            const act = actById[pr.activityId];
+            if (!act) return false;
+            if (node.role === 'fusion') return true;           // alive is enough for fusion
+            return !!act.techTreeMasteredAt || rollingWindowMet(act);
         }
-        const line = {
-            id: newId('line'),
-            goalId: goal.id,
-            color: LINE_PALETTE[(colorStart + i) % LINE_PALETTE.length],
-            status: 'active',
-            terminus: { title: String((rl.terminus && rl.terminus.title) || goal.shortName || 'Summit').slice(0, 60), kind, nodeId: null },
-            stations,
-            regeneratedAt: null,
-        };
-        stations.forEach(s => (s.lineId = line.id));
-        lines.push(line);
-        keyToLine[key] = line;
-        usedGoalIds[goal.id] = true;
+        if (pr.type === 'node_mastered') {
+            // Within a fresh response only anchors can already be resolved.
+            if (node.role === 'fusion') return true;
+            return !!resolvedByAnchor[pr.nodeId];
+        }
+        return true;
     });
-    return { lines, keyToLine };
+    return met ? 'available' : 'locked';
 }
 
-// Clamp station thresholds to the node count in their segment (§5.7.6). Runs
-// after nodes exist so it can count them.
-function clampThresholds(lines, nodes) {
-    lines.forEach(line => {
-        line.stations.forEach(st => {
-            const count = nodes.filter(n => n.lineId === line.id && n.segmentIndex === st.index).length;
-            if (count >= 2) st.threshold = Math.min(st.threshold, count);
-            else st.threshold = Math.max(2, st.threshold); // keep >=2 even if underfilled; expansion may fill it
-        });
-    });
-}
-
-// ── Nested materialization (robust: nodes nested under their goal) ──────────
-// The model returns goals, each CONTAINING its terminus/stations/nodes, so there
-// is no key to mismatch. Returns { goals, lines, nodes, mergeSuggestion }.
-function nodeCtx(userData) {
-    const ctx = {
-        dimIds: new Set((userData.dimensions || []).map(d => d.id)),
-        pathIds: new Set(),
-        activityIds: new Set(collectActivities(userData).map(e => e.act.id)),
-        fallbackDim: (userData.dimensions || [])[0] ? userData.dimensions[0].id : 'uncategorized',
-    };
-    (userData.dimensions || []).forEach(d => (d.paths || []).forEach(p => ctx.pathIds.add(p.id)));
-    return ctx;
-}
-function buildNodeRecord(nr, line, ctx, now) {
-    if (!nr || typeof nr.title !== 'string' || !nr.title.trim()) return null;
-    const dimensionId = ctx.dimIds.has(nr.dimensionId) ? nr.dimensionId : ctx.fallbackDim;
-    const payload = validatePayload(nr.payload, {
-        dimIds: ctx.dimIds, pathIds: ctx.pathIds, activityIds: ctx.activityIds,
-        fallbackDim: ctx.fallbackDim, title: nr.title, description: nr.description, dimensionId,
-    });
-    if (!payload) return null;
-    return {
-        node: {
-            id: newId('ttn'), source: 'ai', createdAt: now,
-            lineId: line ? line.id : null,
-            segmentIndex: line ? Math.max(0, parseInt(nr.segmentIndex, 10) || 0) : null,
-            isTerminus: !!nr.isTerminus, lifecycle: 'locked', resolvedAt: null, resolvedVia: null,
-            interchange: null, title: String(nr.title).trim().slice(0, 80),
-            description: String(nr.description || '').slice(0, 240), dimensionId,
-            prerequisites: [], parentNodeId: null, payload,
-        },
-        rawPrereqs: Array.isArray(nr.prerequisites) ? nr.prerequisites : [],
-    };
-}
-function buildLineFor(gr, goal, color, now) {
-    // Simplified: a goal is just a coloured group with a plain "target" label.
-    // No stations/thresholds — tiers come from node prerequisites, drawn client-side.
-    const kind = goal.kind === 'rhythm' ? 'loop' : 'flag';
-    return {
-        id: newId('line'), goalId: goal.id, color, status: 'active',
-        terminus: { title: String(gr.target || (gr.terminus && gr.terminus.title) || goal.shortName || 'Goal').slice(0, 60), kind, nodeId: null },
-        stations: [], regeneratedAt: null,
-    };
-}
-function materializeNested(parsed, userData, existingGoals, colorStart, positional) {
+// Build the full web from a nested generate/add_goal/regenerate/revise
+// response. Returns { goals, nodes }.
+function materializeWeb(parsed, userData, existingGoals, opts) {
+    opts = opts || {};
     const ctx = nodeCtx(userData);
     const now = nowISO();
-    const goals = [], lines = [], built = [];
-    const byTitle = {}, shortNameToLine = {}, usedExisting = {}, sharpenedTexts = {};
-    const merge = [];
+    const activities = collectActivities(userData);
+    const actById = {};
+    activities.forEach(({ act }) => { actById[act.id] = act; });
+    const actDim = {};
+    activities.forEach(({ act, dim }) => { actDim[act.id] = dim.id; });
 
-    // Scoped modes (positional) reuse the existing goal(s) in order and never
-    // create extra lines; generate may split, so it maps by lineage.
+    const goals = [];
+    const usedExisting = {};
+    const usedColors = {};
+    (opts.keepColorsOf || []).forEach(g => { if (g.color) usedColors[g.color] = true; });
+    const positional = !!opts.positional;
     const cap = positional ? Math.max(1, existingGoals.length) : MAX_GOALS;
+
+    const built = [];                  // { node, rawPrereqs }
+    const byTitle = {};
+    const anchorByActivity = {};       // activityId -> anchor node
+    const resolvedByAnchor = {};       // anchor node id -> true if resolved at birth
+    const goalOfActivity = {};         // activityId -> [goalIds] (via anchors)
+
+    function nextColor(pref) {
+        if (pref && !usedColors[pref]) { usedColors[pref] = true; return pref; }
+        const c = GOAL_PALETTE.find(x => !usedColors[x]) || GOAL_PALETTE[goals.length % GOAL_PALETTE.length];
+        usedColors[c] = true;
+        return c;
+    }
+
+    function addAnchor(activityId, goalId, whyNow) {
+        const act = actById[activityId];
+        if (!act) return null;
+        let node = anchorByActivity[activityId];
+        if (node) {
+            if (goalId && node.goalIds.indexOf(goalId) === -1) node.goalIds.push(goalId);
+            if (!node.whyNow && whyNow) node.whyNow = whyNow;
+            return node;
+        }
+        const mastered = !!act.techTreeMasteredAt || rollingWindowMet(act);
+        const th = masteryThresholdFor(act);
+        node = {
+            id: newId('ttn'), source: 'ai', createdAt: now,
+            role: 'anchor', goalIds: goalId ? [goalId] : [],
+            dimensionId: actDim[activityId] || ctx.fallbackDim,
+            lifecycle: 'active',
+            resolvedAt: mastered ? (act.techTreeMasteredAt || now) : null,
+            resolvedVia: mastered ? 'mastery' : null,
+            title: String(act.name || 'Activity').slice(0, 80),
+            description: String(act.description || '').slice(0, 240),
+            whyNow: whyNow || null,
+            prerequisites: [],
+            payload: {
+                type: 'activity', activityId: activityId,
+                spec: {
+                    name: act.name, description: (act.description || '').slice(0, 240),
+                    baseXP: act.baseXP || 10, frequency: act.frequency || 'weekly',
+                    dimensionId: actDim[activityId] || ctx.fallbackDim, suggestedPathId: null,
+                },
+                mastery: { target: th.count, windowDays: th.windowDays },
+            },
+        };
+        anchorByActivity[activityId] = node;
+        if (node.resolvedAt) resolvedByAnchor[node.id] = true;
+        built.push({ node, rawPrereqs: [] });
+        byTitle[node.title.toLowerCase()] = node;
+        return node;
+    }
+
+    function buildNode(nr, goalIds, role) {
+        if (!nr || typeof nr.title !== 'string' || !nr.title.trim()) return null;
+        const dimensionId = ctx.dimIds.has(nr.dimensionId) ? nr.dimensionId : ctx.fallbackDim;
+        const payload = validatePayload(nr.payload, {
+            dimIds: ctx.dimIds, pathIds: ctx.pathIds, activityIds: ctx.activityIds,
+            fallbackDim: ctx.fallbackDim, title: nr.title, description: nr.description, dimensionId,
+        });
+        if (!payload) return null;
+        const node = {
+            id: newId('ttn'), source: 'ai', createdAt: now,
+            role: role, goalIds: (goalIds || []).slice(),
+            dimensionId,
+            lifecycle: 'locked',                 // set properly after prereq resolution
+            resolvedAt: null, resolvedVia: null,
+            title: String(nr.title).trim().slice(0, 80),
+            description: String(nr.description || '').slice(0, 240),
+            whyNow: whyNowOf(nr),
+            prerequisites: [],
+            payload,
+        };
+        built.push({ node, rawPrereqs: Array.isArray(nr.prerequisites) ? nr.prerequisites : [] });
+        byTitle[node.title.toLowerCase()] = node;
+        return node;
+    }
+
+    // Goals + their anchors + their nodes.
     (parsed.goals || []).slice(0, cap).forEach((gr, i) => {
         if (!gr || typeof gr !== 'object') return;
         let goal;
@@ -1032,137 +1022,87 @@ function materializeNested(parsed, userData, existingGoals, colorStart, position
             goal = gr.fromGoalId ? existingGoals.find(g => g.id === gr.fromGoalId && !usedExisting[g.id]) : null;
         }
         if (goal) usedExisting[goal.id] = true;
-        else goal = { id: newId('goal'), rawText: '', createdAt: now, achievedAt: null, retiredAt: null, sharpenedEditedByUser: false };
+        else goal = { id: newId('goal'), rawText: '', createdAt: now, achievedAt: null, retiredAt: null, sharpenedEditedByUser: false, color: null, regeneratedAt: null };
         goal.sharpened = String(gr.sharpened || goal.rawText || 'Goal').slice(0, 200);
         goal.shortName = String(gr.shortName || goal.rawText || 'Goal').slice(0, 14);
         goal.kind = gr.kind === 'rhythm' ? 'rhythm' : 'destination';
         goal.kindReason = goal.kind === 'rhythm' ? (gr.kindReason ? String(gr.kindReason).slice(0, 200) : 'There is no finish line here — a way of living.') : null;
         if (!goal.rawText) goal.rawText = goal.sharpened;
+        goal.color = nextColor(goal.color);
         goals.push(goal);
-        const k = goal.sharpened.trim().toLowerCase();
-        if (sharpenedTexts[k]) merge.push([sharpenedTexts[k], goal.id]); else sharpenedTexts[k] = goal.id;
-        // Line + its nested nodes.
-        const line = buildLineFor(gr, goal, LINE_PALETTE[(colorStart + i) % LINE_PALETTE.length], now);
-        lines.push(line);
-        shortNameToLine[goal.shortName.toLowerCase()] = line;
+
+        (Array.isArray(gr.anchors) ? gr.anchors : []).slice(0, 5).forEach(a => {
+            if (!a || !a.activityId) return;
+            const node = addAnchor(a.activityId, goal.id, whyNowOf(a));
+            if (node) (goalOfActivity[a.activityId] = goalOfActivity[a.activityId] || []).push(goal.id);
+        });
         (Array.isArray(gr.nodes) ? gr.nodes : []).forEach(nr => {
-            const rec = buildNodeRecord(nr, line, ctx, now);
-            if (rec) { built.push(rec); byTitle[rec.node.title.toLowerCase()] = rec.node; }
+            const role = nr && nr.role === 'upgrade' ? 'upgrade' : 'suggestion';
+            buildNode(nr, [goal.id], role);
         });
     });
 
-    // Fresh picks — top-level, no line.
-    (parsed.freshPicks || []).forEach(nr => {
-        const rec = buildNodeRecord(nr, null, ctx, now);
-        if (rec) { built.push(rec); byTitle[rec.node.title.toLowerCase()] = rec.node; }
+    // Fusions (STEP 4): sources must be real activities in DIFFERENT
+    // dimensions. goalIds = union of the source anchors' goals. Never forced —
+    // dishonest ones are dropped.
+    (parsed.fusions || []).slice(0, 4).forEach(fr => {
+        if (!fr || typeof fr !== 'object') return;
+        const srcIds = (Array.isArray(fr.sourceActivityIds) ? fr.sourceActivityIds : []).filter(id => actById[id]);
+        const srcDims = Array.from(new Set(srcIds.map(id => actDim[id])));
+        if (srcIds.length < 2 || srcDims.length < 2) return;
+        const goalIds = [];
+        srcIds.forEach(id => (goalOfActivity[id] || []).forEach(gid => { if (goalIds.indexOf(gid) === -1) goalIds.push(gid); }));
+        const node = buildNode(fr, goalIds, 'fusion');
+        if (!node) return;
+        // Ensure both sources are anchored so the fusion has visible roots.
+        srcIds.slice(0, 2).forEach(id => addAnchor(id, null, null));
+        node.prerequisites = srcIds.slice(0, 2).map(id => ({ type: 'activity_mastered', activityId: id }));
     });
 
-    // Interchanges — reference goals by shortName (§5.7.8).
-    (parsed.interchanges || []).forEach(r => {
-        if (!r || typeof r.title !== 'string' || !r.title.trim()) return;
-        const names = Array.isArray(r.betweenShortNames) ? r.betweenShortNames : [];
-        const l0 = shortNameToLine[String(names[0] || '').toLowerCase()];
-        const l1 = shortNameToLine[String(names[1] || '').toLowerCase()];
-        const dimensionId = ctx.dimIds.has(r.dimensionId) ? r.dimensionId : ctx.fallbackDim;
-        const payload = validatePayload(r.payload, { dimIds: ctx.dimIds, pathIds: ctx.pathIds, activityIds: ctx.activityIds,
-            fallbackDim: ctx.fallbackDim, title: r.title, description: r.description, dimensionId });
-        if (!payload) return;
-        const si = Array.isArray(r.stationIndices) ? r.stationIndices : [0, 0];
-        if (l0 && l1 && l0.id !== l1.id) {
-            built.push({ node: { id: newId('ttn'), source: 'ai', createdAt: now, lineId: l0.id,
-                segmentIndex: Math.max(0, parseInt(si[0], 10) || 0), isTerminus: false, lifecycle: 'locked',
-                resolvedAt: null, resolvedVia: null, interchange: { lineIds: [l0.id, l1.id], stationIds: [] },
-                title: String(r.title).trim().slice(0, 80), description: String(r.description || '').slice(0, 240),
-                dimensionId, prerequisites: [], parentNodeId: null, payload }, rawPrereqs: [] });
-        } else if (l0) {
-            built.push({ node: { id: newId('ttn'), source: 'ai', createdAt: now, lineId: l0.id,
-                segmentIndex: Math.max(0, parseInt(si[0], 10) || 0), isTerminus: false, lifecycle: 'locked',
-                resolvedAt: null, resolvedVia: null, interchange: null, title: String(r.title).trim().slice(0, 80),
-                description: String(r.description || '').slice(0, 240), dimensionId, prerequisites: [], parentNodeId: null, payload }, rawPrereqs: [] });
-        }
+    // Wildcards (STEP 5): exactly 0-2, no goal, no prereqs, tiny load.
+    (parsed.wildcards || []).slice(0, 2).forEach(wr => {
+        if (!wr || typeof wr !== 'object') return;
+        const node = buildNode(wr, [], 'wildcard');
+        if (!node) return;
+        if (node.payload.type !== 'activity') { built.splice(built.findIndex(b => b.node === node), 1); delete byTitle[node.title.toLowerCase()]; return; }
+        node.payload.spec.baseXP = Math.min(WILDCARD_MAX_XP, node.payload.spec.baseXP);
+        if (node.payload.spec.frequency === 'daily') node.payload.spec.frequency = 'weekly';
+        node.prerequisites = [];
+        node.lifecycle = 'available';
     });
 
-    // Prerequisites (drop unresolvable §5.7.7).
-    const activityById = {};
-    collectActivities(userData).forEach(({ act }) => { activityById[act.id] = act; });
+    // Resolve prerequisites (drop unresolvable rather than guessing).
     built.forEach(b => {
         b.rawPrereqs.forEach(pr => {
             if (!pr || typeof pr !== 'object') return;
-            if (pr.type === 'activity_mastered' && activityById[pr.activityId]) b.node.prerequisites.push({ type: 'activity_mastered', activityId: pr.activityId });
-            else if (pr.type === 'node_mastered') { const ref = pr.nodeTitle ? byTitle[String(pr.nodeTitle).toLowerCase()] : null; if (ref && ref.id !== b.node.id) b.node.prerequisites.push({ type: 'node_mastered', nodeId: ref.id }); }
+            if (pr.type === 'activity_mastered' && actById[pr.activityId]) {
+                b.node.prerequisites.push({ type: 'activity_mastered', activityId: pr.activityId });
+            } else if (pr.type === 'node_mastered') {
+                const ref = pr.nodeTitle ? byTitle[String(pr.nodeTitle).toLowerCase()] : null;
+                if (ref && ref.id !== b.node.id) b.node.prerequisites.push({ type: 'node_mastered', nodeId: ref.id });
+            }
         });
     });
-    // Cycle detection (§5.7.9).
+
+    // Cycle detection on prerequisite edges — drop the offending edge.
     const byId = {};
     built.forEach(b => { byId[b.node.id] = b.node; });
-    built.forEach(b => { b.node.prerequisites = b.node.prerequisites.filter(pr => pr.type !== 'node_mastered' || !reaches(pr.nodeId, b.node.id, byId, {})); });
+    built.forEach(b => {
+        b.node.prerequisites = b.node.prerequisites.filter(pr =>
+            pr.type !== 'node_mastered' || !reaches(pr.nodeId, b.node.id, byId, {}));
+    });
 
+    // Lifecycle at birth, then the scoped load budget.
     const nodes = built.map(b => b.node);
-    enforceLoadBudget(nodes, userData);       // §5.7.10
-    clampThresholds(lines, nodes);            // §5.7.6
-    return { goals, lines, nodes, mergeSuggestion: merge.length ? merge[0] : null };
+    nodes.forEach(n => {
+        if (n.role === 'anchor' || n.role === 'wildcard') return;
+        n.lifecycle = lifecycleAtBirth(n, actById, resolvedByAnchor);
+    });
+    enforceLoadBudget(nodes);
+    return { goals, nodes: nodes.slice(0, MAX_NODES) };
 }
 
-// ── Readings — SCOPED modes (add_line/regenerate/revise) ────────────────────
-// Mutates the existing scoped goals in place; matches a reading to a goal by
-// key / goalId / fromGoalId. Returns { keyToGoal, merge }.
-function applyReadings(parsed, goals) {
-    const merge = [];
-    const sharpenedTexts = {};
-    const keyToGoal = {};
-    goals.forEach(g => { keyToGoal[g.id] = g; });
-    (parsed.readings || []).forEach(r => {
-        const goal = goals.find(g => g.id === r.key || g.id === r.goalId || g.id === r.fromGoalId) || goals[0];
-        if (!goal) return;
-        goal.sharpened = String(r.sharpened || goal.rawText).slice(0, 200);
-        goal.shortName = String(r.shortName || goal.rawText).slice(0, 14);
-        goal.kind = r.kind === 'rhythm' ? 'rhythm' : 'destination';
-        goal.kindReason = goal.kind === 'rhythm' ? (r.kindReason ? String(r.kindReason).slice(0, 200) : 'There is no finish line here — this is a way of living.') : null;
-        if (r.key != null) keyToGoal[r.key] = goal;
-        const k = goal.sharpened.trim().toLowerCase();
-        if (sharpenedTexts[k]) merge.push([sharpenedTexts[k], goal.id]);
-        else sharpenedTexts[k] = goal.id;
-    });
-    goals.forEach(g => {
-        if (!g.sharpened) { g.sharpened = g.rawText; g.kind = g.kind || 'destination'; g.shortName = g.shortName || String(g.rawText).slice(0, 14); }
-    });
-    return { keyToGoal, merge: merge.length ? merge[0] : null };
-}
-
-// ── Readings — GENERATE mode (splits one entry into distinct goals §3.4) ─────
-// Builds a fresh goals array from the model's readings, preserving lineage to
-// the user's typed entries via fromGoalId where the model provides it.
-function buildGoalsFromReadings(parsed, existingGoals) {
-    const keyToGoal = {};
-    const goals = [];
-    const usedExisting = {};
-    const merge = [];
-    const sharpenedTexts = {};
-    (parsed.readings || []).slice(0, MAX_GOALS).forEach(r => {
-        const key = (r.key != null) ? r.key : (r.goalId || r.fromGoalId);
-        if (key == null) return;
-        // Reuse an existing goal (preserve id + createdAt) when this reading maps
-        // 1:1 to a typed entry; otherwise mint a new goal for the split.
-        const lineageId = r.fromGoalId || (typeof r.key === 'string' ? r.key : null) || r.goalId;
-        let goal = null;
-        const existing = existingGoals.find(g => g.id === lineageId);
-        if (existing && !usedExisting[existing.id]) { goal = existing; usedExisting[existing.id] = true; }
-        if (!goal) goal = { id: newId('goal'), rawText: '', createdAt: nowISO(), achievedAt: null, retiredAt: null, sharpenedEditedByUser: false };
-        goal.sharpened = String(r.sharpened || goal.rawText || 'Goal').slice(0, 200);
-        goal.shortName = String(r.shortName || goal.rawText || 'Goal').slice(0, 14);
-        goal.kind = r.kind === 'rhythm' ? 'rhythm' : 'destination';
-        goal.kindReason = goal.kind === 'rhythm' ? (r.kindReason ? String(r.kindReason).slice(0, 200) : 'There is no finish line here — this is a way of living.') : null;
-        if (!goal.rawText) goal.rawText = goal.sharpened;  // split goals have no typed rawText of their own
-        keyToGoal[key] = goal;
-        goals.push(goal);
-        const k = goal.sharpened.trim().toLowerCase();
-        if (sharpenedTexts[k]) merge.push([sharpenedTexts[k], goal.id]);
-        else sharpenedTexts[k] = goal.id;
-    });
-    return { goals, keyToGoal, merge: merge.length ? merge[0] : null };
-}
-
-// ── Push (best-effort, spec §4.4, §7.3) ─────────────────────────────────────
+// ── Push (best-effort) ──────────────────────────────────────────────────────
 async function sendMapPush(userData, body) {
     if (!webpush) return;
     const sub = userData.pushSubscription;
@@ -1170,7 +1110,7 @@ async function sendMapPush(userData, body) {
     try {
         await webpush.sendNotification(
             { endpoint: sub.endpoint, keys: sub.keys },
-            JSON.stringify({ title: 'Mindkraft ⚔️', body: body || 'Your map is ready.' })
+            JSON.stringify({ title: 'Mindkraft ⚔️', body: body || 'Your web is ready.' })
         );
     } catch (err) {
         console.warn('  push failed (status ' + (err.statusCode || '?') + ')');
@@ -1179,194 +1119,226 @@ async function sendMapPush(userData, body) {
 
 // ── Per-request processing ──────────────────────────────────────────────────
 async function processUser(docRef, userData) {
-    const techTree = userData.techTree || {};
+    const techTree = ensureV3Shape(userData.techTree || {});
+    userData.techTree = techTree;
     const req = techTree.pendingRequest;
     console.log(`Processing ${req.type} for user ${docRef.id}`);
 
-    // Stale-after-regenerate guard (§7.6, §10.16): an expand landing after a
-    // regenerate on the same line is discarded.
     const rejection = canProcessRequest(req, techTree, userData);
     if (rejection) {
         console.log(`  Rejected: ${rejection}`);
         await docRef.update({
             'techTree.pendingRequest': admin.firestore.FieldValue.delete(),
             'techTree.lastError': rejection,
-            'techTree.status': (techTree.lines && techTree.lines.length) ? 'ready' : 'error',
+            'techTree.status': (techTree.nodes && techTree.nodes.length) ? 'ready' : 'error',
         });
         return;
     }
 
-    if (req.type === 'generate' || req.type === 'add_line' || req.type === 'regenerate' || req.type === 'revise') {
-        await processGenerateFamily(docRef, userData, req);
+    const type = req.type === 'add_line' ? 'add_goal' : req.type;
+    if (type === 'generate' || type === 'add_goal' || type === 'regenerate' || type === 'revise') {
+        await processGenerateFamily(docRef, userData, req, type);
         return;
     }
-    if (req.type === 'expand') {
+    if (type === 'expand') {
         await processExpand(docRef, userData, req);
         return;
     }
-    if (req.type === 'quest_patch') {
-        // Client-initiated patch requests are not used in v2 — the worker emits
-        // patch proposals from expand. Clear the flag safely.
+    if (type === 'quest_patch') {
         await docRef.update({ 'techTree.pendingRequest': admin.firestore.FieldValue.delete() });
         return;
     }
 }
 
-async function processGenerateFamily(docRef, userData, req) {
+function anchorSummaries(techTree, actById) {
+    return (techTree.nodes || [])
+        .filter(n => n.role === 'anchor' && n.payload && n.payload.activityId && actById[n.payload.activityId])
+        .map(n => ({ activityId: n.payload.activityId, name: n.title, dimensionId: n.dimensionId }));
+}
+
+async function processGenerateFamily(docRef, userData, req, type) {
     const techTree = userData.techTree;
     const goals = (techTree.goals || []).filter(g => !g.retiredAt);
+    const activities = collectActivities(userData);
+    const actById = {};
+    activities.forEach(({ act }) => { actById[act.id] = act; });
 
-    let opts = { mode: req.type };
+    let opts = { mode: type };
     let goalIds = null;
-    let colorStart = 0;
+    let scopedGoal = null;
 
-    if (req.type === 'add_line') {
+    if (type === 'add_goal') {
         goalIds = [req.payload.goalId];
         opts.goalIds = goalIds;
-        colorStart = (techTree.lines || []).filter(l => l.status !== 'retired').length;
-    } else if (req.type === 'regenerate') {
-        const line = (techTree.lines || []).find(l => l.id === req.payload.lineId);
-        goalIds = [line.goalId];
+        opts.existingAnchors = anchorSummaries(techTree, actById);
+    } else if (type === 'regenerate') {
+        scopedGoal = goals.find(g => g.id === (req.payload && req.payload.goalId)) || goals[0];
+        goalIds = [scopedGoal.id];
         opts.goalIds = goalIds;
-        opts.terminus = line.terminus;
-        opts.resolvedOnLine = (techTree.nodes || []).filter(n => n.lineId === line.id && n.resolvedAt).map(n => n.title);
-        colorStart = (techTree.lines || []).indexOf(line);
-    } else if (req.type === 'revise') {
+        opts.resolvedOnGoal = (techTree.nodes || [])
+            .filter(n => (n.goalIds || []).indexOf(scopedGoal.id) !== -1 && n.resolvedAt)
+            .map(n => n.title);
+    } else if (type === 'revise') {
         const ids = (req.payload.nodeIds) || [];
         const flagged = (techTree.nodes || []).filter(n => ids.indexOf(n.id) !== -1);
         opts.nodesToRevise = flagged.map(n => ({ title: n.title, description: n.description }));
         opts.note = req.payload.note;
-        // Revision reuses the goals of the flagged nodes' lines.
-        const lineIds = new Set(flagged.map(n => n.lineId).filter(Boolean));
-        const revGoalIds = (techTree.lines || []).filter(l => lineIds.has(l.id)).map(l => l.goalId);
+        const revGoalIds = [];
+        flagged.forEach(n => (n.goalIds || []).forEach(gid => { if (revGoalIds.indexOf(gid) === -1) revGoalIds.push(gid); }));
         goalIds = revGoalIds.length ? revGoalIds : goals.map(g => g.id);
         opts.goalIds = goalIds;
     }
 
     const scopedGoals = goals.filter(g => !goalIds || goalIds.indexOf(g.id) !== -1);
     const prompt = buildGeneratePrompt(userData, opts);
-    const budget = (PROVIDER.maxTokens && PROVIDER.maxTokens[req.type]) || MAX_TOKENS[req.type] || 4000;
-    const raw = await callModel(prompt, budget);
+    const raw = await callModel(prompt, tokenBudget(type));
     const parsed = parseModelJson(raw);
 
-    // Nested materialization: each goal object carries its own line + nodes, so
-    // a node can never be orphaned by a key mismatch. GENERATE may split one
-    // entry into several distinct goals (§3.4); scoped modes reuse in order.
-    const built = materializeNested(parsed, userData, scopedGoals, colorStart, req.type !== 'generate');
-    const generatedGoals = built.goals;
-    const mergeSuggestion = built.mergeSuggestion;
-    const newLines = built.lines;
+    // Nested materialization: each goal object carries its own anchors +
+    // nodes, so nothing can be orphaned by a key mismatch. GENERATE may split
+    // one entry into several distinct goals; scoped modes reuse in order.
+    const built = materializeWeb(parsed, userData, scopedGoals, {
+        positional: type !== 'generate',
+        keepColorsOf: type === 'generate' ? [] : goals,
+    });
+    let newGoals = built.goals;
     let newNodes = built.nodes;
-    if (!newLines.length && (req.type === 'generate' || req.type === 'add_line')) {
-        throw new Error('Model produced no valid lines');
+    if (!newGoals.length && (type === 'generate' || type === 'add_goal')) {
+        throw new Error('Model produced no valid goals');
     }
-    if (!newNodes.length && req.type === 'generate') {
+    if (!newNodes.length && type === 'generate') {
         throw new Error('Model produced no valid nodes');
     }
 
-    const challenges = validateChallenges(parsed.challenges, userData);
-
-    // Merge into the existing tree, preserving everything immortal (§9.2).
     const now = nowISO();
     const oldNodes = techTree.nodes || [];
-    const oldLines = techTree.lines || [];
-    let lines, nodes;
+    let outGoals, outNodes;
 
-    if (req.type === 'generate') {
-        // A full rebuild replaces the frontier, but resolved nodes are immortal
-        // (§9.2) — carry them forward as fresh picks (their old lines are gone).
-        const survivors = oldNodes.filter(n => n.resolvedAt)
-            .map(n => Object.assign({}, n, { lineId: null, segmentIndex: null, interchange: null, parentNodeId: null }));
-        lines = newLines;
-        nodes = survivors.concat(newNodes);
-    } else if (req.type === 'add_line') {
-        lines = oldLines.concat(newLines);
-        nodes = oldNodes.concat(newNodes);
-    } else if (req.type === 'regenerate') {
-        const targetLineId = req.payload.lineId;
-        const newLine = newLines[0];
-        // Keep resolved + reached; replace unclaimed frontier on this line only.
-        const keptNodes = oldNodes.filter(n =>
-            n.lineId !== targetLineId || n.resolvedAt || n.lifecycle === 'active');
-        // Re-point kept nodes to the new line id; carry reached stations forward.
-        const oldLine = oldLines.find(l => l.id === targetLineId);
-        if (newLine && oldLine) {
-            newLine.regeneratedAt = now;
-            // Preserve reached stations by index.
-            newLine.stations.forEach(st => {
-                const prev = (oldLine.stations || []).find(o => o.index === st.index && o.reachedAt);
-                if (prev) st.reachedAt = prev.reachedAt;
-            });
-            keptNodes.forEach(n => { if (n.lineId === targetLineId) n.lineId = newLine.id; });
-        }
-        lines = oldLines.map(l => l.id === targetLineId ? (newLine || l) : l);
-        nodes = keptNodes.concat(newNodes);
-    } else { // revise
-        const ids = new Set((req.payload.nodeIds) || []);
-        const keptNodes = oldNodes.filter(n => !ids.has(n.id) || n.resolvedAt || n.lifecycle === 'active');
-        // revise keeps existing lines; only swap flagged nodes' payloads/titles.
-        lines = oldLines;
-        // Re-home revised nodes onto their original lines/segments where possible.
-        const flaggedOld = oldNodes.filter(n => ids.has(n.id));
-        newNodes.forEach((nn, i) => {
-            const old = flaggedOld[i];
-            if (old) { nn.lineId = old.lineId; nn.segmentIndex = old.segmentIndex; }
+    // Merge an incoming node set with kept old nodes: an incoming anchor for
+    // an activity that already has a node folds its goalIds into the existing
+    // node instead of duplicating it.
+    function mergeNodes(kept, incoming) {
+        const anchorFor = {};
+        kept.forEach(n => { if (n.payload && n.payload.activityId) anchorFor[n.payload.activityId] = n; });
+        const out = kept.slice();
+        const idMap = {};      // incoming node id -> surviving node id
+        incoming.forEach(n => {
+            const aid = n.payload && n.payload.activityId;
+            if (aid && anchorFor[aid]) {
+                const keep = anchorFor[aid];
+                (n.goalIds || []).forEach(gid => { if (keep.goalIds.indexOf(gid) === -1) keep.goalIds.push(gid); });
+                if (!keep.whyNow && n.whyNow) keep.whyNow = n.whyNow;
+                if (!keep.role) keep.role = 'anchor';
+                idMap[n.id] = keep.id;
+                return;
+            }
+            if (aid) anchorFor[aid] = n;
+            out.push(n);
         });
-        nodes = keptNodes.concat(newNodes);
+        // Re-point prerequisites at surviving node ids.
+        out.forEach(n => {
+            (n.prerequisites || []).forEach(pr => {
+                if (pr.type === 'node_mastered' && idMap[pr.nodeId]) pr.nodeId = idMap[pr.nodeId];
+            });
+        });
+        return out;
     }
 
-    const connections = buildConnections(nodes);
+    if (type === 'generate') {
+        // A full rebuild replaces the frontier, but everything the user has
+        // accepted or resolved is immortal — carried forward with goalIds
+        // filtered to the surviving goals.
+        outGoals = newGoals.concat((techTree.goals || []).filter(g => g.retiredAt));
+        const goalIdSet = new Set(outGoals.map(g => g.id));
+        const survivors = oldNodes
+            .filter(n => n.resolvedAt || n.lifecycle === 'active')
+            .map(n => Object.assign({}, n, { goalIds: (n.goalIds || []).filter(gid => goalIdSet.has(gid)) }));
+        outNodes = mergeNodes(survivors, newNodes);
+    } else if (type === 'add_goal') {
+        outGoals = techTree.goals;
+        outNodes = mergeNodes(oldNodes, newNodes);
+    } else if (type === 'regenerate') {
+        outGoals = techTree.goals;
+        const gid = scopedGoal.id;
+        scopedGoal.regeneratedAt = now;
+        // Replace only this goal's unclaimed frontier: drop unaccepted nodes
+        // that serve ONLY this goal; multi-goal and accepted nodes stay.
+        const kept = oldNodes.filter(n => {
+            const servesOnlyThis = (n.goalIds || []).length === 1 && n.goalIds[0] === gid;
+            return !servesOnlyThis || n.resolvedAt || n.lifecycle === 'active' || n.source === 'user';
+        });
+        outNodes = mergeNodes(kept, newNodes);
+    } else { // revise
+        outGoals = techTree.goals;
+        const ids = new Set((req.payload.nodeIds) || []);
+        const kept = oldNodes.filter(n => !ids.has(n.id) || n.resolvedAt || n.lifecycle === 'active');
+        // Replacements inherit the flagged nodes' goalIds when the model
+        // omitted them (materialized under the same scoped goals already).
+        outNodes = mergeNodes(kept, newNodes);
+    }
+
+    if (outNodes.length > MAX_NODES) {
+        // Trim the least-committed first: locked suggestions from the back.
+        const overflow = outNodes.length - MAX_NODES;
+        let dropped = 0;
+        for (let i = outNodes.length - 1; i >= 0 && dropped < overflow; i--) {
+            const n = outNodes[i];
+            if (!n.resolvedAt && n.lifecycle !== 'active' && n.role !== 'anchor' && n.source !== 'user') {
+                outNodes.splice(i, 1); dropped++;
+            }
+        }
+    }
 
     const update = {
-        'techTree.schemaVersion': 2,
+        'techTree.schemaVersion': 3,
         'techTree.status': 'ready',
-        // generate replaces goals with the model's split (§3.4); scoped modes
-        // mutate the existing goal objects in place, so keep the array.
-        'techTree.goals': req.type === 'generate'
-            ? generatedGoals.concat((techTree.goals || []).filter(g => g.retiredAt))
-            : techTree.goals,
-        'techTree.lines': lines,
-        'techTree.nodes': nodes,
-        'techTree.connections': connections,
+        'techTree.goals': outGoals,
+        'techTree.nodes': outNodes,
         'techTree.pendingRequest': admin.firestore.FieldValue.delete(),
         'techTree.lastError': admin.firestore.FieldValue.delete(),
         'techTree.lastGeneratedAt': now,
-        'techTree.suggestedChallenges': challenges,
+        // v2 leftovers die with the first v3 write.
+        'techTree.lines': admin.firestore.FieldValue.delete(),
+        'techTree.connections': admin.firestore.FieldValue.delete(),
+        'techTree.northStarLineId': admin.firestore.FieldValue.delete(),
+        'techTree.mergeSuggestion': admin.firestore.FieldValue.delete(),
     };
-    if (req.type === 'revise') {
+    if (type === 'revise') {
         update['techTree.revisionsUsed'] = (techTree.revisionsUsed || 0) + 1;
     }
-    if (parsed.vision && (req.type === 'generate')) update['techTree.vision'] = parsed.vision;
+    if (parsed.vision && type === 'generate') update['techTree.vision'] = parsed.vision;
     else if (parsed.vision && !techTree.vision) update['techTree.vision'] = parsed.vision;
-    if (mergeSuggestion) update['techTree.mergeSuggestion'] = mergeSuggestion;
 
     await docRef.update(update);
-    console.log(`  Done — ${req.type}: ${newLines.length} line(s), ${newNodes.length} node(s), ${challenges.length} challenge(s)`);
-    await sendMapPush(userData, req.type === 'generate' ? 'Your map is ready.' : 'Your map has changed — take a look.');
+    console.log(`  Done — ${type}: ${newGoals.length} goal(s), ${newNodes.length} new node(s), ${outNodes.length} total`);
+    await sendMapPush(userData, type === 'generate' ? 'Your web is ready.' : 'Your web has grown — take a look.');
 }
 
+// ── Expansion (§6.1): fan under mastery + quest absorption ──────────────────
 async function processExpand(docRef, userData, req) {
     const techTree = userData.techTree;
-    const ids = (req.payload && req.payload.resolvedNodeIds) || [];
+    const ids = (req.payload && req.payload.resolvedNodeIds) || (req.payload && req.payload.nodeIds) || [];
     const nodes = techTree.nodes || [];
-    const lines = techTree.lines || [];
     const activities = collectActivities(userData);
     const actById = {};
     activities.forEach(({ act }) => { actById[act.id] = act; });
+    const actDim = {};
+    activities.forEach(({ act, dim }) => { actDim[act.id] = dim.id; });
+    const ctx = nodeCtx(userData);
+    const now = nowISO();
+    const goalsById = {};
+    (techTree.goals || []).forEach(g => { goalsById[g.id] = g; });
 
     const added = [];
     const patches = [];
+    const existingTitles = nodes.filter(n => n.lifecycle !== 'archived').map(n => n.title);
 
-    for (const id of ids) {
+    for (const id of ids.slice(0, 3)) {
         const resolved = nodes.find(n => n.id === id && n.resolvedAt);
         if (!resolved) continue;
-        // §10.8: a resolved fresh pick has nothing to converge toward.
-        if (!resolved.lineId) continue;
-        const line = lines.find(l => l.id === resolved.lineId);
-        if (!line) continue;
 
-        // §7.7: a recurring quest node that just resolved / gained clean cycles
-        // may earn a quest_patch proposal instead of new sibling nodes.
+        // A recurring quest that sealed ≥4 clean cycles may earn an add_group
+        // proposal instead of new sibling nodes (kept verbatim from v2).
         if (resolved.payload && resolved.payload.type === 'quest'
             && resolved.payload.spec && resolved.payload.spec.cadence.type === 'recurring'
             && resolved.payload.projectId) {
@@ -1377,58 +1349,126 @@ async function processExpand(docRef, userData, req) {
             }
         }
 
-        // Fan 2-3 sibling nodes into the resolved node's segment (§7.2).
-        const nextStation = (line.stations || []).find(s => s.index >= resolved.segmentIndex && !s.reachedAt)
-            || (line.stations || [])[line.stations.length - 1];
-        const segTitles = nodes.filter(n => n.lineId === line.id && n.segmentIndex === resolved.segmentIndex).map(n => n.title);
-        const act = resolved.payload.activityId ? actById[resolved.payload.activityId] : null;
-        const ctx = {
-            resolved,
-            terminusTitle: line.terminus.title,
-            stationTitle: nextStation ? nextStation.title : line.terminus.title,
-            segmentTitles: segTitles,
-            activityHistory: act ? { completions: act.completionCount || 0, streak: act.currentStreak || 0 } : null,
+        const goalNames = (resolved.goalIds || []).map(gid => goalsById[gid]).filter(Boolean)
+            .map(g => ({ goalId: g.id, shortName: g.shortName, sharpened: g.sharpened }));
+        const promptCtx = {
+            resolvedNode: {
+                title: resolved.title, role: resolved.role, dimensionId: resolved.dimensionId,
+                activity: resolved.payload.activityId && actById[resolved.payload.activityId]
+                    ? { activityId: resolved.payload.activityId, completions: actById[resolved.payload.activityId].completionCount || 0 }
+                    : null,
+            },
+            goals: goalNames,
+            activities: activitySnapshot(userData),
+            existingTitles,
+            rejections: rejectionStrings(techTree),
         };
-        const prompt = buildExpandPrompt(userData, ctx);
-        const budget = (PROVIDER.maxTokens && PROVIDER.maxTokens.expand) || MAX_TOKENS.expand;
+        const prompt = buildExpandPrompt(userData, promptCtx);
         let parsed;
         try {
-            parsed = parseModelJson(await callModel(prompt, budget));
+            parsed = parseModelJson(await callModel(prompt, tokenBudget('expand')));
         } catch (e) {
             console.warn('  expand parse failed:', e.message);
             continue;
         }
-        const keyToLine = {}; keyToLine[line.id] = line;
-        // Force every emitted node onto this line/segment (monotonic §7.4).
-        (parsed.nodes || []).forEach(n => { n.key = line.id; if (n.segmentIndex == null) n.segmentIndex = resolved.segmentIndex; });
-        let fanned = materializeNodes({ nodes: parsed.nodes, interchanges: [] }, userData, keyToLine).slice(0, 3);
-        // Attach the fan as a new tier UNDER the resolved node (dotted-link child)
-        // so it reads as "resolving this opened these next steps".
-        fanned.forEach(n => { n.parentNodeId = resolved.id; n.segmentIndex = resolved.segmentIndex; n.prerequisites = [{ type: 'node_mastered', nodeId: resolved.id }]; });
+        const byTitle = {};
+        nodes.forEach(n => { byTitle[String(n.title).toLowerCase()] = n; });
+        const fanned = [];
+        (parsed.nodes || []).slice(0, 3).forEach(nr => {
+            if (!nr || typeof nr.title !== 'string' || !nr.title.trim()) return;
+            if (byTitle[nr.title.trim().toLowerCase()]) return;      // duplicate of an existing node
+            const dimensionId = ctx.dimIds.has(nr.dimensionId) ? nr.dimensionId : resolved.dimensionId;
+            const payload = validatePayload(nr.payload, {
+                dimIds: ctx.dimIds, pathIds: ctx.pathIds, activityIds: ctx.activityIds,
+                fallbackDim: ctx.fallbackDim, title: nr.title, description: nr.description, dimensionId,
+            });
+            if (!payload) return;
+            const role = ['upgrade', 'fusion', 'suggestion'].indexOf(nr.role) !== -1 ? nr.role : 'suggestion';
+            const node = {
+                id: newId('ttn'), source: 'ai', createdAt: now,
+                role, goalIds: (resolved.goalIds || []).slice(),
+                dimensionId,
+                lifecycle: 'locked', resolvedAt: null, resolvedVia: null,
+                title: String(nr.title).trim().slice(0, 80),
+                description: String(nr.description || '').slice(0, 240),
+                whyNow: whyNowOf(nr),
+                prerequisites: [],
+                payload,
+            };
+            // Expansion may attach prerequisites to real existing activities
+            // and to already-existing nodes (by exact title).
+            (Array.isArray(nr.prerequisites) ? nr.prerequisites : []).forEach(pr => {
+                if (!pr || typeof pr !== 'object') return;
+                if (pr.type === 'activity_mastered' && actById[pr.activityId]) {
+                    node.prerequisites.push({ type: 'activity_mastered', activityId: pr.activityId });
+                } else if (pr.type === 'node_mastered' && pr.nodeTitle) {
+                    const ref = byTitle[String(pr.nodeTitle).toLowerCase()];
+                    if (ref) node.prerequisites.push({ type: 'node_mastered', nodeId: ref.id });
+                }
+            });
+            if (!node.prerequisites.length) {
+                node.prerequisites = [{ type: 'node_mastered', nodeId: resolved.id }];
+            }
+            if (role === 'fusion') {
+                // A fusion needs a live cross-dimensional co-source; if every
+                // prereq sits in one dimension it's not an honest fusion.
+                const dims = new Set(node.prerequisites.map(pr =>
+                    pr.type === 'activity_mastered' ? actDim[pr.activityId]
+                        : (nodes.find(n => n.id === pr.nodeId) || {}).dimensionId));
+                if (dims.size < 2) node.role = 'suggestion';
+            }
+            // Lifecycle: prereqs on the resolved node are met; fusions open
+            // when their sources are alive.
+            const met = node.prerequisites.every(pr => {
+                if (pr.type === 'activity_mastered') {
+                    const act = actById[pr.activityId];
+                    if (!act) return false;
+                    if (node.role === 'fusion') return true;
+                    return !!act.techTreeMasteredAt || rollingWindowMet(act);
+                }
+                const t = nodes.find(n => n.id === pr.nodeId);
+                if (node.role === 'fusion') return !!(t && (t.resolvedAt || t.lifecycle === 'active'));
+                return !!(t && t.resolvedAt);
+            });
+            node.lifecycle = met ? 'available' : 'locked';
+            fanned.push(node);
+            existingTitles.push(node.title);
+        });
+        enforceLoadBudget(fanned);
         added.push.apply(added, fanned);
     }
+
+    // Quest absorption (§6.1): quests grow with the web. One extra proposal
+    // pass per expand run; proposals only, never silent writes.
+    let absorb = [];
+    try {
+        absorb = await tryQuestAbsorption(userData, techTree);
+    } catch (e) {
+        console.warn('  absorption pass failed:', e.message);
+    }
+    patches.push.apply(patches, absorb);
 
     const update = {
         'techTree.pendingRequest': admin.firestore.FieldValue.delete(),
         'techTree.lastError': admin.firestore.FieldValue.delete(),
         'techTree.lastExpandAt': nowISO(),
         'techTree.status': 'ready',
+        'techTree.schemaVersion': 3,
     };
     if (added.length) {
-        const allNodes = nodes.concat(added);
-        update['techTree.nodes'] = allNodes;
-        update['techTree.connections'] = buildConnections(allNodes);
+        update['techTree.nodes'] = nodes.concat(added).slice(0, MAX_NODES + 10);
     }
     if (patches.length) {
         update['techTree.questPatches'] = (techTree.questPatches || []).concat(patches);
     }
     await docRef.update(update);
     console.log(`  Done — expand: ${added.length} new node(s), ${patches.length} patch proposal(s)`);
-    if (added.length) await sendMapPush(userData, 'Resolving a node opened new paths on your map.');
+    if (added.length) await sendMapPush(userData, 'Mastery opened new paths on your web.');
     else if (patches.length) await sendMapPush(userData, 'A quest is ready to grow.');
 }
 
-// §7.7 quest patch — a proposal, never a silent write. Ops: add_group only here.
+// v2 add_group patch — a recurring quest with ≥4 clean cycles gets ONE new
+// group proposal (progressive overload). Kept as-is alongside absorption.
 async function tryQuestPatch(userData, proj, node) {
     const { dimensionList } = activePathsAndDims(userData);
     const system = `A recurring quest has sealed >=4 clean cycles. Propose ONE new GROUP to add
@@ -1442,16 +1482,12 @@ ${PAYLOAD_RULES}`;
     };
     let parsed;
     try {
-        const raw = await callModel({ system, user: 'INPUT:\n' + JSON.stringify(input) }, MAX_TOKENS.quest_patch);
+        const raw = await callModel({ system, user: 'INPUT:\n' + JSON.stringify(input) }, tokenBudget('quest_patch'));
         let text = String(raw).trim().replace(/^```(?:json)?/m, '').replace(/```\s*$/m, '').trim();
         parsed = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
     } catch (e) { return null; }
     if (!parsed || parsed.skip || parsed.op !== 'add_group' || !parsed.group) return null;
-    const ctx = {
-        dimIds: new Set((userData.dimensions || []).map(d => d.id)),
-        pathIds: new Set(), activityIds: new Set(collectActivities(userData).map(e => e.act.id)),
-        fallbackDim: (userData.dimensions || [])[0] ? userData.dimensions[0].id : 'uncategorized',
-    };
+    const ctx = nodeCtx(userData);
     const group = validateGroup(parsed.group, ctx, { newActs: 0 });
     if (!group) return null;
     return {
@@ -1465,42 +1501,87 @@ ${PAYLOAD_RULES}`;
     };
 }
 
-// Connections mirror prerequisite edges for rendering.
-function buildConnections(nodes) {
-    const byId = {};
-    nodes.forEach(n => { byId[n.id] = n; });
-    const out = [];
-    nodes.forEach(n => {
-        (n.prerequisites || []).forEach(pr => {
-            if (pr.type === 'node_mastered' && byId[pr.nodeId]) out.push({ fromNodeId: pr.nodeId, toNodeId: n.id });
-        });
-    });
-    return out;
-}
+// Quest absorption (§6.1, new): activities accepted or mastered since
+// lastExpandAt may be folded into an existing quest's named group as a linked
+// leaf. Rules: proposals only; at most 1 per quest per run; never an activity
+// already inside that quest; declines land in rejections with role
+// 'absorption' (client-side).
+async function tryQuestAbsorption(userData, techTree) {
+    const since = techTree.lastExpandAt ? new Date(techTree.lastExpandAt).getTime() : 0;
+    const activities = collectActivities(userData);
+    const recent = activities.filter(({ act }) => {
+        const created = act.createdAt ? new Date(act.createdAt).getTime() : 0;
+        const mastered = act.techTreeMasteredAt ? new Date(act.techTreeMasteredAt).getTime() : 0;
+        return (created > since || mastered > since) && !act.archived && !act.deleted;
+    }).map(({ act, dim }) => ({ activityId: act.id, name: act.name, dimensionId: dim.id, mastered: !!act.techTreeMasteredAt }));
+    if (!recent.length) return [];
 
-// Suggested challenges reference existing activities only (spec kept from v1).
-function validateChallenges(rawChallenges, userData) {
-    const activityIds = new Set();
-    collectActivities(userData).forEach(({ act }) => activityIds.add(act.id));
-    const out = [];
-    for (const raw of (rawChallenges || [])) {
-        if (!raw || typeof raw.title !== 'string' || !raw.title.trim()) continue;
-        const targets = {};
-        Object.entries(raw.activityTargets || {}).forEach(([id, n]) => {
-            if (activityIds.has(id)) targets[id] = Math.min(100, Math.max(1, parseInt(n, 10) || 1));
-        });
-        if (!Object.keys(targets).length) continue;
-        out.push({
-            id: newId('ttc'),
-            title: String(raw.title).trim().slice(0, 80),
-            description: String(raw.description || '').slice(0, 200),
-            durationDays: Math.min(180, Math.max(7, parseInt(raw.durationDays, 10) || 30)),
-            activityTargets: targets,
-            status: 'suggested',
-            createdAt: nowISO(),
-        });
-        if (out.length >= 3) break;
+    const projects = (userData.projects || []).filter(p => p.status === 'active');
+    if (!projects.length) return [];
+    const linkedIn = {};   // projectId -> Set(activityId)
+    function walkLeaves(groups, fn) {
+        (function walk(ns) { (ns || []).forEach(n => { if (n.kind === 'group') walk(n.children); else fn(n); }); })(groups);
     }
+    projects.forEach(p => {
+        const set = new Set();
+        walkLeaves(p.groups || [], l => { if (l.linkedActivityId) set.add(l.linkedActivityId); });
+        linkedIn[p.id] = set;
+    });
+    const pendingAbsorb = new Set((techTree.questPatches || [])
+        .filter(q => q.op === 'link_activity' && q.status === 'pending')
+        .map(q => q.projectId + ':' + q.activityId));
+
+    const questSnap = projects.map(p => ({
+        name: p.name,
+        groups: (p.groups || []).map(g => g.name || 'Group'),
+        linkedActivities: Array.from(linkedIn[p.id]).map(id => {
+            const e = activities.find(x => x.act.id === id);
+            return e ? e.act.name : id;
+        }),
+    }));
+
+    const system = `A user's quests can GROW as their web grows. Given their active quests and the
+activities they recently accepted or mastered, propose folding an activity
+into an existing quest's group as a linked leaf — ONLY where it genuinely
+belongs ("You unlocked Speed-read + notes — fold it into the Portfolio
+quest's research group?"). Rules: at most ONE proposal per quest; never an
+activity already inside that quest; questName and groupName must match the
+input EXACTLY; skip freely — a wrong fold is worse than none.
+Output ONLY:
+{ "proposals": [{ "questName": str, "groupName": str, "activityId": str,
+  "resetMode": "per-cycle"|"once", "requiredCount": int>=1,
+  "rationale": str }] }  OR  { "proposals": [] }`;
+    const input = { quests: questSnap, recentActivities: recent, rejections: rejectionStrings(techTree) };
+    let parsed;
+    try {
+        parsed = parseModelJson(await callModel({ system, user: 'INPUT:\n' + JSON.stringify(input) }, tokenBudget('quest_patch')));
+    } catch (e) { return []; }
+
+    const out = [];
+    const usedProject = new Set();
+    (parsed.proposals || []).forEach(pr => {
+        if (!pr || typeof pr !== 'object') return;
+        const proj = projects.find(p => String(p.name).trim().toLowerCase() === String(pr.questName || '').trim().toLowerCase());
+        if (!proj || usedProject.has(proj.id)) return;
+        if (!pr.activityId || !activities.some(e => e.act.id === pr.activityId)) return;
+        if (linkedIn[proj.id].has(pr.activityId)) return;
+        if (pendingAbsorb.has(proj.id + ':' + pr.activityId)) return;
+        const groupName = String(pr.groupName || '').trim();
+        const hasGroup = (proj.groups || []).some(g => String(g.name || 'Group').trim().toLowerCase() === groupName.toLowerCase());
+        out.push({
+            id: newId('qp'),
+            projectId: proj.id,
+            op: 'link_activity',
+            activityId: pr.activityId,
+            groupName: hasGroup ? groupName : ((proj.groups || [])[0] ? ((proj.groups || [])[0].name || 'Group') : 'Group'),
+            resetMode: pr.resetMode === 'once' ? 'once' : 'per-cycle',
+            requiredCount: Math.min(20, Math.max(1, parseInt(pr.requiredCount, 10) || 1)),
+            rationale: String(pr.rationale || 'This fits an existing quest.').slice(0, 200),
+            proposedAt: nowISO(),
+            status: 'pending',
+        });
+        usedProject.add(proj.id);
+    });
     return out;
 }
 
@@ -1529,7 +1610,7 @@ async function preflight() {
 
 async function main() {
     initAdmin();
-    console.log('Map (Tech Tree) worker v2 run at', nowISO());
+    console.log('Map (Web) worker v3 run at', nowISO());
     console.log('Node', process.version, '| provider:', PROVIDER.name, '| model:', PROVIDER.model,
         '| key configured:', PROVIDER.key ? `yes (${PROVIDER.key.length} chars)` : 'NO — set ' + PROVIDER.keyHint);
     const snapshot = await db.collection('users').get();
@@ -1553,10 +1634,10 @@ async function main() {
             const attempts = (req.attempts || 0) + 1;
             try {
                 if (attempts >= 3) {
-                    // §10.13: after 3 attempts, surface an error + retry affordance.
+                    // After 3 attempts, surface an error + retry affordance.
                     await docSnap.ref.update({
                         'techTree.pendingRequest': admin.firestore.FieldValue.delete(),
-                        'techTree.status': (userData.techTree.lines && userData.techTree.lines.length) ? 'ready' : 'error',
+                        'techTree.status': (userData.techTree.nodes && userData.techTree.nodes.length) ? 'ready' : 'error',
                         'techTree.lastError': 'Generation failed — ' + describeError(err).slice(0, 200),
                     });
                 } else {
@@ -1573,8 +1654,9 @@ async function main() {
 
 // Exported for unit tests; only run the cron when invoked directly.
 module.exports = {
-    materializeNested, buildNodeRecord, buildLineFor, materializeNodes,
-    clampThresholds, validatePayload, weeklyLoad, cleanCycleCount,
+    materializeWeb, validatePayload, validateGroup, validateLeaf,
+    ensureV3Shape, canProcessRequest, weeklyLoad, cleanCycleCount,
+    rollingWindowMet, parseModelJson, buildGeneratePrompt, buildExpandPrompt,
 };
 
 if (require.main === module) {
