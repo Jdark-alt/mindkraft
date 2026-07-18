@@ -4846,6 +4846,12 @@
                 const activity = window.userData.dimensions[origDi].paths[origPi].activities[origAi];
                 Object.assign(activity, actFields);
                 if (ttMastery) activity.techTreeMastery = ttMastery;
+                // Tech Tree accept flow round-trip (Back from the mastery
+                // sheet re-opens this form in edit mode) — saving returns
+                // to the mastery sheet.
+                if (window._ttAcceptContext && typeof ttResolveAcceptedNode === 'function') {
+                    ttResolveAcceptedNode(activity);
+                }
                 // Move if dim/path changed
                 if (targetDi !== origDi || targetPi !== origPi) {
                     window.userData.dimensions[origDi].paths[origPi].activities.splice(origAi, 1);
@@ -14522,11 +14528,15 @@
         }
 
         // ════════════════════════════════════════════════════════════════════
-        // ── CHARACTER TECH TREE ──────────────────────────────────────────────
-        // AI-generated skill tree grown from the user's goal statement.
-        // Generation runs server-side (scripts/generate-tech-tree.js via GitHub
-        // Actions); the client writes techTree.pendingRequest and listens on
-        // its own user doc for the worker's result.
+        // ── THE WEB (Map v3) ─────────────────────────────────────────────────
+        // Activity-centric web: the user's REAL activities are the anchors,
+        // AI suggestions (upgrades, quests, fusions, wildcards) grow out of
+        // them, and goals are colored threads running through the edges —
+        // not containers. Generation runs server-side (scripts/
+        // generate-tech-tree.js via GitHub Actions); the client writes
+        // techTree.pendingRequest and listens on its own user doc for the
+        // worker's result. The tree is a VIEW; activities/quests/streaks/XP
+        // are the reality and are never mutated destructively.
         // ════════════════════════════════════════════════════════════════════
 
         // Smart mastery defaults by frequency — starting point, editable.
@@ -14539,24 +14549,24 @@
             'one-time': { count: 3,  windowDays: null },
             custom:     { count: 6,  windowDays: 90 },
         };
-        // Line colour is line IDENTITY, not dimension colour (spec §2.3). A goal
-        // crosses dimensions freely, so the line gets a stable palette colour.
+        // Goal colour is goal IDENTITY (v3 §2.1) — threads through the edges.
         var TT_LINE_PALETTE = ['#a8446e', '#5a9fd4', '#c98a3f', '#8a9a5b', '#7a6ff0'];
         var TT_GOLD = '#f5c563';
-        // Per-week load weight by frequency (spec §6.4). Count was never the
+        var TT_WILD = '#8a9a5b';
+        // Per-week load weight by frequency (§6.4). Count was never the
         // control — 9 dailies is death, 3 dailies + 6 weeklies is a Tuesday.
         var TT_LOAD_WEIGHT = { daily: 7, weekly: 1, biweekly: 0.5, monthly: 0.25, occasional: 0.25, 'one-time': 0.25, custom: 3 };
-        var TT_MAX_GOALS = 5;               // §3.1 — the map can't carry more legibly
-        var TT_REGEN_COOLDOWN_DAYS = 30;    // §9.1 per-line regenerate
-        var TT_REVISION_LIMIT = 3;          // keep a rate limit, kill the clock (§0.4)
-        var TT_NEW_ACT_CAP = 3;             // §5.3 new activities per quest
-        var TT_LOAD_SOFT_WARN = 25;         // §6.4 soft warning, never a hard block
+        var TT_MAX_GOALS = 5;               // the web can't carry more legibly
+        var TT_REGEN_COOLDOWN_DAYS = 30;    // per-goal regenerate
+        var TT_REVISION_LIMIT = 3;          // keep a rate limit, kill the clock
+        var TT_NEW_ACT_CAP = 3;             // new activities per quest
 
-        // XP bonuses (spec §11.2) — resolution is the biggest moment in the
-        // feature; a far node is worth more than a near one so going deep pays.
-        function ttNodeResolveBonus(node) { return 20 * ((node.segmentIndex || 0) + 1); }
-        function ttStationReachBonus(st) { return 60 * ((st.index || 0) + 1); }
-        var TT_LINE_COMPLETE_BONUS = 300;
+        // Resolution is the biggest moment in the feature; a deep node is
+        // worth more than a near one so going deep pays.
+        function ttNodeResolveBonus(node) {
+            var tt = window.userData && window.userData.techTree;
+            return 20 * ttPrereqDepth(node, tt);
+        }
 
         function ttNewId(prefix) { return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 
@@ -14579,47 +14589,50 @@
                 refresh: '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
                 target: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
                 branch: '<line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
-                expand: '<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>',
                 flag: '<line x1="4" y1="22" x2="4" y2="4"/><path d="M4 4h13l-2 4 2 4H4"/>',
-                loop: '<polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>',
+                link: '<path d="M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 0 10h-2M8 12h8"/>',
                 map: '<polygon points="1 6 8 3 16 6 23 3 23 18 16 21 8 18 1 21 1 6"/><line x1="8" y1="3" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="21"/>',
-                pin: '<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>',
                 circle: '<circle cx="12" cy="12" r="9"/>',
             };
             return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24"' + fill + ' aria-hidden="true" style="flex-shrink:0;">' + (paths[name] || '') + '</svg>';
         }
 
-        // ── Schema + migration (spec §2.1, §2.10) ────────────────────────
-        // v2 shape: goals[], lines[], nodes[](polymorphic payload), connections.
-        // Migration is idempotent, behind schemaVersion, and NEVER loses data —
-        // the tree is a view; activities/quests/streaks/XP are the reality.
+        // ── Schema + migration (v3 §2) ───────────────────────────────────
+        // v3 shape: goals[] (with color), nodes[] carrying role/goalIds/
+        // whyNow. Lines/stations/segments/connections are gone — goal colour
+        // replaces line identity, edges derive from prerequisites at render.
+        // Migration is idempotent, behind schemaVersion, and NEVER loses
+        // data — the tree is a view; activities/quests/streaks/XP are the
+        // reality.
         function ensureTechTree() {
             if (!window.userData) return null;
             if (!window.userData.techTree) {
                 window.userData.techTree = {
-                    schemaVersion: 2, status: 'empty',
-                    goals: [], lines: [], nodes: [], connections: [],
-                    northStarLineId: null,
+                    schemaVersion: 3, status: 'empty',
+                    goals: [], nodes: [],
                     vision: '', goalText: '', goalTextUpdatedAt: null,
                     pendingRequest: null, rejections: [], lastExpandAt: null,
-                    loadBudget: { current: 0, updatedAt: null }
+                    loadBudget: { current: 0, updatedAt: null },
+                    questPatches: [], introSeen: false
                 };
             }
             var tt = window.userData.techTree;
-            if (tt.schemaVersion !== 2) migrateTechTreeV2(tt);
+            if (tt.schemaVersion !== 3) {
+                if (tt.schemaVersion !== 2) migrateTechTreeV2(tt);
+                migrateTechTreeV3(tt);
+            }
             if (!Array.isArray(tt.goals)) tt.goals = [];
-            if (!Array.isArray(tt.lines)) tt.lines = [];
             if (!Array.isArray(tt.nodes)) tt.nodes = [];
-            if (!Array.isArray(tt.connections)) tt.connections = [];
             if (!Array.isArray(tt.rejections)) tt.rejections = [];
+            if (!Array.isArray(tt.questPatches)) tt.questPatches = [];
             if (!tt.loadBudget) tt.loadBudget = { current: 0, updatedAt: null };
             if (!tt.status) tt.status = tt.nodes.length ? 'ready' : 'empty';
             return tt;
         }
 
-        // v1 → v2. Runs once when schemaVersion !== 2. Safe to run twice.
+        // v1 → v2. Kept verbatim as the first hop of the migration chain so a
+        // dormant v1 account still lands safely; v3 migration runs right after.
         function migrateTechTreeV2(tt) {
-            // 1. No prior tree / no nodes → clean v2 empty.
             var oldNodes = Array.isArray(tt.nodes) ? tt.nodes : [];
             tt.goals = Array.isArray(tt.goals) ? tt.goals : [];
             tt.lines = Array.isArray(tt.lines) ? tt.lines : [];
@@ -14627,7 +14640,6 @@
             tt.rejections = Array.isArray(tt.rejections) ? tt.rejections : [];
             tt.northStarLineId = tt.northStarLineId || null;
             if (!oldNodes.length) {
-                // Preserve any typed goalText as a seed goal so onboarding isn't lost.
                 if (tt.goalText && tt.goalText.trim() && !tt.goals.length) {
                     tt.goals = [ttMakeGoal(tt.goalText.trim())];
                 }
@@ -14636,15 +14648,12 @@
                 if (tt.status === 'generated') tt.status = 'empty';
                 return;
             }
-            // 2. One goal from goalText — rhythm, because we cannot know, and a
-            //    rhythm makes no false promise of a summit.
             var goal = tt.goals[0] || ttMakeGoal(tt.goalText || 'Your goal');
             goal.sharpened = goal.sharpened || tt.goalText || goal.rawText;
             goal.shortName = (goal.shortName || (tt.goalText || goal.rawText || 'Goal')).slice(0, 14);
             goal.kind = goal.kind || 'rhythm';
             goal.kindReason = goal.kindReason || 'Carried over from an earlier version of your map.';
             tt.goals = [goal];
-            // 3. One line, one station.
             var line = {
                 id: ttNewId('line'), goalId: goal.id, color: TT_LINE_PALETTE[0], status: 'active',
                 terminus: { title: 'Where this leads', kind: 'loop', nodeId: null },
@@ -14653,21 +14662,20 @@
             };
             line.stations[0].lineId = line.id;
             tt.lines = [line];
-            // 4. Every existing node → v2 node with an activity payload.
             tt.nodes = oldNodes.map(function(n) {
                 var mastered = false, act = null;
                 if (n.activityId) { var e = ttFindActivity(n.activityId); if (e) { act = e.activity; mastered = !!act.techTreeMasteredAt; } }
                 var lifecycle = n.lifecycle === 'active' ? 'active'
                     : n.lifecycle === 'archived' ? 'archived'
                     : (n.lifecycle === 'available' ? 'available' : 'locked');
-                if (n.activityId && !act) lifecycle = 'archived'; // orphaned activity (§10.1)
+                if (n.activityId && !act) lifecycle = 'archived'; // orphaned activity
                 var sug = n.suggestedActivity || {};
                 return {
                     id: n.id || ttNewId('ttn'), source: n.source || 'ai', createdAt: n.createdAt || new Date().toISOString(),
                     lineId: line.id, segmentIndex: 0, isTerminus: false,
                     lifecycle: lifecycle,
                     resolvedAt: (n.activityId && mastered) ? (act.techTreeMasteredAt) : null,
-                    resolvedVia: (n.activityId && mastered) ? 'auto_referenced' : null,
+                    resolvedVia: (n.activityId && mastered) ? 'mastery' : null,
                     interchange: null,
                     title: n.title || (act && act.name) || 'Node',
                     description: n.description || '',
@@ -14683,9 +14691,7 @@
                             dimensionId: sug.dimensionId || n.dimensionId || 'uncategorized', suggestedPathId: sug.suggestedPathId || null
                         },
                         mastery: act && act.techTreeMastery ? { target: act.techTreeMastery.count, windowDays: act.techTreeMastery.windowDays } : { target: 6, windowDays: 90 }
-                    },
-                    // v1 fields kept for history (spec §2.5) — not rendered.
-                    _v1: { kind: n.kind, tier: n.tier, isNexus: n.isNexus, nexusDimensionIds: n.nexusDimensionIds, activityId: n.activityId, suggestedActivity: n.suggestedActivity }
+                    }
                 };
             });
             tt.connections = (tt.connections || []).filter(function(c) { return c && c.fromNodeId && c.toNodeId; });
@@ -14694,11 +14700,81 @@
             tt.status = 'ready';
         }
 
+        // v2 → v3 (spec §2.4). Idempotent, non-destructive: goal colours come
+        // from their lines, nodes gain role/goalIds, station machinery dies.
+        // Activities/quests/streaks/XP are never touched.
+        function migrateTechTreeV3(tt) {
+            var lines = Array.isArray(tt.lines) ? tt.lines : [];
+            var lineById = {};
+            lines.forEach(function(l) { if (l && l.id) lineById[l.id] = l; });
+            // 1. line.color → owning goal.color; unmatched goals get the next
+            //    unused palette colour.
+            (tt.goals || []).forEach(function(g) {
+                if (g.color) return;
+                var line = lines.find(function(l) { return l.goalId === g.id; });
+                if (line && line.color) g.color = line.color;
+            });
+            var used = {};
+            (tt.goals || []).forEach(function(g) { if (g.color) used[g.color] = true; });
+            (tt.goals || []).forEach(function(g) {
+                if (g.color) return;
+                for (var i = 0; i < TT_LINE_PALETTE.length; i++) {
+                    if (!used[TT_LINE_PALETTE[i]]) { g.color = TT_LINE_PALETTE[i]; used[g.color] = true; return; }
+                }
+                g.color = TT_LINE_PALETTE[(tt.goals.indexOf(g)) % TT_LINE_PALETTE.length];
+            });
+            // Carry per-line regenerate cooldowns onto the goal.
+            lines.forEach(function(l) {
+                if (!l || !l.regeneratedAt) return;
+                var g = (tt.goals || []).find(function(x) { return x.id === l.goalId; });
+                if (g && !g.regeneratedAt) g.regeneratedAt = l.regeneratedAt;
+            });
+            // 2+3. Node record: goalIds from the owning line, role inferred.
+            (tt.nodes || []).forEach(function(n) {
+                if (!Array.isArray(n.goalIds)) {
+                    var line = n.lineId ? lineById[n.lineId] : null;
+                    n.goalIds = (line && line.goalId) ? [line.goalId] : [];
+                    if (n.interchange && Array.isArray(n.interchange.lineIds)) {
+                        n.interchange.lineIds.forEach(function(lid) {
+                            var l2 = lineById[lid];
+                            if (l2 && l2.goalId && n.goalIds.indexOf(l2.goalId) === -1) n.goalIds.push(l2.goalId);
+                        });
+                    }
+                }
+                if (!n.role) {
+                    if (n.payload && n.payload.activityId) n.role = 'anchor';
+                    else {
+                        var dims = {};
+                        (n.prerequisites || []).forEach(function(pr) {
+                            if (pr.type === 'node_mastered') {
+                                var t = (tt.nodes || []).find(function(x) { return x.id === pr.nodeId; });
+                                if (t && t.dimensionId) dims[t.dimensionId] = true;
+                            } else if (pr.type === 'activity_mastered') {
+                                var e = ttFindActivity(pr.activityId);
+                                if (e) dims[e.dim.id] = true;
+                            }
+                        });
+                        n.role = Object.keys(dims).length >= 2 ? 'fusion' : 'suggestion';
+                    }
+                }
+                if (n.whyNow === undefined) n.whyNow = null;
+                if (!n.dimensionId) n.dimensionId = 'uncategorized';
+                if (!Array.isArray(n.prerequisites)) n.prerequisites = [];
+                delete n.lineId; delete n.segmentIndex; delete n.isTerminus;
+                delete n.interchange; delete n.parentNodeId;
+            });
+            // 4. Station machinery dies.
+            delete tt.lines; delete tt.northStarLineId; delete tt.connections;
+            delete tt.mergeSuggestion;
+            if (tt.introSeen === undefined) tt.introSeen = false;
+            tt.schemaVersion = 3;
+        }
+
         function ttMakeGoal(rawText) {
             return {
                 id: ttNewId('goal'), rawText: rawText, sharpened: '', shortName: rawText.slice(0, 14),
-                kind: 'destination', kindReason: null, sharpenedEditedByUser: false,
-                createdAt: new Date().toISOString(), achievedAt: null, retiredAt: null
+                kind: 'destination', kindReason: null, sharpenedEditedByUser: false, color: null,
+                createdAt: new Date().toISOString(), achievedAt: null, retiredAt: null, regeneratedAt: null
             };
         }
 
@@ -14717,6 +14793,20 @@
             ttAllActivities().some(function(e) { if (e.activity.id === activityId) { hit = e; return true; } return false; });
             return hit;
         }
+        // Indexes into userData.dimensions for the activity modal's edit mode.
+        function ttFindActivityIndexes(activityId) {
+            var dims = window.userData.dimensions || [];
+            for (var di = 0; di < dims.length; di++) {
+                var paths = dims[di].paths || [];
+                for (var pi = 0; pi < paths.length; pi++) {
+                    var acts = paths[pi].activities || [];
+                    for (var ai = 0; ai < acts.length; ai++) {
+                        if (acts[ai].id === activityId) return { di: di, pi: pi, ai: ai };
+                    }
+                }
+            }
+            return null;
+        }
         function ttDimHexRaw(dimId) {
             var dims = window.userData.dimensions || [];
             var idx = dims.findIndex(function(d) { return d.id === dimId; });
@@ -14730,7 +14820,41 @@
             return dim ? dim.name : 'Uncategorized';
         }
 
-        // ── Load budget (spec §6.4) ──────────────────────────────────────
+        // ── Goal helpers (goals are the threads) ─────────────────────────
+        function ttActiveGoals() {
+            var tt = ensureTechTree();
+            return (tt.goals || []).filter(function(g) { return !g.retiredAt; });
+        }
+        function ttGoalById(goalId) {
+            var tt = ensureTechTree();
+            return (tt.goals || []).find(function(g) { return g.id === goalId; }) || null;
+        }
+        function ttGoalColor(goalId) {
+            var g = ttGoalById(goalId);
+            return (g && g.color) || TT_LINE_PALETTE[0];
+        }
+        function ttNodeGoals(node) {
+            var tt = ensureTechTree();
+            return (node.goalIds || []).map(function(id) {
+                return (tt.goals || []).find(function(g) { return g.id === id; });
+            }).filter(Boolean);
+        }
+        // A node's thread colour: its first goal's colour; wildcards get the
+        // olive tag; goal-less nodes fall back to their dimension colour.
+        function ttNodeColor(node) {
+            if (node.role === 'wildcard') return TT_WILD;
+            var goals = ttNodeGoals(node);
+            if (goals.length && goals[0].color) return goals[0].color;
+            return ttDimHexRaw(node.dimensionId);
+        }
+        function ttAnchorNodeForActivity(activityId, tt) {
+            tt = tt || ensureTechTree();
+            return (tt.nodes || []).find(function(n) {
+                return n.lifecycle !== 'archived' && n.payload && n.payload.activityId === activityId;
+            }) || null;
+        }
+
+        // ── Load budget ──────────────────────────────────────────────────
         function ttFreqWeight(freq, act) {
             if (freq === 'custom') {
                 var n = (act && (act.customTimesPerWeek || act.timesPerWeek || (Array.isArray(act.customDays) ? act.customDays.length : 0))) || 0;
@@ -14748,7 +14872,10 @@
             return Math.round(sum * 10) / 10;
         }
 
-        // ── Mastery + resolution (spec §6.1) ─────────────────────────────
+        // ── Mastery + resolution (§3) ────────────────────────────────────
+        // ROLLING WINDOW: count completions within the trailing windowDays
+        // from today. windowDays null = lifetime count. 87 completions ending
+        // six months ago must NOT resolve a 30-day-window mastery.
         function ttMasteryProgress(activity) {
             var threshold = activity.techTreeMastery || ttMasteryDefaultFor(activity.frequency);
             var target = Math.max(1, threshold.count || 1);
@@ -14763,7 +14890,7 @@
         }
 
         // A "clean cycle" completed its required items. A force-sealed cycle
-        // (confirm() override, zero bonus) must NOT count (spec §6.1).
+        // (confirm() override, zero bonus) must NOT count.
         function ttCleanCycles(p) {
             return ((p && p.cycleHistory) || []).filter(function(c) { return c && c.itemsTotal > 0 && c.itemsCompleted >= c.itemsTotal; }).length;
         }
@@ -14794,28 +14921,6 @@
             return false;
         }
 
-        // ── Stations (spec §6.2, §10.10) ─────────────────────────────────
-        function ttNextUnreachedStation(line) {
-            var sts = (line.stations || []).slice().sort(function(a, b) { return a.index - b.index; });
-            for (var i = 0; i < sts.length; i++) if (!sts[i].reachedAt) return sts[i];
-            return null;
-        }
-        function ttStationReached(line, station, nodes) {
-            var n = nodes.filter(function(nd) {
-                return nd.lineId === line.id && nd.segmentIndex === station.index && nd.resolvedAt;
-            }).length;
-            // Interchanges credit the next unreached station on BOTH their lines.
-            var next = ttNextUnreachedStation(line);
-            if (next && next.id === station.id) {
-                nodes.forEach(function(nd) {
-                    if (!nd.resolvedAt || !nd.interchange) return;
-                    if (nd.lineId === line.id) return; // already counted on its home segment
-                    if ((nd.interchange.lineIds || []).indexOf(line.id) !== -1) n += 1;
-                });
-            }
-            return n >= (station.threshold || 2);
-        }
-
         // ── XP ───────────────────────────────────────────────────────────
         function ttAwardXP(amount) {
             amount = Math.max(0, Math.round(amount || 0));
@@ -14836,15 +14941,15 @@
             try { updateDashboard(); } catch (e) {}
         }
 
-        // ── The evaluation pass (spec §6.1, §6.2, §6.5, §7.1, §11) ────────
-        // Flips activity mastery, resolves node payloads, reaches stations,
-        // completes lines, awards XP, and queues expansion. Returns true when
+        // ── The evaluation pass ──────────────────────────────────────────
+        // Flips activity mastery, resolves node payloads, recomputes
+        // lifecycles, awards XP, and queues expansion. Returns true when
         // anything changed (caller persists). Runs on login, after each
         // completion, and on render.
         function evaluateTechTreeMastery() {
             if (!window.userData) return false;
             var changed = false;
-            // 1. Activity mastery (unchanged from v1).
+            // 1. Activity mastery — rolling window (§3).
             ttAllActivities().forEach(function(e) {
                 var act = e.activity;
                 if (!act.techTreeMastery || act.techTreeMasteredAt) return;
@@ -14855,26 +14960,34 @@
                     try { showToast('🏅 Mastered: ' + act.name, 'green'); } catch (err) {}
                 }
             });
-            // Guarantee v1→v2 migration has run before evaluating (this pass
-            // also runs on the login path). Persist if migration just happened.
-            var wasV2 = window.userData.techTree && window.userData.techTree.schemaVersion === 2;
+            // Guarantee migration has run before evaluating (this pass also
+            // runs on the login path). Persist if migration just happened.
+            var wasV3 = window.userData.techTree && window.userData.techTree.schemaVersion === 3;
             var tt = ensureTechTree();
-            if (!wasV2) changed = true;
+            if (!wasV3) changed = true;
             if (!tt || !tt.nodes) return changed;
             var now = new Date().toISOString();
             var justResolved = [];
 
-            // 2. Follow activity dimension; resolve active payloads (sticky).
             tt.nodes.forEach(function(node) {
-                var actId = (node.payload && node.payload.activityId) || (node._v1 && node._v1.activityId);
+                var actId = node.payload && node.payload.activityId;
                 if (actId) {
                     var e = ttFindActivity(actId);
+                    // Anchors follow their real activity's dimension.
                     if (e && node.dimensionId !== e.dim.id) { node.dimensionId = e.dim.id; changed = true; }
                     if (!e && node.lifecycle !== 'archived' && !node.resolvedAt) { node.lifecycle = 'archived'; node._orphaned = true; changed = true; }
+                    // An anchor whose activity has no mastery threshold adopts
+                    // the node's — never overwrites a user's own threshold.
+                    if (e && !e.activity.techTreeMastery && node.payload.mastery && node.payload.mastery.target) {
+                        e.activity.techTreeMastery = { count: node.payload.mastery.target, windowDays: node.payload.mastery.windowDays !== undefined ? node.payload.mastery.windowDays : 90 };
+                        changed = true;
+                    }
                 }
                 if (node.lifecycle === 'active' && !node.resolvedAt && ttPayloadResolves(node)) {
                     node.resolvedAt = now;
-                    node.resolvedVia = node.resolvedVia || (node.payload.type === 'activity' ? 'accept_new' : 'accept_new');
+                    node.resolvedVia = node.resolvedVia
+                        || (node.payload.type === 'quest' ? 'quest_sealed'
+                        : node.payload.type === 'challenge' ? 'challenge_done' : 'mastery');
                     changed = true;
                     justResolved.push(node);
                     ttAwardXP(ttNodeResolveBonus(node));
@@ -14882,85 +14995,82 @@
                 }
             });
 
-            // 3. Stations reached (once, never unset) + line completion.
-            (tt.lines || []).forEach(function(line) {
-                (line.stations || []).forEach(function(st) {
-                    if (st.reachedAt) return;
-                    if (ttStationReached(line, st, tt.nodes)) {
-                        st.reachedAt = now; changed = true;
-                        ttAwardXP(ttStationReachBonus(st));
-                        try { showToast('🚩 Station reached: ' + st.title + ' · +' + ttStationReachBonus(st) + ' XP', 'blue'); } catch (err) {}
-                    }
-                });
-                // Line completes when its terminus node resolves (§9.5).
-                if (line.status === 'active' && line.terminus && line.terminus.nodeId) {
-                    var term = tt.nodes.find(function(n) { return n.id === line.terminus.nodeId; });
-                    if (term && term.resolvedAt) {
-                        line.status = 'completed'; changed = true;
-                        var goal = (tt.goals || []).find(function(g) { return g.id === line.goalId; });
-                        if (goal && !goal.achievedAt) goal.achievedAt = now;
-                        ttAwardXP(TT_LINE_COMPLETE_BONUS);
-                        try { showToast('🏁 ' + line.terminus.title + ' — line complete! +' + TT_LINE_COMPLETE_BONUS + ' XP', 'green'); } catch (err) {}
-                    }
-                }
-            });
-
-            // 4. Recompute lifecycle for un-accepted nodes (§6.5).
+            // Recompute lifecycle for un-accepted nodes.
             tt.nodes.forEach(function(node) {
                 if (node.lifecycle === 'archived' || node.lifecycle === 'active' || node.resolvedAt) return;
                 var want = ttNodeUnlocked(node, tt) ? 'available' : 'locked';
                 if (node.lifecycle !== want) { node.lifecycle = want; changed = true; }
             });
 
-            // 5. Expansion (§7.1): a null→set resolvedAt transition fans siblings.
-            //    Fresh picks don't expand (§10.8). One pendingRequest at a time.
-            var expandable = justResolved.filter(function(n) { return n.lineId; });
-            if (expandable.length && tt.status !== 'generating' && !tt.pendingRequest) {
-                ttSubmitRequest({ type: 'expand', payload: { resolvedNodeIds: expandable.map(function(n) { return n.id; }) } }, true);
+            // Expansion (§6.1): ANY mastery event fans the web wider — a
+            // resolved node of any role, wildcard and fusion included.
+            if (justResolved.length && tt.status !== 'generating' && !tt.pendingRequest) {
+                ttSubmitRequest({ type: 'expand', payload: { resolvedNodeIds: justResolved.map(function(n) { return n.id; }) } }, true);
             }
             return changed;
         }
 
         function ttNodeUnlocked(node, tt) {
-            var prereqsMet = (node.prerequisites || []).every(function(pr) {
-                if (pr.type === 'node_mastered') {
-                    var target = tt.nodes.find(function(n) { return n.id === pr.nodeId; });
-                    if (!target) return true;                    // dangling ref — don't brick the branch
-                    if (target.lifecycle === 'archived') return false;
-                    return !!target.resolvedAt;
-                }
-                if (pr.type === 'activity_mastered') {
-                    var e = ttFindActivity(pr.activityId);
-                    return !!(e && e.activity.techTreeMasteredAt);
-                }
-                return true;
-            });
-            // A node is available once its prerequisites are met — nothing else
-            // gates it (the station machinery was removed for simplicity).
-            return prereqsMet;
+            return (node.prerequisites || []).every(function(pr) { return ttPrereqMet(pr, node, tt); });
+        }
+        // Fusion prerequisites are provenance, not gates: a fusion opens when
+        // both its sources are ALIVE (being done), not mastered. Everything
+        // else needs the prerequisite genuinely mastered.
+        function ttPrereqMet(pr, node, tt) {
+            var fusion = node.role === 'fusion';
+            if (pr.type === 'node_mastered') {
+                var target = tt.nodes.find(function(n) { return n.id === pr.nodeId; });
+                if (!target) return true;                    // dangling ref — don't brick the branch
+                if (target.lifecycle === 'archived') return false;
+                if (fusion) return !!(target.resolvedAt || target.lifecycle === 'active');
+                return !!target.resolvedAt;
+            }
+            if (pr.type === 'activity_mastered') {
+                var e = ttFindActivity(pr.activityId);
+                if (!e) return false;
+                if (fusion) return true;                     // alive = enough for a fusion
+                return !!e.activity.techTreeMasteredAt;
+            }
+            return true;
         }
 
-        // ── Gate + goals (spec §3.1) ─────────────────────────────────────
+        // Depth of the longest prerequisite chain under a node (its tier).
+        function ttPrereqDepth(node, tt) {
+            if (!tt || !tt.nodes) return 1;
+            var byId = {}, anchorByAct = {};
+            tt.nodes.forEach(function(n) {
+                byId[n.id] = n;
+                if (n.payload && n.payload.activityId) anchorByAct[n.payload.activityId] = anchorByAct[n.payload.activityId] || n;
+            });
+            var guard = {};
+            function depth(n) {
+                if (!n || guard[n.id]) return 1;
+                guard[n.id] = true;
+                var d = 1;
+                (n.prerequisites || []).forEach(function(pr) {
+                    var src = pr.type === 'node_mastered' ? byId[pr.nodeId]
+                        : pr.type === 'activity_mastered' ? anchorByAct[pr.activityId] : null;
+                    if (src && src.id !== n.id) d = Math.max(d, 1 + depth(src));
+                });
+                delete guard[n.id];
+                return d;
+            }
+            return depth(node);
+        }
+
+        // ── Gate + goals form ────────────────────────────────────────────
         function ttGateStatus() {
             var tt = ensureTechTree();
             var activityCount = ttAllActivities().length;
             var goalCount = (tt.goals || []).filter(function(g) { return !g.retiredAt; }).length;
             return { activityCount: activityCount, goalCount: goalCount, met: activityCount >= 3 && goalCount >= 1 };
         }
-        function ttActiveLines() {
-            var tt = ensureTechTree();
-            return (tt.lines || []).filter(function(l) { return l.status !== 'retired'; });
-        }
-        function ttGoalForLine(line) {
-            var tt = ensureTechTree();
-            return (tt.goals || []).find(function(g) { return g.id === line.goalId; }) || null;
-        }
 
         window.ttAddGoalField = function() {
             var wrap = document.getElementById('ttGoalFields');
             if (!wrap) return;
             var rows = wrap.querySelectorAll('.tt-goal-row');
-            if (rows.length >= TT_MAX_GOALS) { showToast('Up to ' + TT_MAX_GOALS + ' goals — the map can\'t carry more legibly', 'olive'); return; }
+            if (rows.length >= TT_MAX_GOALS) { showToast('Up to ' + TT_MAX_GOALS + ' goals — the web can\'t carry more legibly', 'olive'); return; }
             wrap.insertAdjacentHTML('beforeend', ttGoalRowHtml('', rows.length));
         };
         function ttGoalRowHtml(val, i) {
@@ -14984,7 +15094,7 @@
             return tt.goals;
         }
 
-        // ── Requests (spec §4) ───────────────────────────────────────────
+        // ── Requests ─────────────────────────────────────────────────────
         // The client never calls the model — it flags pendingRequest on its own
         // doc; the scheduled worker is the sole authority that honours it.
         function ttSubmitRequest(req, silent) {
@@ -14992,7 +15102,7 @@
             if (tt.pendingRequest) return false;
             tt.pendingRequest = Object.assign({ requestedAt: new Date().toISOString(), attempts: 0 }, req);
             delete tt.lastError;
-            if (req.type === 'generate' || req.type === 'add_line') tt.status = 'generating';
+            if (req.type === 'generate' || req.type === 'add_goal') tt.status = 'generating';
             saveUserData().catch(function() {});
             ttEnsureListener();
             if (!silent) renderTechTree();
@@ -15013,77 +15123,78 @@
             delete tt.lastError;
             ttSubmitRequest({ type: 'generate' });
         };
-        // Re-run the FULL generation from the current goals. This is how a goal
-        // entry that packs several ambitions gets split into distinct lines —
-        // the model re-reads the goal text and splits it (§3.4). Unaccepted
+        // Re-run the FULL generation from the current goals. Unaccepted
         // suggestions are replaced; resolved nodes and all real activities /
         // quests / streaks / XP are untouched.
         window.ttRebuildMap = function() {
             var tt = ensureTechTree();
             if (tt.pendingRequest) { showToast('One request at a time — hang tight', 'olive'); return; }
-            if (!confirm('Rebuild your whole map from your goals?\n\nThe AI re-reads your goals and splits any that pack several ambitions into separate lines. Unaccepted suggestions are replaced. Your activities, quests, streaks and XP are never touched.')) return;
+            if (!confirm('Rebuild your whole web from your goals?\n\nThe AI re-reads your goals, picks anchors from your real activities, and reweaves the suggestions. Unaccepted suggestions are replaced. Your activities, quests, streaks and XP are never touched.')) return;
             tt.loadBudget = { current: ttWeeklyLoad(), updatedAt: new Date().toISOString() };
             ttSubmitRequest({ type: 'generate' });
         };
 
-        // Add a goal → generate ONE new line, touching nothing else (spec §9.1).
-        window.ttAddLine = function() {
+        // Add a goal → weave ONE new thread, touching nothing else.
+        window.ttAddGoal = function() {
             var tt = ensureTechTree();
             if (tt.pendingRequest) { showToast('One request at a time — hang tight', 'olive'); return; }
-            if (ttActiveLines().length >= TT_MAX_GOALS) { showToast('The map already holds ' + TT_MAX_GOALS + ' lines', 'olive'); return; }
-            window._ttAddLineConfirm = function() {
+            if (ttActiveGoals().length >= TT_MAX_GOALS) { showToast('The web already carries ' + TT_MAX_GOALS + ' goals', 'olive'); return; }
+            window._ttAddGoalConfirm = function() {
                 var el = document.getElementById('ttNewGoalInput');
                 var text = (el && el.value || '').trim();
                 if (!text) { showToast('Type the goal first', 'olive'); return; }
                 var goal = ttMakeGoal(text);
+                var used = {};
+                (tt.goals || []).forEach(function(g) { if (g.color) used[g.color] = true; });
+                goal.color = TT_LINE_PALETTE.find(function(c) { return !used[c]; }) || TT_LINE_PALETTE[(tt.goals || []).length % TT_LINE_PALETTE.length];
                 tt.goals.push(goal);
                 ttCloseOverlay();
-                ttSubmitRequest({ type: 'add_line', payload: { goalId: goal.id } });
-                showToast('🧭 Adding a new line — we\'ll ping you when it\'s drawn', 'blue');
+                ttSubmitRequest({ type: 'add_goal', payload: { goalId: goal.id } });
+                showToast('🕸️ Weaving a new thread — we\'ll ping you when it\'s in', 'blue');
             };
             ttShowOverlay('<div class="tt-form"><h3 class="tt-form-title">Add a goal</h3>'
-                + '<p class="tt-muted">A new goal becomes a new line. Your current map is untouched.</p>'
+                + '<p class="tt-muted">A new goal becomes a new coloured thread through your web. The rest is untouched.</p>'
                 + '<input type="text" id="ttNewGoalInput" class="pl-input" maxlength="140" placeholder="e.g. Learn to cook 10 solid meals">'
                 + '<div class="tt-form-actions"><button class="tt-btn tt-btn-ghost" onclick="ttCloseOverlay()">Cancel</button>'
-                + '<button class="tt-btn tt-btn-primary" onclick="window._ttAddLineConfirm&&window._ttAddLineConfirm()">Add line</button></div></div>');
+                + '<button class="tt-btn tt-btn-primary" onclick="window._ttAddGoalConfirm&&window._ttAddGoalConfirm()">Add goal</button></div></div>');
         };
 
-        window.ttRegenerateLine = function(lineId) {
+        window.ttRegenerateGoal = function(goalId) {
             var tt = ensureTechTree();
             if (tt.pendingRequest) { showToast('One request at a time', 'olive'); return; }
-            var line = (tt.lines || []).find(function(l) { return l.id === lineId; });
-            if (!line) return;
-            var last = line.regeneratedAt || tt.lastGeneratedAt;
+            var goal = ttGoalById(goalId);
+            if (!goal) return;
+            var last = goal.regeneratedAt || tt.lastGeneratedAt;
             if (last) {
                 var ageDays = (Date.now() - new Date(last).getTime()) / 86400000;
-                if (ageDays < TT_REGEN_COOLDOWN_DAYS) { showToast('This line was reset recently — free again in ' + Math.ceil(TT_REGEN_COOLDOWN_DAYS - ageDays) + ' days', 'olive'); return; }
+                if (ageDays < TT_REGEN_COOLDOWN_DAYS) { showToast('This thread was rewoven recently — free again in ' + Math.ceil(TT_REGEN_COOLDOWN_DAYS - ageDays) + ' days', 'olive'); return; }
             }
-            if (!confirm('Regenerate this line? Resolved nodes and reached stations stay; the unclaimed frontier is replaced. No XP cost, no other line touched.')) return;
-            ttSubmitRequest({ type: 'regenerate', payload: { lineId: lineId } });
+            if (!confirm('Reweave this goal\'s thread? Resolved and accepted nodes stay; the unclaimed suggestions are replaced. No other goal is touched.')) return;
+            ttSubmitRequest({ type: 'regenerate', payload: { goalId: goalId } });
             ttCloseSheet();
         };
 
-        window.ttRetireLine = function(lineId) {
+        window.ttRetireGoal = function(goalId) {
             var tt = ensureTechTree();
-            var line = (tt.lines || []).find(function(l) { return l.id === lineId; });
-            if (!line) return;
-            if (!confirm('Retire this goal? The line greys out and stops growing. Your activities, quests, streaks and XP are untouched — they\'re yours, not the map\'s.')) return;
-            line.status = 'retired';
-            var goal = ttGoalForLine(line); if (goal) goal.retiredAt = new Date().toISOString();
-            // Interchanges touching it demote to a normal node on the surviving line (§10.9).
+            var goal = ttGoalById(goalId);
+            if (!goal) return;
+            if (!confirm('Retire this goal? Its thread fades and stops growing. Your activities, quests, streaks and XP are untouched — they\'re yours, not the map\'s.')) return;
+            goal.retiredAt = new Date().toISOString();
             (tt.nodes || []).forEach(function(n) {
-                if (n.interchange && (n.interchange.lineIds || []).indexOf(lineId) !== -1) {
-                    var other = n.interchange.lineIds.filter(function(id) { return id !== lineId; })[0];
-                    n.interchange = null; if (other && n.lineId === lineId) n.lineId = other;
+                var idx = (n.goalIds || []).indexOf(goalId);
+                if (idx !== -1) n.goalIds.splice(idx, 1);
+                // Unclaimed suggestions that served ONLY this goal go with it;
+                // anything accepted or resolved is real and stays.
+                if (!n.goalIds.length && !n.resolvedAt && n.lifecycle !== 'active' && n.role !== 'wildcard' && n.source !== 'user') {
+                    n.lifecycle = 'archived';
                 }
             });
-            if (tt.northStarLineId === lineId) tt.northStarLineId = null;
             saveUserData().catch(function() {});
             ttCloseSheet();
             renderTechTree();
         };
 
-        // ── Result listener + reveal (spec §4.4, §8.6) ───────────────────
+        // ── Result listener + reveal ─────────────────────────────────────
         var _ttUnsubscribe = null;
         function ttEnsureListener() {
             if (_ttUnsubscribe || !window.currentUser) return;
@@ -15097,10 +15208,11 @@
                 if (!rt) return;
                 var localPending = window.userData && window.userData.techTree && window.userData.techTree.pendingRequest;
                 if (localPending && !rt.pendingRequest) {
+                    var wasGenerate = localPending.type === 'generate' || localPending.type === 'add_goal' || localPending.type === 'add_line';
                     window.userData.techTree = rt;
                     ttDetachListener();
                     if (rt.lastError) { showToast('⚠️ ' + rt.lastError, 'red'); }
-                    else { window._ttPendingReveal = rt.lastGeneratedAt || true; showToast('🗺️ Your map is ready', 'green'); }
+                    else { window._ttPendingReveal = wasGenerate; showToast('🕸️ Your web is ready', 'green'); }
                     evaluateTechTreeMastery();
                     ttRenderIfVisible();
                 }
@@ -15122,253 +15234,328 @@
             if (panel && tab && tab.classList.contains('active') && panel.style.display !== 'none') renderTechTree();
         }
 
-        // ── Octolinear layout engine (spec §8.2) ─────────────────────────
-        // Lines run at 0°, 45° or 90° — nothing else, ever (Harry Beck, 1931).
-        // Placement is arithmetic, not taste: node -> next legal slot on the
-        // line; a fan is a 45° departure then vertical. Deterministic + testable.
-        var TT_SLOT = 74, TT_SPINE_GAP = 128, TT_MARGIN_X = 90, TT_TOP_PAD = 70, TT_BOTTOM_PAD = 64;
-        function ttLayout() {
-            var tt = ensureTechTree();
-            var lines = ttActiveLines();
-            var focusLineId = tt.northStarLineId || null;
-            var out = { lines: [], interchanges: [], you: null, width: 320, height: 480, retired: [] };
-            if (!lines.length) return out;
-
-            // Order lines left→right by first appearance; spread around centre.
-            var n = lines.length;
-            var totalW = Math.max(320, (n - 1) * TT_SPINE_GAP + TT_MARGIN_X * 2 + 120);
-            var centerX = totalW / 2;
-            var spineX = {};
-            lines.forEach(function(line, i) { spineX[line.id] = Math.round(centerX + (i - (n - 1) / 2) * TT_SPINE_GAP); });
-            var maxFan = 0;
-            lines.forEach(function(line) { maxFan = Math.max(maxFan, Math.abs(spineX[line.id] - centerX)); });
-
-            var byLineY = {}; // provisional; compute per-line heights then set youY
-            var perLine = lines.map(function(line) {
-                var sx = spineX[line.id];
-                var fan = Math.abs(sx - centerX);
-                var stations = (line.stations || []).slice().sort(function(a, b) { return a.index - b.index; });
-                var segCount = stations.length;
-                var nodesBySeg = {};
-                for (var s = 0; s < segCount; s++) nodesBySeg[s] = [];
-                (tt.nodes || []).forEach(function(nd) {
-                    if (nd.lineId !== line.id || nd.lifecycle === 'archived') return;
-                    var s = Math.min(segCount - 1, Math.max(0, nd.segmentIndex || 0));
-                    nodesBySeg[s].push(nd);
+        // ── Tiers (§4.1) ─────────────────────────────────────────────────
+        // Tier = 1 + longest prerequisite chain. An activity_mastered prereq
+        // chains through the anchor node that carries that activity, so
+        // upgrades hang off their anchors visually.
+        function ttComputeTiers(nodes) {
+            var byId = {}, anchorByAct = {};
+            nodes.forEach(function(n) {
+                byId[n.id] = n;
+                if (n.payload && n.payload.activityId && !anchorByAct[n.payload.activityId]) anchorByAct[n.payload.activityId] = n;
+            });
+            var memo = {};
+            function tier(n, guard) {
+                if (memo[n.id] != null) return memo[n.id];
+                if (guard[n.id]) return 1;
+                guard[n.id] = true;
+                var t = 1;
+                (n.prerequisites || []).forEach(function(pr) {
+                    var src = pr.type === 'node_mastered' ? byId[pr.nodeId]
+                        : pr.type === 'activity_mastered' ? anchorByAct[pr.activityId] : null;
+                    if (src && src.id !== n.id) t = Math.max(t, 1 + tier(src, guard));
                 });
-                // Height needed for this line (walking bottom→top).
-                var slots = 0;
-                for (var s2 = 0; s2 < segCount; s2++) { slots += nodesBySeg[s2].length + 1; }
-                slots += 1; // terminus
-                var lineHeight = fan + slots * TT_SLOT + 40;
-                return { line: line, sx: sx, fan: fan, stations: stations, segCount: segCount, nodesBySeg: nodesBySeg, height: lineHeight };
+                delete guard[n.id]; memo[n.id] = t; return t;
+            }
+            nodes.forEach(function(n) { n._tier = tier(n, {}); });
+        }
+
+        // ── Layout (§4.2) — deterministic, cheap, precomputed once ───────
+        // Horizontal bands per dimension; tiers flow left → right; wildcards
+        // float at the right edge; fusions bias toward their cross-band
+        // source. One pass, one SVG string, no per-frame work.
+        var TT_COL_W = 165, TT_PAD_X = 62, TT_BAND_MIN_H = 130, TT_BAND_MAX_H = 220;
+        function ttWebLayout() {
+            var tt = ensureTechTree();
+            var alive = (tt.nodes || []).filter(function(n) { return n.lifecycle !== 'archived'; });
+            var out = { bands: [], edges: [], width: 360, height: 200, nodePos: {} };
+            if (!alive.length) return out;
+            ttComputeTiers(alive);
+
+            // Bands: user's dimension order, only dimensions holding nodes.
+            var dims = (window.userData.dimensions || []).map(function(d) { return { id: d.id, name: d.name }; });
+            dims.push({ id: 'uncategorized', name: 'Other' });
+            var byDim = {};
+            alive.forEach(function(n) {
+                var id = n.dimensionId;
+                if (!dims.some(function(d) { return d.id === id; })) id = 'uncategorized';
+                (byDim[id] = byDim[id] || []).push(n);
+            });
+            var bandDims = dims.filter(function(d, i) {
+                return byDim[d.id] && byDim[d.id].length && dims.findIndex(function(x) { return x.id === d.id; }) === i;
             });
 
-            var height = 0;
-            perLine.forEach(function(pl) { height = Math.max(height, pl.height); });
-            height = Math.round(height + TT_TOP_PAD + TT_BOTTOM_PAD);
-            var youY = height - TT_BOTTOM_PAD;
-            out.you = { x: centerX, y: youY };
-            out.width = totalW; out.height = height;
+            var maxTier = 1;
+            alive.forEach(function(n) { if (n.role !== 'wildcard') maxTier = Math.max(maxTier, n._tier); });
+            var anyWild = alive.some(function(n) { return n.role === 'wildcard'; });
+            var width = Math.max(360, TT_PAD_X * 2 + (maxTier - 1) * TT_COL_W + (anyWild ? 120 : 40));
+            var bandIndexOf = {};
+            bandDims.forEach(function(d, i) { bandIndexOf[d.id] = i; });
 
-            perLine.forEach(function(pl) {
-                var sx = pl.sx, fanMeetY = youY - pl.fan;
-                var placed = { line: pl.line, sx: sx, color: pl.line.color, goal: ttGoalForLine(pl.line),
-                    fanMeetY: fanMeetY, youX: centerX, youY: youY, nodes: [], stations: [], terminus: null,
-                    frontierY: fanMeetY, topY: fanMeetY, dim: (focusLineId && focusLineId !== pl.line.id) };
-                var y = fanMeetY - 20;
-                var frontierSet = false;
-                for (var s = 0; s < pl.segCount; s++) {
-                    var segNodes = pl.nodesBySeg[s];
-                    segNodes.forEach(function(nd, k) {
-                        y -= TT_SLOT;
-                        var side = segNodes.length > 1 ? (k % 2 === 0 ? -1 : 1) : 0;
-                        var off = segNodes.length > 1 ? 30 : 0;
-                        placed.nodes.push({ node: nd, x: sx + off * side, y: y, side: side, seg: s });
+            // Where does a fusion's cross-band source live? Used to bias y.
+            var byId = {}, anchorByAct = {};
+            alive.forEach(function(n) {
+                byId[n.id] = n;
+                if (n.payload && n.payload.activityId && !anchorByAct[n.payload.activityId]) anchorByAct[n.payload.activityId] = n;
+            });
+            function crossBias(n, ownIdx) {
+                if (n.role !== 'fusion') return 0;
+                var bias = 0;
+                (n.prerequisites || []).forEach(function(pr) {
+                    var src = pr.type === 'node_mastered' ? byId[pr.nodeId]
+                        : pr.type === 'activity_mastered' ? anchorByAct[pr.activityId] : null;
+                    if (!src) return;
+                    var srcIdx = bandIndexOf[src.dimensionId];
+                    if (srcIdx === undefined) srcIdx = bandIndexOf['uncategorized'];
+                    if (srcIdx === undefined || srcIdx === ownIdx) return;
+                    bias += srcIdx < ownIdx ? -1 : 1;
+                });
+                return bias;
+            }
+
+            var y0 = 8;
+            bandDims.forEach(function(d, bi) {
+                var nodes = byDim[d.id];
+                var wilds = nodes.filter(function(n) { return n.role === 'wildcard'; });
+                var placed = nodes.filter(function(n) { return n.role !== 'wildcard'; });
+                var byTier = {};
+                placed.forEach(function(n) { (byTier[n._tier] = byTier[n._tier] || []).push(n); });
+                var maxPerTier = Math.max(1, wilds.length);
+                Object.keys(byTier).forEach(function(t) { maxPerTier = Math.max(maxPerTier, byTier[t].length); });
+                var needed = 48 + maxPerTier * 74;
+                var h = Math.max(TT_BAND_MIN_H, Math.min(TT_BAND_MAX_H, needed));
+                if (needed > TT_BAND_MAX_H) h = needed;   // overflow wraps into a taller band
+                var band = { dim: d, y0: y0, h: h, nodes: [], wilds: [] };
+                Object.keys(byTier).forEach(function(t) {
+                    var bucket = byTier[t];
+                    // Fusions drift toward the boundary shared with their
+                    // cross-band source (simple heuristic, no solver).
+                    bucket.sort(function(a, b) { return crossBias(a, bi) - crossBias(b, bi); });
+                    bucket.forEach(function(n, i) {
+                        var x = TT_PAD_X + (parseInt(t, 10) - 1) * TT_COL_W;
+                        var y = y0 + h * (i + 0.5) / bucket.length;
+                        // Nudge biased fusions further toward the band edge.
+                        var cb = crossBias(n, bi);
+                        if (cb < 0) y = Math.max(y0 + 30, y - h * 0.18);
+                        else if (cb > 0) y = Math.min(y0 + h - 34, y + h * 0.18);
+                        band.nodes.push({ node: n, x: Math.round(x), y: Math.round(y) });
+                        out.nodePos[n.id] = { x: Math.round(x), y: Math.round(y), band: bi };
                     });
-                    y -= TT_SLOT;
-                    var st = pl.stations[s];
-                    placed.stations.push({ station: st, x: sx, y: y });
-                    if (!st.reachedAt && !frontierSet) { placed.frontierY = y; frontierSet = true; }
-                }
-                y -= TT_SLOT;
-                placed.terminus = { x: sx, y: y };
-                placed.topY = y;
-                if (!frontierSet) placed.frontierY = y; // whole line solid
-                out.lines.push(placed);
+                });
+                wilds.forEach(function(n, i) {
+                    var x = width - 64;
+                    var y = y0 + h * (i + 0.5) / wilds.length;
+                    band.wilds.push({ node: n, x: Math.round(x), y: Math.round(y) });
+                    out.nodePos[n.id] = { x: Math.round(x), y: Math.round(y), band: bi };
+                });
+                out.bands.push(band);
+                y0 += h;
             });
+            out.width = width;
+            out.height = y0 + 10;
 
-            // Interchanges: a home-line node that also credits another line.
-            (tt.nodes || []).forEach(function(nd) {
-                if (!nd.interchange || nd.lifecycle === 'archived') return;
-                var homePos = null;
-                out.lines.forEach(function(pl) { pl.nodes.forEach(function(p) { if (p.node.id === nd.id) homePos = p; }); });
-                if (!homePos) return;
-                var otherId = (nd.interchange.lineIds || []).filter(function(id) { return id !== nd.lineId; })[0];
-                var otherX = spineX[otherId];
-                out.interchanges.push({ node: nd, x: homePos.x, y: homePos.y, otherX: otherX });
+            // Edges derive from prerequisites at render time (§2.3).
+            alive.forEach(function(n) {
+                if (!out.nodePos[n.id]) return;
+                (n.prerequisites || []).forEach(function(pr) {
+                    var src = pr.type === 'node_mastered' ? byId[pr.nodeId]
+                        : pr.type === 'activity_mastered' ? anchorByAct[pr.activityId] : null;
+                    if (!src || src.id === n.id || !out.nodePos[src.id]) return;
+                    var met = ttPrereqMet(pr, n, tt);
+                    // Fusion edges keep each SOURCE's own goal colour — the
+                    // multicolour weave; everything else takes the target's.
+                    var color = n.role === 'fusion' ? ttNodeColor(src) : ttNodeColor(n);
+                    var a = out.nodePos[src.id], b = out.nodePos[n.id];
+                    out.edges.push({ from: a, to: b, src: src, dst: n, met: met, color: color, cross: a.band !== b.band });
+                });
             });
-
-            // Fresh picks (spec §8.8, §7.4) — nodes on no line. They still have to
-            // be VISIBLE (and tappable to accept / attach to a line), so stack
-            // them in a labelled column down the left edge.
-            var fps = (tt.nodes || []).filter(function(nd) { return !nd.lineId && !nd.interchange && nd.lifecycle !== 'archived'; });
-            out.freshPicks = fps.map(function(nd, i) { return { node: nd, x: 46, y: TT_TOP_PAD + 40 + i * 54 }; });
-            if (fps.length) out.height = Math.max(out.height, TT_TOP_PAD + 40 + fps.length * 54 + 30);
             return out;
         }
 
-        // ── SVG glyphs (spec §8.3) ───────────────────────────────────────
+        // ── Glyph language (§4.3) ────────────────────────────────────────
         function ttNodeState(node) {
             if (node.resolvedAt) return 'resolved';
             if (node.lifecycle === 'active') return 'active';
             if (node.lifecycle === 'available') return 'available';
             return 'locked';
         }
-        function ttStateStyle(color, state) {
-            if (state === 'resolved') return { stroke: TT_GOLD, fill: TT_GOLD, op: 1, cls: '' };
-            if (state === 'active') return { stroke: color, fill: 'none', op: 1, cls: '' };
-            if (state === 'available') return { stroke: color, fill: 'none', op: 1, cls: 'tt-pulse' };
-            return { stroke: color, fill: 'none', op: 0.4, cls: '' };
+        function ttGlyphRadius(node) {
+            var t = (node.payload && node.payload.type) || 'activity';
+            if (ttNodeState(node) === 'locked') return t === 'quest' ? 18 : 11;
+            if (t === 'quest') return 26;
+            if (node.role === 'fusion') return 19;
+            if (node.role === 'wildcard') return 12;
+            return 13;
         }
-        function ttGlyph(node, x, y, color) {
+        function ttGlyph(node, x, y, color, defs) {
             var t = (node.payload && node.payload.type) || 'activity';
             var st = ttNodeState(node);
-            var s = ttStateStyle(color, st);
             var g = '';
-            if (node.interchange) t = 'interchange';
-            if (t === 'activity') {
-                g += '<circle cx="' + x + '" cy="' + y + '" r="9.5" fill="#161616"/>';
+            var pulse = st === 'available' ? ' class="tt-pulse"' : '';
+            if (node.role === 'wildcard') {
+                return '<text x="' + x + '" y="' + (y + 7) + '" text-anchor="middle" font-size="22" fill="' + TT_WILD + '"' + (st === 'available' ? ' class="tt-pulse"' : '') + '>✦</text>';
+            }
+            if (st === 'locked') {
+                var r0 = t === 'quest' ? 13 : 8;
+                g += '<circle cx="' + x + '" cy="' + y + '" r="' + r0 + '" fill="#161616" stroke="' + color + '" stroke-width="2" opacity="0.4"/>';
+                g += '<text x="' + x + '" y="' + (y + 4) + '" text-anchor="middle" font-size="9" opacity="0.75">🔒</text>';
+                return g;
+            }
+            if (node.role === 'fusion') {
+                var gid = 'ttfg_' + node.id;
+                var colors = ttNodeGoals(node).map(function(gl) { return gl.color; }).filter(Boolean);
+                var cA = colors[0] || color, cB = colors[1] || ttDimHexRaw(node.dimensionId);
+                defs.push('<linearGradient id="' + gid + '" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="' + cA + '"/><stop offset="1" stop-color="' + cB + '"/></linearGradient>');
+                g += '<rect x="' + (x - 14) + '" y="' + (y - 14) + '" width="28" height="28" rx="6" fill="#161616" stroke="url(#' + gid + ')" stroke-width="2.6" transform="rotate(45 ' + x + ' ' + y + ')"' + pulse + ' style="filter:drop-shadow(0 0 5px ' + hexA(cA, 0.55) + ')"/>';
+                g += '<path d="M' + (x - 6) + ' ' + y + ' h12 M' + x + ' ' + (y - 6) + ' v12" stroke="' + (st === 'resolved' ? TT_GOLD : '#e8e8e8') + '" stroke-width="2.4" stroke-linecap="round"/>';
+                return g;
+            }
+            if (t === 'quest') {
+                g += '<rect x="' + (x - 24) + '" y="' + (y - 24) + '" width="48" height="48" rx="13" fill="' + (st === 'resolved' ? hexA(TT_GOLD, 0.2) : hexA(color, 0.13)) + '" stroke="' + (st === 'resolved' ? TT_GOLD : color) + '" stroke-width="2.4"' + pulse + '/>';
+                g += '<text x="' + x + '" y="' + (y + 7) + '" text-anchor="middle" font-size="20">⚔️</text>';
+                return g;
+            }
+            if (t === 'challenge') {
+                g += '<circle cx="' + x + '" cy="' + y + '" r="12" fill="#161616" stroke="' + color + '" stroke-width="2.4" stroke-dasharray="3 3"' + pulse + '/>';
                 if (st === 'resolved') g += '<circle cx="' + x + '" cy="' + y + '" r="5.5" fill="' + TT_GOLD + '"/>';
-                else if (st === 'active') { g += ttProgressRing(node, x, y, color); }
-                else g += '<circle cx="' + x + '" cy="' + y + '" r="6.5" fill="none" stroke="' + s.stroke + '" stroke-width="2.6" opacity="' + s.op + '" class="' + s.cls + '"/>';
-            } else if (t === 'quest') {
-                g += '<rect x="' + (x - 11) + '" y="' + (y - 11) + '" width="22" height="22" rx="6" fill="' + (st === 'resolved' ? TT_GOLD : hexA(color, 0.14)) + '" stroke="' + s.stroke + '" stroke-width="2.2" opacity="' + s.op + '" class="' + s.cls + '"/>';
-                var lc = st === 'resolved' ? '#161616' : color;
-                g += '<line x1="' + (x - 5) + '" y1="' + (y - 4) + '" x2="' + (x + 5) + '" y2="' + (y - 4) + '" stroke="' + lc + '" stroke-width="1.7" stroke-linecap="round" opacity="' + s.op + '"/>';
-                g += '<line x1="' + (x - 5) + '" y1="' + y + '" x2="' + (x + 5) + '" y2="' + y + '" stroke="' + lc + '" stroke-width="1.7" stroke-linecap="round" opacity="' + s.op + '"/>';
-                g += '<line x1="' + (x - 5) + '" y1="' + (y + 4) + '" x2="' + (x + 2) + '" y2="' + (y + 4) + '" stroke="' + lc + '" stroke-width="1.7" stroke-linecap="round" opacity="' + s.op + '"/>';
-            } else if (t === 'interchange') {
-                g += '<rect x="' + (x - 11) + '" y="' + (y - 11) + '" width="22" height="22" fill="#161616" stroke="' + (st === 'resolved' ? TT_GOLD : color) + '" stroke-width="2.4" transform="rotate(45 ' + x + ' ' + y + ')" opacity="' + s.op + '" class="' + s.cls + '"/>';
-                g += '<path d="M' + (x - 5) + ' ' + y + ' h10 M' + x + ' ' + (y - 5) + ' v10" stroke="' + (st === 'resolved' ? TT_GOLD : color) + '" stroke-width="2.2" stroke-linecap="round" opacity="' + s.op + '"/>';
-            } else if (t === 'challenge') {
-                g += '<circle cx="' + x + '" cy="' + y + '" r="9.5" fill="#161616" stroke="' + s.stroke + '" stroke-width="2.4" stroke-dasharray="3 3" opacity="' + s.op + '" class="' + s.cls + '"/>';
+                return g;
+            }
+            // Activity glyphs — anchors are the filled foundation tier.
+            g += '<circle cx="' + x + '" cy="' + y + '" r="14" fill="#161616"/>';
+            if (st === 'resolved') {
+                g += '<circle cx="' + x + '" cy="' + y + '" r="10" fill="' + TT_GOLD + '"/>'
+                   + '<text x="' + x + '" y="' + (y + 3.5) + '" text-anchor="middle" font-size="10" fill="#161616" font-weight="700">★</text>';
+            } else if (st === 'active') {
+                g += ttProgressArc(node, x, y, color);
+            } else { // available — hollow ring in goal colour, pulsing
+                g += '<circle cx="' + x + '" cy="' + y + '" r="9" fill="none" stroke="' + color + '" stroke-width="2.8"' + pulse + '/>';
             }
             return g;
         }
-        function ttProgressRing(node, x, y, color) {
+        function ttProgressArc(node, x, y, color) {
             var e = node.payload && node.payload.activityId ? ttFindActivity(node.payload.activityId) : null;
             var pct = 0;
             if (e) pct = ttMasteryProgress(e.activity).pct;
             else if (node.payload && node.payload.projectId) { var p = ttFindProject(node.payload.projectId); if (p) { var need = (node.payload.resolveRule && node.payload.resolveRule.cleanCycles) || 1; pct = Math.min(1, ttCleanCycles(p) / need); } }
-            var r = 6.5, C = 2 * Math.PI * r;
-            return '<circle cx="' + x + '" cy="' + y + '" r="' + r + '" fill="none" stroke="rgba(150,150,160,0.22)" stroke-width="2.8"/>'
-                + '<circle cx="' + x + '" cy="' + y + '" r="' + r + '" fill="none" stroke="' + color + '" stroke-width="2.8" stroke-linecap="round" stroke-dasharray="' + (C * pct).toFixed(1) + ' ' + C.toFixed(1) + '" transform="rotate(-90 ' + x + ' ' + y + ')"/>';
-        }
-        function ttStationGlyph(stObj, color) {
-            var x = stObj.x, y = stObj.y, reached = !!stObj.station.reachedAt;
-            var op = reached ? 1 : 0.72;
-            return '<line x1="' + (x - 13) + '" y1="' + y + '" x2="' + (x + 13) + '" y2="' + y + '" stroke="#161616" stroke-width="8"/>'
-                + '<line x1="' + (x - 13) + '" y1="' + y + '" x2="' + (x + 13) + '" y2="' + y + '" stroke="' + color + '" stroke-width="3.2" stroke-linecap="round" opacity="' + (reached ? 1 : 0.6) + '"/>'
-                + '<circle cx="' + x + '" cy="' + y + '" r="9.5" fill="#161616" stroke="' + color + '" stroke-width="2.6" opacity="' + op + '"/>'
-                + (reached ? '<circle cx="' + x + '" cy="' + y + '" r="4" fill="' + color + '"/>' : '');
-        }
-        function ttTerminusGlyph(pl) {
-            var x = pl.terminus.x, y = pl.terminus.y, c = pl.color, kind = pl.line.terminus.kind;
-            if (kind === 'loop') {
-                return '<circle cx="' + x + '" cy="' + y + '" r="15" fill="' + hexA(c, 0.1) + '" stroke="' + c + '" stroke-width="2.2" stroke-dasharray="3.5,3.5"/>'
-                    + '<path d="M' + (x - 6.5) + ' ' + (y + 2) + ' a7 7 0 1 1 2.6 5" fill="none" stroke="' + c + '" stroke-width="2.2" stroke-linecap="round"/>';
-            }
-            return '<line x1="' + x + '" y1="' + (y - 15) + '" x2="' + x + '" y2="' + (y + 15) + '" stroke="' + c + '" stroke-width="2.6" stroke-linecap="round"/>'
-                + '<path d="M' + x + ' ' + (y - 15) + ' l17 9 l-17 9 z" fill="' + c + '"/>';
+            var r = 9, C = 2 * Math.PI * r;
+            return '<circle cx="' + x + '" cy="' + y + '" r="' + r + '" fill="none" stroke="rgba(150,150,160,0.25)" stroke-width="3"/>'
+                + '<circle cx="' + x + '" cy="' + y + '" r="' + r + '" fill="none" stroke="' + color + '" stroke-width="3" stroke-linecap="round" stroke-dasharray="' + (C * pct).toFixed(1) + ' ' + C.toFixed(1) + '" transform="rotate(-90 ' + x + ' ' + y + ')"/>'
+                + '<circle cx="' + x + '" cy="' + y + '" r="3.4" fill="' + color + '"/>';
         }
 
-        // Build the whole map SVG from a layout.
-        function ttBuildMapSVG(L) {
-            var tt = ensureTechTree();
-            var focusSet = window._ttFocusChain || null;
-            var W = L.width, H = L.height;
-            var svg = '';
-            // Spines — drawn solid to the frontier, faded ahead (spec §8.2).
-            L.lines.forEach(function(pl) {
-                var dimCls = pl.dim || (focusSet && !pl.nodes.some(function(p){return focusSet[p.node.id];})) ? ' tt-limb-dim' : '';
-                var sx = pl.sx;
-                // fan (45°) + vertical to frontier = solid
-                svg += '<g class="tt-limb' + dimCls + '">';
-                svg += '<polyline points="' + pl.youX + ',' + pl.youY + ' ' + sx + ',' + pl.fanMeetY + ' ' + sx + ',' + pl.frontierY + '" fill="none" stroke="' + pl.color + '" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"' + (pl.line.status === 'retired' ? ' opacity="0.28"' : '') + '/>';
-                // ahead of frontier = faded
-                if (pl.topY < pl.frontierY) svg += '<polyline points="' + sx + ',' + pl.frontierY + ' ' + sx + ',' + pl.topY + '" fill="none" stroke="' + pl.color + '" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.3"/>';
-                // line label along the lower run (kept clear of the YOU node)
-                var lblY = Math.min(pl.fanMeetY - 6, pl.youY - 46);
-                svg += '<text x="' + (sx + 12) + '" y="' + lblY + '" class="tt-ln-l" fill="' + pl.color + '">' + escapeHtml((pl.goal ? (pl.goal.shortName || '') : '').toUpperCase()) + '</text>';
-                svg += '</g>';
-            });
-            // Interchange connectors (dashed) beneath glyphs.
-            L.interchanges.forEach(function(ix) {
-                svg += '<polyline points="' + ix.x + ',' + ix.y + ' ' + ((ix.x + ix.otherX) / 2) + ',' + (ix.y - 30) + ' ' + ix.otherX + ',' + ix.y + '" fill="none" stroke="rgba(255,255,255,0.22)" stroke-width="1.6" stroke-dasharray="2,4.5" stroke-linecap="round"/>';
-            });
-            // Fresh picks — a labelled column, off any line.
-            if (L.freshPicks && L.freshPicks.length) {
-                svg += '<text x="46" y="' + (TT_TOP_PAD + 16) + '" text-anchor="middle" class="tt-tm-s">FRESH PICKS</text>';
-                L.freshPicks.forEach(function(p) {
-                    var faded = focusSet && !focusSet[p.node.id];
-                    var col = ttDimHexRaw(p.node.dimensionId);
-                    svg += '<g class="tt-node' + (faded ? ' tt-node-faded' : '') + '" onclick="ttOpenNode(\'' + p.node.id + '\')" style="cursor:pointer">'
-                        + ttGlyph(p.node, p.x, p.y, col)
-                        + '<text x="' + (p.x + 15) + '" y="' + (p.y + 3) + '" class="' + (p.node.resolvedAt ? 'tt-n-l tt-n-gold' : 'tt-n-l') + '">' + escapeHtml(ttShort(p.node.title, 15)) + '</text>'
-                        + '</g>';
-                });
+        // Every node gets a visible label + one-line sublabel. No unlabeled
+        // dots, ever (§4.3).
+        function ttNodeSublabel(node, tt) {
+            var st = ttNodeState(node);
+            if (st === 'resolved') return 'mastered';
+            if (st === 'locked') return ttLockHint(node, tt);
+            if (node.role === 'wildcard') return 'wildcard · open';
+            if (st === 'available') return node.role === 'fusion' ? 'fusion · tap' : 'open — tap';
+            // active
+            var pl = node.payload || {};
+            if (pl.type === 'activity' && pl.activityId) {
+                var e = ttFindActivity(pl.activityId);
+                if (e) { var p = ttMasteryProgress(e.activity); return p.count + '/' + p.target + ' · doing'; }
             }
-            // YOU node.
-            svg += '<g><circle cx="' + L.you.x + '" cy="' + L.you.y + '" r="17" fill="#161616" stroke="#5a9fd4" stroke-width="2.2"/><circle cx="' + L.you.x + '" cy="' + L.you.y + '" r="5.5" fill="#5a9fd4"/><text x="' + L.you.x + '" y="' + (L.you.y + 32) + '" text-anchor="middle" class="tt-you-l">YOU</text></g>';
-            // Per-line nodes, stations, terminus.
-            L.lines.forEach(function(pl) {
-                var dimAll = pl.dim;
-                var gcls = dimAll ? ' tt-limb-dim' : '';
-                svg += '<g class="tt-limb' + gcls + '">';
-                pl.nodes.forEach(function(p) {
-                    var faded = focusSet && !focusSet[p.node.id];
-                    svg += '<g class="tt-node' + (faded ? ' tt-node-faded' : '') + '" data-ttnode="' + p.node.id + '" onclick="ttOpenNode(\'' + p.node.id + '\')" style="cursor:pointer">';
-                    if (p.side !== 0) svg += '<line x1="' + pl.sx + '" y1="' + p.y + '" x2="' + p.x + '" y2="' + p.y + '" stroke="' + pl.color + '" stroke-width="2" opacity="0.5"/>';
-                    svg += ttGlyph(p.node, p.x, p.y, pl.color);
-                    var lx = p.side >= 0 ? p.x + 15 : p.x - 15, anc = p.side >= 0 ? 'start' : 'end';
-                    var lblCls = p.node.resolvedAt ? 'tt-n-l tt-n-gold' : 'tt-n-l';
-                    svg += '<text x="' + lx + '" y="' + (p.y + 3) + '" text-anchor="' + anc + '" class="' + lblCls + '">' + escapeHtml(ttShort(p.node.title, 16)) + '</text>';
-                    svg += '</g>';
-                });
-                pl.stations.forEach(function(so) {
-                    svg += '<g data-ttstation="' + pl.line.id + ':' + so.station.index + '" onclick="ttOpenSegment(\'' + pl.line.id + '\',' + so.station.index + ')" style="cursor:pointer">';
-                    svg += ttStationGlyph(so, pl.color);
-                    svg += '<text x="' + (so.x - 16) + '" y="' + (so.y + 3) + '" text-anchor="end" class="tt-st-l">' + escapeHtml(ttShort(so.station.title, 16)) + '</text>';
-                    svg += '</g>';
-                });
-                svg += '<g data-ttterm="' + pl.line.id + '" onclick="ttFocusTerminus(\'' + pl.line.id + '\')" style="cursor:pointer">'
-                    + ttTerminusGlyph(pl)
-                    + '<text x="' + pl.terminus.x + '" y="' + (pl.terminus.y - 22) + '" text-anchor="middle" class="tt-tm-l" fill="' + pl.color + '">' + escapeHtml(ttShort(pl.line.terminus.title, 18)) + '</text>'
-                    + (pl.line.terminus.kind === 'loop' ? '<text x="' + pl.terminus.x + '" y="' + (pl.terminus.y + 30) + '" text-anchor="middle" class="tt-tm-s">No finish line</text>' : '')
-                    + '</g>';
-                svg += '</g>';
+            if (pl.type === 'quest' && pl.projectId) {
+                if (pl.spec && pl.spec.cadence && pl.spec.cadence.type === 'recurring') {
+                    var pr = ttFindProject(pl.projectId);
+                    if (pr) return ttCleanCycles(pr) + '/' + ((pl.resolveRule && pl.resolveRule.cleanCycles) || 4) + ' cycles';
+                }
+                return 'in progress';
+            }
+            return 'doing';
+        }
+        // Human unlock hint for locked nodes ("master 1 more", "finish the quest").
+        function ttLockHint(node, tt) {
+            var unmet = (node.prerequisites || []).filter(function(pr) { return !ttPrereqMet(pr, node, tt); });
+            if (!unmet.length) return 'locked';
+            var pr = unmet[0];
+            if (pr.type === 'node_mastered') {
+                var t = tt.nodes.find(function(n) { return n.id === pr.nodeId; });
+                if (t && t.payload && t.payload.type === 'quest') return 'finish the quest';
+                if (unmet.length > 1) return 'master ' + unmet.length + ' more';
+                return t ? 'after ' + ttShort(t.title, 14) : 'master 1 more';
+            }
+            if (pr.type === 'activity_mastered') {
+                if (unmet.length > 1) return 'master ' + unmet.length + ' more';
+                var e = ttFindActivity(pr.activityId);
+                return e ? 'master ' + ttShort(e.activity.name, 12) : 'master 1 more';
+            }
+            return 'locked';
+        }
+
+        // ── The web SVG (one precomputed string §4.2) ────────────────────
+        function ttBuildWebSVG(L) {
+            var tt = ensureTechTree();
+            var defs = [];
+            var glowIds = {};
+            function glowFor(color) {
+                if (!glowIds[color]) {
+                    var id = 'ttglow_' + Object.keys(glowIds).length;
+                    glowIds[color] = id;
+                    defs.push('<filter id="' + id + '" x="-40%" y="-40%" width="180%" height="180%"><feDropShadow dx="0" dy="0" stdDeviation="2.4" flood-color="' + color + '" flood-opacity="0.8"/></filter>');
+                }
+                return glowIds[color];
+            }
+            var svg = '';
+            // Band chrome: separators + labels (emoji-less small caps).
+            L.bands.forEach(function(b, i) {
+                if (i > 0) svg += '<line x1="0" y1="' + b.y0 + '" x2="' + L.width + '" y2="' + b.y0 + '" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>';
+                svg += '<text x="12" y="' + (b.y0 + 17) + '" class="tt-band-l" fill="' + ttDimHexRaw(b.dim.id) + '">◈ ' + escapeHtml(b.dim.name.toUpperCase()) + '</text>';
             });
-            return '<svg class="tt-map-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" id="ttMapSvg">' + svg + '</svg>';
+            // Edges beneath glyphs. Cross-band edges glow — the hero visual.
+            L.edges.forEach(function(e) {
+                var x1 = e.from.x, y1 = e.from.y, x2 = e.to.x, y2 = e.to.y;
+                var dx = Math.max(36, Math.abs(x2 - x1) * 0.45);
+                var d = 'M' + x1 + ' ' + y1 + ' C' + (x1 + dx) + ' ' + y1 + ', ' + (x2 - dx) + ' ' + y2 + ', ' + x2 + ' ' + y2;
+                var style = e.met ? 'opacity="0.85"' : 'stroke-dasharray="3,5" opacity="0.4"';
+                var glow = e.cross ? ' filter="url(#' + glowFor(e.color) + ')"' : '';
+                svg += '<path d="' + d + '" fill="none" stroke="' + e.color + '" stroke-width="2" ' + style + glow + '/>';
+            });
+            // Nodes: glyph + label + sublabel; tap targets by delegation-free
+            // inline onclick (one listener per node group is fine at ~40 nodes,
+            // and the string is built once).
+            function nodeGroup(p) {
+                var n = p.node;
+                var color = ttNodeColor(n);
+                var st = ttNodeState(n);
+                var r = ttGlyphRadius(n);
+                var flash = (window._ttFlashNodeId === n.id) ? ' tt-flash' : '';
+                var dimmed = st === 'locked' ? ' tt-node-dim' : '';
+                var out = '<g class="tt-node' + flash + dimmed + '" onclick="ttOpenNode(\'' + n.id + '\')" style="cursor:pointer">';
+                out += ttGlyph(n, p.x, p.y, color, defs);
+                var lblCls = st === 'resolved' ? 'tt-wn-t tt-wn-gold' : 'tt-wn-t';
+                out += '<text x="' + p.x + '" y="' + (p.y + r + 13) + '" text-anchor="middle" class="' + lblCls + '">' + escapeHtml(ttShort(n.title, 18)) + '</text>';
+                out += '<text x="' + p.x + '" y="' + (p.y + r + 24) + '" text-anchor="middle" class="tt-wn-s">' + escapeHtml(ttShort(ttNodeSublabel(n, tt), 22)) + '</text>';
+                out += '</g>';
+                return out;
+            }
+            L.bands.forEach(function(b) {
+                b.nodes.forEach(function(p) { svg += nodeGroup(p); });
+                b.wilds.forEach(function(p) { svg += nodeGroup(p); });
+            });
+            window._ttFlashNodeId = null;
+            return '<svg class="tt-web-svg" width="' + L.width + '" height="' + L.height + '" viewBox="0 0 ' + L.width + ' ' + L.height + '" id="ttWebSvg"><defs>' + defs.join('') + '</defs>' + svg + '</svg>';
         }
         function ttShort(s, n) { s = s || ''; return s.length > n ? s.slice(0, n - 1) + '…' : s; }
 
-        // ── Main render (spec §8.4) ──────────────────────────────────────
+        // ── Main render (§4.4) ───────────────────────────────────────────
         function renderTechTree() {
             var container = document.getElementById('techTreeContainer');
             if (!container || !window.userData) return;
             var tt = ensureTechTree();
             if (evaluateTechTreeMastery()) debouncedSaveUserData();
 
-            // Generating screen (spec §4.4) — anticipation, not a stall.
-            if (tt.pendingRequest && (tt.status === 'generating' || tt.pendingRequest.type === 'generate' || tt.pendingRequest.type === 'add_line')) {
+            // Generating screen — anticipation, not a stall.
+            if (tt.pendingRequest && (tt.status === 'generating' || tt.pendingRequest.type === 'generate' || tt.pendingRequest.type === 'add_goal')) {
                 ttEnsureListener();
-                var goalsList = (tt.goals || []).filter(function(g){return !g.retiredAt;}).map(function(g) {
+                var goalsList = (tt.goals || []).filter(function(g) { return !g.retiredAt; }).map(function(g) {
                     return '<div class="tt-gen-goal">' + escapeHtml(g.rawText) + '</div>';
                 }).join('');
                 container.innerHTML = '<div class="tt-gen">'
                     + '<div class="tt-gen-orbit"><div class="tt-gen-dot"></div></div>'
-                    + '<h2 class="tt-gen-title">Building your map</h2>'
+                    + '<h2 class="tt-gen-title">Weaving your web</h2>'
                     + '<p class="tt-gen-sub">This takes a few minutes — we\'ll ping you the moment it\'s ready. You can leave this screen.</p>'
                     + (goalsList ? '<div class="tt-gen-goals">' + goalsList + '</div>' : '')
                     + '<button class="tt-btn tt-btn-ghost" onclick="ttCancelPending()">' + ttIcon('x', 12) + '<span>Cancel</span></button>'
@@ -15376,14 +15563,14 @@
                 return;
             }
 
-            // Empty / gate — goals form (spec §3.6). No sharpening question.
-            if (tt.status === 'empty' || !ttActiveLines().length || !tt.nodes.length) {
+            // Empty / gate — goals form.
+            if (tt.status === 'empty' || !tt.nodes.filter(function(n) { return n.lifecycle !== 'archived'; }).length) {
                 var gate = ttGateStatus();
-                var goals = (tt.goals || []).filter(function(g){return !g.retiredAt;});
-                var rows = (goals.length ? goals.map(function(g,i){return ttGoalRowHtml(g.rawText,i);}) : [ttGoalRowHtml('',0)]).join('');
+                var goals = (tt.goals || []).filter(function(g) { return !g.retiredAt; });
+                var rows = (goals.length ? goals.map(function(g, i) { return ttGoalRowHtml(g.rawText, i); }) : [ttGoalRowHtml('', 0)]).join('');
                 container.innerHTML = '<div class="tt-intro">'
-                    + '<h2 class="tt-intro-title">Your growth plan</h2>'
-                    + '<p class="tt-intro-sub">Name what you\'re working toward. The AI suggests a handful of activities and quests for each goal — you review, accept the ones you want, or ask for a revision.</p>'
+                    + '<h2 class="tt-intro-title">Your web</h2>'
+                    + '<p class="tt-intro-sub">Name what you\'re working toward. Your real activities become the anchors; the AI weaves upgrades, quests, fusions and a wildcard or two out of them. Goals run through it all as coloured threads.</p>'
                     + (tt.lastError ? '<div class="tt-error">' + escapeHtml(tt.lastError) + ' <button class="tt-inline-btn" onclick="ttRetryGenerate()">Retry</button></div>' : '')
                     + '<div id="ttGoalFields" class="tt-goal-fields">' + rows + '</div>'
                     + '<button class="tt-add-goal" onclick="ttAddGoalField()">' + ttIcon('plus', 12) + '<span>Add another goal</span></button>'
@@ -15391,549 +15578,599 @@
                     + '<div class="tt-gate-item' + (gate.activityCount >= 3 ? ' met' : '') + '">' + ttIcon(gate.activityCount >= 3 ? 'check' : 'circle', 12) + '<span>' + Math.min(gate.activityCount, 3) + '/3 activities</span></div>'
                     + '<div class="tt-gate-item' + (gate.goalCount >= 1 ? ' met' : '') + '">' + ttIcon(gate.goalCount >= 1 ? 'check' : 'circle', 12) + '<span>' + (gate.goalCount >= 1 ? 'goal set' : 'add a goal') + '</span></div>'
                     + '</div>'
-                    + '<button class="tt-btn tt-btn-primary tt-generate-btn" onclick="ttSyncGoalsAndGenerate()">' + ttIcon('map') + '<span>Build my map</span></button>'
+                    + '<button class="tt-btn tt-btn-primary tt-generate-btn" onclick="ttSyncGoalsAndGenerate()">' + ttIcon('map') + '<span>Weave my web</span></button>'
                     + '</div>';
                 return;
             }
 
-            // Ready — simple per-goal tiered trees (activities + quests, dotted
-            // prerequisite links). Tap a node to review / accept / revise.
+            // Ready — the web. One SVG canvas inside the scroll container.
+            var reveal = !!window._ttPendingReveal;
             window._ttPendingReveal = null;
-            var html = '<div class="tt-plan">'
-                + '<div class="tt-map-top"><div class="tt-map-title"><h2>Your growth plan</h2>'
-                + '<p>Tap any suggestion to review it, then accept it or ask for a revision.</p></div></div>';
-            if (tt.vision) html += '<div class="tt-reading">' + ttReadingHtml(tt) + '</div>';
-            ttActiveLines().forEach(function(line) {
-                var g = ttGoalForLine(line);
-                var goalNodes = tt.nodes.filter(function(n){ return n.lineId === line.id && n.lifecycle !== 'archived'; });
-                var doneCount = goalNodes.filter(function(n){ return n.resolvedAt; }).length;
-                html += '<div class="tt-goal-sec">'
-                    + '<div class="tt-goal-head" style="--gc:' + line.color + '">'
-                    + '<span class="tt-goal-dot" style="background:' + line.color + '"></span>'
-                    + '<span class="tt-goal-name">' + escapeHtml(g ? (g.sharpened || g.shortName) : line.terminus.title) + '</span>'
-                    + (g && g.kind === 'rhythm' ? '<span class="tt-rhythm-tag">no finish line</span>' : '')
-                    + '<button class="tt-goal-menu" onclick="ttGoalMenu(\'' + line.id + '\')" aria-label="Goal options">•••</button>'
-                    + '</div>'
-                    + (goalNodes.length ? ttGoalTreeSVG(line, goalNodes) : '<p class="tt-muted tt-goal-empty">No suggestions yet — Rebuild or add your own.</p>')
-                    + '</div>';
-            });
-            // Fresh picks — suggestions not tied to a goal.
-            var freshNodes = tt.nodes.filter(function(n){ return !n.lineId && !n.interchange && n.lifecycle !== 'archived'; });
-            if (freshNodes.length) {
-                html += '<div class="tt-goal-sec"><div class="tt-goal-head" style="--gc:#8a9a5b"><span class="tt-goal-dot" style="background:#8a9a5b"></span><span class="tt-goal-name">Fresh picks</span></div>'
-                    + '<div class="tt-fresh-row">' + freshNodes.map(function(n){ return ttNodeChip(n, ttDimHexRaw(n.dimensionId)); }).join('') + '</div></div>';
+            var activeGoals = ttActiveGoals();
+            var html = '<div class="tt-web' + (reveal ? ' tt-reveal' : '') + '">'
+                + '<div class="tt-web-head">'
+                + '<h2>Your web</h2>'
+                + '<div class="tt-head-chips">'
+                + '<button class="tt-chip-btn" onclick="ttAddGoal()">＋ Goal</button>'
+                + '<button class="tt-chip-btn" onclick="ttRebuildMap()">⟳ Rebuild</button>'
+                + '</div></div>';
+            if (tt.lastError) html += '<div class="tt-error">' + escapeHtml(tt.lastError) + ' <button class="tt-inline-btn" onclick="ttRetryGenerate()">Retry</button></div>';
+            // "We read your goals as" — ONLY in the post-generation reveal
+            // state, then never again as a header (§4.4).
+            if (reveal) {
+                var readings = activeGoals.filter(function(g) { return g.sharpened; }).map(function(g) {
+                    return '<b style="color:' + (g.color || '#f0f0f0') + '">' + escapeHtml(g.sharpened) + '</b>' + (g.kind === 'rhythm' ? ' <span class="tt-rhythm-tag">no finish line</span>' : '');
+                }).join(' · ');
+                if (readings) {
+                    html += '<div class="tt-reading"><div class="tt-reading-k">We read your goals as</div><div class="tt-reading-v">' + readings + '</div>'
+                        + (tt.vision ? '<div class="tt-reading-vis">' + escapeHtml(tt.vision) + '</div>' : '')
+                        + '<button class="tt-inline-btn" onclick="ttEditReadings()">Not right?</button></div>';
+                }
             }
-            var availCount = tt.nodes.filter(function(n){return n.lifecycle==='available';}).length;
+            // Goal legend chips — tap for the goal menu.
+            if (activeGoals.length) {
+                html += '<div class="tt-goal-legend">' + activeGoals.map(function(g) {
+                    return '<button class="tt-goal-chip" onclick="ttGoalMenu(\'' + g.id + '\')"><span class="tt-goal-chip-dot" style="background:' + (g.color || '#888') + '"></span>' + escapeHtml(g.shortName || 'Goal') + '</button>';
+                }).join('') + '</div>';
+            }
+            // State legend strip (one line, tiny).
+            html += '<div class="tt-state-legend"><span class="tt-sl-doing">◐</span> doing · <span class="tt-sl-gold">●</span> mastered · <span class="tt-sl-open">◌</span> open — tap · 🔒 locked</div>';
+            // First-run hint only (§5.5) — persisted behind introSeen.
+            if (!tt.introSeen) {
+                html += '<div class="tt-first-hint">Tap any node to review it — accept what you want, ignore the rest. Locked nodes show what opens them.</div>';
+                tt.introSeen = true;
+                debouncedSaveUserData();
+            }
+            html += '<div class="tt-web-scroll">' + ttBuildWebSVG(ttWebLayout()) + '</div>';
+            var availCount = tt.nodes.filter(function(n) { return n.lifecycle === 'available'; }).length;
             html += '<div class="tt-map-actions">'
-                + '<button class="tt-tb-btn" onclick="ttOpenAvailableList()">' + ttIcon('spark', 12) + '<span>Available' + (availCount ? ' · ' + availCount : '') + '</span></button>'
-                + '<button class="tt-tb-btn" onclick="ttAddLine()">' + ttIcon('plus', 12) + '<span>Add goal</span></button>'
+                + '<button class="tt-tb-btn" onclick="ttOpenAvailableList()">' + ttIcon('spark', 12) + '<span>Open' + (availCount ? ' · ' + availCount : '') + '</span></button>'
                 + '<button class="tt-tb-btn" onclick="ttOpenCustomNodeForm()">' + ttIcon('edit', 12) + '<span>Add your own</span></button>'
-                + '<button class="tt-tb-btn" onclick="ttRebuildMap()">' + ttIcon('refresh', 12) + '<span>Rebuild</span></button>'
                 + '</div>';
-            // Quest-patch proposals (spec §7.7).
-            (tt.questPatches || []).filter(function(q){return q.status==='pending';}).forEach(function(q){
-                html += '<div class="tt-prop"><div class="tt-prop-k">Proposed</div><div class="tt-prop-t">' + escapeHtml(q.rationale) + ' Add the <b>' + escapeHtml(q.group.name || 'new') + '</b> group?</div>'
-                    + '<div class="tt-prop-a"><button class="tt-btn tt-btn-primary" onclick="ttApplyQuestPatch(\'' + q.id + '\')">Add it</button><button class="tt-btn tt-btn-ghost" onclick="ttDeclineQuestPatch(\'' + q.id + '\')">Not yet</button></div></div>';
+            // Quest-patch proposals — cards, never silent writes (§6.1).
+            (tt.questPatches || []).filter(function(q) { return q.status === 'pending'; }).forEach(function(q) {
+                var proj = ttFindProject(q.projectId);
+                var qname = proj ? proj.name : 'a quest';
+                if (q.op === 'link_activity') {
+                    var e = ttFindActivity(q.activityId);
+                    html += '<div class="tt-prop"><div class="tt-prop-k">Your web noticed</div><div class="tt-prop-t">' + escapeHtml(q.rationale || '')
+                        + ' Fold <b>' + escapeHtml(e ? e.activity.name : 'that activity') + '</b> into the <b>' + escapeHtml(q.groupName || '') + '</b> group of <b>' + escapeHtml(qname) + '</b>?</div>'
+                        + '<div class="tt-prop-a"><button class="tt-btn tt-btn-primary" onclick="ttApplyQuestPatch(\'' + q.id + '\')">Fold it in</button><button class="tt-btn tt-btn-ghost" onclick="ttDeclineQuestPatch(\'' + q.id + '\')">Not yet</button></div></div>';
+                } else {
+                    html += '<div class="tt-prop"><div class="tt-prop-k">Proposed</div><div class="tt-prop-t">' + escapeHtml(q.rationale || '') + ' Add the <b>' + escapeHtml((q.group && q.group.name) || 'new') + '</b> group to <b>' + escapeHtml(qname) + '</b>?</div>'
+                        + '<div class="tt-prop-a"><button class="tt-btn tt-btn-primary" onclick="ttApplyQuestPatch(\'' + q.id + '\')">Add it</button><button class="tt-btn tt-btn-ghost" onclick="ttDeclineQuestPatch(\'' + q.id + '\')">Not yet</button></div></div>';
+                }
             });
-            // Merge suggestion (spec §3.6) — offered once.
-            if (tt.mergeSuggestion) {
-                var a = (tt.goals||[]).find(function(g){return g.id===tt.mergeSuggestion[0];});
-                var b = (tt.goals||[]).find(function(g){return g.id===tt.mergeSuggestion[1];});
-                if (a && b) html += '<div class="tt-prop"><div class="tt-prop-k">Two goals look alike</div><div class="tt-prop-t">"' + escapeHtml(a.sharpened) + '" and "' + escapeHtml(b.sharpened) + '" read almost the same. Keep both, or merge?</div>'
-                    + '<div class="tt-prop-a"><button class="tt-btn tt-btn-ghost" onclick="ttDismissMerge()">Keep both</button></div></div>';
-            }
             html += '</div>';
             container.innerHTML = html;
         }
         window.renderTechTree = renderTechTree;
-        window.ttSyncGoalsAndGenerate = function(){ ttCollectGoalFields(); ttRequestGenerate(); };
+        window.ttSyncGoalsAndGenerate = function() { ttCollectGoalFields(); ttRequestGenerate(); };
 
-        function ttReadingHtml(tt) {
-            var goals = (tt.goals || []).filter(function(g){return !g.retiredAt && g.sharpened;});
-            var parts = goals.map(function(g) {
-                return '<b>' + escapeHtml(g.sharpened) + '</b>' + (g.kind === 'rhythm' ? ' <span class="tt-rhythm-tag" title="' + escapeHtml(g.kindReason||'') + '">no finish line</span>' : '');
-            }).join(' · ');
-            return '<div class="tt-reading-k">We read your goals as</div><div class="tt-reading-v">' + parts + '</div>'
-                + '<button class="tt-inline-btn" onclick="ttEditReadings()">Not right?</button>';
-        }
-
-        // ── Simple tiered tree per goal (dotted prerequisite links) ──────
-        // Tier = 1 + longest prerequisite chain. Deliberately plain: a few
-        // nodes, connected where one genuinely unlocks another.
-        function ttComputeTiers(nodes) {
-            var byId = {}; nodes.forEach(function(n){ byId[n.id] = n; });
-            var memo = {};
-            function tier(n, guard) {
-                if (memo[n.id] != null) return memo[n.id];
-                if (guard[n.id]) return 1;
-                guard[n.id] = true;
-                var t = 1;
-                (n.prerequisites || []).forEach(function(pr){
-                    if (pr.type === 'node_mastered' && byId[pr.nodeId]) t = Math.max(t, 1 + tier(byId[pr.nodeId], guard));
-                });
-                delete guard[n.id]; memo[n.id] = t; return t;
-            }
-            nodes.forEach(function(n){ n._tier = tier(n, {}); });
-        }
-        function ttGoalTreeSVG(line, nodes) {
-            ttComputeTiers(nodes);
-            var maxTier = 1; nodes.forEach(function(n){ maxTier = Math.max(maxTier, n._tier); });
-            var byTier = {}; for (var t = 1; t <= maxTier; t++) byTier[t] = [];
-            nodes.forEach(function(n){ byTier[n._tier].push(n); });
-            var maxCols = 1; for (var t2 = 1; t2 <= maxTier; t2++) maxCols = Math.max(maxCols, byTier[t2].length);
-            var COLW = 112, ROWH = 84, PADY = 20, R = 13;
-            var W = Math.max(230, maxCols * COLW);
-            var H = maxTier * ROWH + PADY;
-            var pos = {};
-            for (var t3 = 1; t3 <= maxTier; t3++) {
-                var row = byTier[t3], n = row.length, startX = (W - n * COLW) / 2 + COLW / 2;
-                row.forEach(function(nd, i){ pos[nd.id] = { x: Math.round(startX + i * COLW), y: Math.round(PADY / 2 + (t3 - 0.5) * ROWH) }; });
-            }
-            var svg = '';
-            nodes.forEach(function(nd){
-                (nd.prerequisites || []).forEach(function(pr){
-                    if (pr.type === 'node_mastered' && pos[pr.nodeId]) {
-                        var a = pos[pr.nodeId], b = pos[nd.id];
-                        svg += '<line x1="' + a.x + '" y1="' + (a.y + R) + '" x2="' + b.x + '" y2="' + (b.y - R) + '" stroke="' + line.color + '" stroke-width="1.6" stroke-dasharray="2,4" stroke-linecap="round" opacity="0.5"/>';
-                    }
-                });
-            });
-            nodes.forEach(function(nd){
-                var p = pos[nd.id];
-                svg += '<g class="tt-node" onclick="ttOpenNode(\'' + nd.id + '\')" style="cursor:pointer">'
-                    + ttGlyph(nd, p.x, p.y, line.color)
-                    + '<text x="' + p.x + '" y="' + (p.y + R + 13) + '" text-anchor="middle" class="' + (nd.resolvedAt ? 'tt-n-l tt-n-gold' : 'tt-n-l') + '">' + escapeHtml(ttShort(nd.title, 15)) + '</text>'
-                    + '</g>';
-            });
-            return '<div class="tt-goal-tree"><svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" style="width:100%;max-width:' + W + 'px;height:auto;display:block;margin:0 auto;">' + svg + '</svg></div>';
-        }
-        function ttNodeChip(n, color) {
-            var t = (n.payload && n.payload.type) || 'activity';
-            var icon = n.resolvedAt ? 'star' : (t === 'quest' ? 'branch' : 'circle');
-            return '<button class="tt-fresh-chip" style="--rc:' + color + '" onclick="ttOpenNode(\'' + n.id + '\')">' + ttIcon(icon, 12) + '<span>' + escapeHtml(ttShort(n.title, 22)) + '</span></button>';
-        }
-        window.ttGoalMenu = function(lineId) {
-            var tt = ensureTechTree();
-            var line = (tt.lines || []).find(function(l){ return l.id === lineId; });
-            if (!line) return;
-            var g = ttGoalForLine(line);
-            ttShowSheet('<div class="tt-sheet-body"><div class="tt-sheet-kicker">Goal</div>'
-                + '<h3 class="tt-sheet-title">' + escapeHtml(g ? (g.sharpened || g.shortName) : line.terminus.title) + '</h3>'
+        // ── Goal menu + readings ─────────────────────────────────────────
+        window.ttGoalMenu = function(goalId) {
+            var g = ttGoalById(goalId);
+            if (!g) return;
+            ttShowSheet('<div class="tt-sheet-body"><div class="tt-sheet-kicker" style="color:' + (g.color || '#9a9a9a') + '">Goal</div>'
+                + '<h3 class="tt-sheet-title">' + escapeHtml(g.sharpened || g.rawText || g.shortName) + '</h3>'
+                + (g.kind === 'rhythm' ? '<p class="tt-sheet-desc">A rhythm — no finish line. It runs.</p>' : '')
                 + '<div class="tt-sheet-actions">'
-                + '<button class="tt-btn tt-btn-ghost" onclick="ttEditReadings()">Edit the reading</button>'
-                + '<button class="tt-btn tt-btn-ghost" onclick="ttRegenerateLine(\'' + lineId + '\')">Regenerate suggestions</button>'
-                + '<button class="tt-btn tt-btn-ghost" onclick="ttRetireLine(\'' + lineId + '\')">Retire this goal</button>'
+                + '<button class="tt-btn tt-btn-ghost" onclick="ttEditReadings()">Not right? Edit the reading</button>'
+                + '<button class="tt-btn tt-btn-ghost" onclick="ttRegenerateGoal(\'' + goalId + '\')">Reweave this thread</button>'
+                + '<button class="tt-btn tt-btn-ghost" onclick="ttRetireGoal(\'' + goalId + '\')">Retire this goal</button>'
                 + '</div></div>');
         };
 
-        // ── Pan / zoom + fit-to-view (spec §8.5) ─────────────────────────
-        var _ttView = null;
-        function ttInitMap(svg) {
-            if (!svg) return;
-            var vb = svg.getAttribute('viewBox').split(' ').map(Number);
-            _ttView = { x: vb[0], y: vb[1], w: vb[2], h: vb[3], W: vb[2], H: vb[3] };
-            // NB: never setPointerCapture here — capturing on the <svg> makes the
-            // click fire on the svg instead of the tapped node, so node taps stop
-            // opening the sheet. Instead track a drag threshold and only suppress
-            // the click when the user actually panned (window._ttPanning guard).
-            var drag = null, moved = false;
-            svg.addEventListener('pointerdown', function(e) { drag = { x: e.clientX, y: e.clientY, vx: _ttView.x, vy: _ttView.y }; moved = false; });
-            svg.addEventListener('pointermove', function(e) {
-                if (!drag) return;
-                var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-                if (!moved && (Math.abs(dx) + Math.abs(dy)) < 6) return;   // below threshold = still a tap
-                moved = true; window._ttPanning = true;
-                var r = svg.getBoundingClientRect();
-                _ttView.x = drag.vx - dx * (_ttView.w / r.width);
-                _ttView.y = drag.vy - dy * (_ttView.h / r.height);
-                ttApplyView(svg);
-            });
-            function endDrag() { drag = null; if (moved) { setTimeout(function() { window._ttPanning = false; }, 40); } else { window._ttPanning = false; } }
-            svg.addEventListener('pointerup', endDrag);
-            svg.addEventListener('pointerleave', endDrag);
-            svg.addEventListener('wheel', function(e) { e.preventDefault(); ttMapZoom(e.deltaY < 0 ? 1 : -1, e); }, { passive: false });
-        }
-        function ttApplyView(svg) { svg = svg || document.getElementById('ttMapSvg'); if (svg && _ttView) svg.setAttribute('viewBox', _ttView.x + ' ' + _ttView.y + ' ' + _ttView.w + ' ' + _ttView.h); }
-        window.ttMapZoom = function(dir) {
-            var svg = document.getElementById('ttMapSvg'); if (!svg || !_ttView) return;
-            var f = dir > 0 ? 0.82 : 1.22;
-            var cx = _ttView.x + _ttView.w / 2, cy = _ttView.y + _ttView.h / 2;
-            _ttView.w = Math.max(_ttView.W * 0.3, Math.min(_ttView.W * 1.4, _ttView.w * f));
-            _ttView.h = Math.max(_ttView.H * 0.3, Math.min(_ttView.H * 1.4, _ttView.h * f));
-            _ttView.x = cx - _ttView.w / 2; _ttView.y = cy - _ttView.h / 2;
-            ttApplyView(svg);
-        };
-        window.ttMapFit = function() { var svg = document.getElementById('ttMapSvg'); if (svg && _ttView) { _ttView.x = 0; _ttView.y = 0; _ttView.w = _ttView.W; _ttView.h = _ttView.H; ttApplyView(svg); } };
-
-        // ── Backwards planning / north star (spec §8.7) ──────────────────
-        function ttChainFor(nodeId) {
+        window.ttEditReadings = function() {
+            ttCloseSheet();
             var tt = ensureTechTree();
-            var set = {}; var stack = [nodeId];
-            while (stack.length) {
-                var id = stack.pop(); if (set[id]) continue; set[id] = true;
-                var n = tt.nodes.find(function(x){return x.id===id;}); if (!n) continue;
-                (n.prerequisites || []).forEach(function(pr){ if (pr.type === 'node_mastered' && pr.nodeId) stack.push(pr.nodeId); });
-            }
-            return set;
-        }
-        window.ttFocusTerminus = function(lineId) {
-            if (window._ttPanning) return;
-            var tt = ensureTechTree();
-            var line = (tt.lines||[]).find(function(l){return l.id===lineId;});
-            if (!line) return;
-            // Chain = every node on the line (the route to the summit).
-            var set = {};
-            (tt.nodes||[]).forEach(function(n){ if (n.lineId===lineId) set[n.id]=true; });
-            window._ttFocusChain = set;
-            window._ttFocusTitle = line.terminus.title;
-            renderTechTree();
-            ttOpenTerminusSheet(lineId);
-        };
-        window.ttClearFocus = function(){ window._ttFocusChain = null; window._ttFocusTitle = null; renderTechTree(); };
-        window.ttSetNorthStar = function(lineId){ var tt = ensureTechTree(); tt.northStarLineId = lineId; saveUserData().catch(function(){}); ttCloseSheet(); window._ttFocusChain = null; renderTechTree(); showToast('⭐ North star set', 'blue'); };
-        window.ttClearNorthStar = function(){ var tt = ensureTechTree(); tt.northStarLineId = null; saveUserData().catch(function(){}); renderTechTree(); };
-
-        function ttOpenTerminusSheet(lineId) {
-            var tt = ensureTechTree();
-            var line = (tt.lines||[]).find(function(l){return l.id===lineId;});
-            if (!line) return;
-            var goal = ttGoalForLine(line);
-            var stationsLeft = (line.stations||[]).filter(function(s){return !s.reachedAt;}).map(function(s){return escapeHtml(s.title);});
-            var chainTxt = stationsLeft.length ? stationsLeft.join(' → ') + ' → 🏁' : '🏁';
-            var isStar = tt.northStarLineId === lineId;
-            ttShowSheet('<div class="tt-sheet-body">'
-                + '<div class="tt-sheet-kicker">' + escapeHtml(goal ? (goal.shortName||'') : '') + '</div>'
-                + '<h3 class="tt-sheet-title">' + escapeHtml(line.terminus.title) + '</h3>'
-                + '<p class="tt-sheet-desc">' + (line.terminus.kind === 'loop' ? 'A rhythm — no finish line. It runs.' : 'Your definition of done for this goal.') + '</p>'
-                + '<div class="tt-path-box"><div class="tt-path-k">The route from here</div><div class="tt-path-v">' + chainTxt + '</div></div>'
-                + '<div class="tt-sheet-actions">'
-                + (isStar ? '<button class="tt-btn tt-btn-ghost" onclick="ttClearNorthStar();ttCloseSheet()">Clear north star</button>' : '<button class="tt-btn tt-btn-primary" onclick="ttSetNorthStar(\'' + lineId + '\')">' + ttIcon('pin', 13) + '<span>Set as north star</span></button>')
-                + '<button class="tt-btn tt-btn-ghost" onclick="ttRegenerateLine(\'' + lineId + '\')">' + ttIcon('refresh', 13) + '<span>Regenerate line</span></button>'
-                + '<button class="tt-btn tt-btn-ghost" onclick="ttRetireLine(\'' + lineId + '\')">Retire goal</button>'
-                + '</div></div>');
-        }
-
-        // ── Segment view (spec §8.4) ─────────────────────────────────────
-        window.ttOpenSegment = function(lineId, stationIndex) {
-            if (window._ttPanning) return;
-            var tt = ensureTechTree();
-            var line = (tt.lines||[]).find(function(l){return l.id===lineId;});
-            if (!line) return;
-            var st = (line.stations||[]).find(function(s){return s.index===stationIndex;});
-            if (!st) return;
-            var segNodes = (tt.nodes||[]).filter(function(n){return n.lineId===lineId && n.segmentIndex===stationIndex && n.lifecycle!=='archived';});
-            var done = segNodes.filter(function(n){return n.resolvedAt;}).length;
-            var rows = segNodes.map(function(n){
-                var state = ttNodeState(n);
-                var badge = state === 'resolved' ? '<span class="tt-seg-badge tt-seg-done">resolved</span>'
-                    : state === 'active' ? '<span class="tt-seg-badge tt-seg-active">in progress</span>'
-                    : state === 'available' ? '<span class="tt-seg-badge tt-seg-open">open</span>'
-                    : '<span class="tt-seg-badge tt-seg-locked">locked</span>';
-                return '<button class="tt-seg-row" style="--rc:' + line.color + '" onclick="ttOpenNode(\'' + n.id + '\')">'
-                    + '<span class="tt-seg-dot" style="background:' + (state==='resolved'?TT_GOLD:line.color) + ';opacity:' + (state==='locked'?0.4:1) + '"></span>'
-                    + '<span class="tt-seg-name">' + escapeHtml(n.title) + '</span>' + badge + '</button>';
-            }).join('') || '<p class="tt-muted">No nodes here yet — resolving a node below fans new ones in.</p>';
-            ttShowSheet('<div class="tt-sheet-body">'
-                + '<div class="tt-sheet-kicker">' + escapeHtml((ttGoalForLine(line)||{}).shortName || '') + ' · segment ' + (stationIndex+1) + '</div>'
-                + '<h3 class="tt-sheet-title">To reach ' + escapeHtml(st.title) + '</h3>'
-                + '<div class="tt-req">Resolve <b>any ' + (st.threshold||2) + '</b> node' + ((st.threshold||2)===1?'':'s') + ' in this segment. You\'ve done <b>' + done + '</b>.</div>'
-                + '<div class="tt-seg-list">' + rows + '</div>'
-                + '<p class="tt-muted tt-seg-foot">Several routes to the same station. Pick any. Ignore the rest.</p>'
-                + '</div>');
+            var goals = (tt.goals || []).filter(function(g) { return !g.retiredAt; });
+            var rows = goals.map(function(g) { return '<label class="tt-read-row"><span class="tt-read-raw">' + escapeHtml(g.rawText) + '</span>'
+                + '<input type="text" class="pl-input" data-ttread="' + g.id + '" maxlength="200" value="' + escapeHtml(g.sharpened || '') + '"></label>'; }).join('');
+            window._ttReadConfirm = function() {
+                var changed = false;
+                document.querySelectorAll('[data-ttread]').forEach(function(el) {
+                    var g = goals.find(function(x) { return x.id === el.getAttribute('data-ttread'); });
+                    if (g && (el.value || '').trim() && el.value.trim() !== g.sharpened) { g.sharpened = el.value.trim(); g.sharpenedEditedByUser = true; changed = true; }
+                });
+                ttCloseOverlay();
+                if (changed) {
+                    saveUserData().catch(function() {});
+                    showToast('Saved — hit Rebuild when you want the web rewoven around it', 'blue');
+                    renderTechTree();
+                }
+            };
+            ttShowOverlay('<div class="tt-form"><h3 class="tt-form-title">How we read your goals</h3>'
+                + '<p class="tt-muted">Edit any reading. The next generation builds from your words.</p>' + rows
+                + '<div class="tt-form-actions"><button class="tt-btn tt-btn-ghost" onclick="ttCloseOverlay()">Cancel</button><button class="tt-btn tt-btn-primary" onclick="window._ttReadConfirm&&window._ttReadConfirm()">Save</button></div></div>');
         };
 
-        // ── Available list (spec §8.4 — the offering, browsable) ─────────
+        // ── Open list (secondary compact list — the web is the primary) ──
         window.ttOpenAvailableList = function() {
-            if (window._ttPanning) return;
             var tt = ensureTechTree();
-            function rowFor(n) {
-                var line = n.lineId ? (tt.lines||[]).find(function(l){return l.id===n.lineId;}) : null;
-                var color = line ? line.color : ttDimHexRaw(n.dimensionId);
+            function rowFor(n, locked) {
+                var color = ttNodeColor(n);
                 var type = (n.payload && n.payload.type) || 'activity';
-                var tlabel = type === 'quest' ? ((n.payload.spec && n.payload.spec.cadence && n.payload.spec.cadence.type === 'recurring') ? 'Recurring quest' : 'Quest') : (type === 'challenge' ? 'Challenge' : 'Activity');
-                if (n.interchange) tlabel = 'Interchange';
-                var where = line ? ((ttGoalForLine(line)||{}).shortName || '') : 'fresh pick';
-                return '<button class="tt-seg-row" style="--rc:' + color + '" onclick="ttCloseSheet();setTimeout(function(){ttOpenNode(\'' + n.id + '\');},10)">'
+                var tlabel = n.role === 'wildcard' ? 'Wildcard' : n.role === 'fusion' ? 'Fusion'
+                    : type === 'quest' ? ((n.payload.spec && n.payload.spec.cadence && n.payload.spec.cadence.type === 'recurring') ? 'Recurring quest' : 'Quest')
+                    : (type === 'challenge' ? 'Challenge' : (n.role === 'upgrade' ? 'Upgrade' : 'Activity'));
+                var goals = ttNodeGoals(n).map(function(g) { return g.shortName; }).join(' + ');
+                var where = goals || (n.role === 'wildcard' ? 'off-goal' : ttDimName(n.dimensionId));
+                var badge = locked ? '<span class="tt-seg-badge tt-seg-locked">locked</span>' : '<span class="tt-seg-badge tt-seg-open">open</span>';
+                return '<button class="tt-seg-row" style="--rc:' + color + (locked ? ';opacity:.6' : '') + '" onclick="ttCloseSheet();setTimeout(function(){ttOpenNode(\'' + n.id + '\');},10)">'
                     + '<span class="tt-seg-dot" style="background:' + color + '"></span>'
                     + '<span class="tt-seg-name">' + escapeHtml(n.title) + '<span class="tt-avail-sub">' + escapeHtml(tlabel + ' · ' + where) + '</span></span>'
-                    + '<span class="tt-seg-badge tt-seg-open">accept</span></button>';
+                    + badge + '</button>';
             }
-            var avail = tt.nodes.filter(function(n){return n.lifecycle==='available';});
-            var locked = tt.nodes.filter(function(n){return n.lifecycle==='locked';});
-            var html = '<div class="tt-sheet-body"><div class="tt-sheet-kicker">On offer</div><h3 class="tt-sheet-title">What you can accept</h3>'
-                + '<p class="tt-sheet-desc">Suggested activities and quests, ready to add. Accept any — ignore the rest.</p>';
-            if (avail.length) html += '<div class="tt-avail-h">Available · ' + avail.length + '</div><div class="tt-seg-list">' + avail.map(rowFor).join('') + '</div>';
-            else html += '<p class="tt-muted" style="margin-top:12px;">Nothing available to accept right now — resolve a node to fan open new ones.</p>';
+            var avail = tt.nodes.filter(function(n) { return n.lifecycle === 'available'; });
+            var locked = tt.nodes.filter(function(n) { return n.lifecycle === 'locked'; });
+            var html = '<div class="tt-sheet-body"><div class="tt-sheet-kicker">On the web</div><h3 class="tt-sheet-title">Open to accept</h3>';
+            if (avail.length) html += '<div class="tt-seg-list">' + avail.map(function(n) { return rowFor(n, false); }).join('') + '</div>';
+            else html += '<p class="tt-muted" style="margin-top:12px;">Nothing open right now — resolve a node to open new ones.</p>';
             if (locked.length) html += '<div class="tt-avail-h" style="margin-top:14px;">Locked · ' + locked.length + '</div><div class="tt-seg-list">'
-                + locked.map(function(n){ var line = n.lineId ? (tt.lines||[]).find(function(l){return l.id===n.lineId;}) : null; var color = line?line.color:ttDimHexRaw(n.dimensionId);
-                    return '<button class="tt-seg-row" style="--rc:' + color + ';opacity:.6" onclick="ttCloseSheet();setTimeout(function(){ttOpenNode(\'' + n.id + '\');},10)"><span class="tt-seg-dot" style="background:' + color + ';opacity:.5"></span><span class="tt-seg-name">' + escapeHtml(n.title) + '</span><span class="tt-seg-badge tt-seg-locked">locked</span></button>'; }).join('') + '</div>';
+                + locked.map(function(n) { return rowFor(n, true); }).join('') + '</div>';
             html += '</div>';
             ttShowSheet(html);
         };
 
-        // ── Node sheet (spec §8.4) ───────────────────────────────────────
+        // ── Sheet 1 — the pitch (§7.1) ───────────────────────────────────
         window.ttOpenNode = function(nodeId) {
-            if (window._ttPanning) return;
             var tt = ensureTechTree();
-            var node = tt.nodes.find(function(n){return n.id===nodeId;});
+            var node = tt.nodes.find(function(n) { return n.id === nodeId; });
             if (!node) return;
-            var line = node.lineId ? (tt.lines||[]).find(function(l){return l.id===node.lineId;}) : null;
-            var color = line ? line.color : ttDimHexRaw(node.dimensionId);
+            var color = ttNodeColor(node);
             var state = ttNodeState(node);
-            var typeLabel = { activity: 'Activity', quest: (node.payload.spec && node.payload.spec.cadence && node.payload.spec.cadence.type === 'recurring') ? 'Recurring quest' : 'Quest', challenge: 'Challenge' }[node.payload.type] || 'Node';
-            if (node.interchange) typeLabel = 'Interchange · counts on two lines';
-            var numbers = ttNodeNumbers(node);
-            var actions = '';
-            if (state === 'resolved') actions = '<div class="tt-resolved-badge">' + ttIcon('star', 14) + ' Resolved</div>';
-            else if (state === 'active') actions = '<button class="tt-btn tt-btn-ghost" onclick="ttGotoPayload(\'' + node.id + '\')">Open ' + (node.payload.type === 'activity' ? 'activity' : 'quest') + '</button>';
-            else if (state === 'available') actions = '<button class="tt-btn tt-btn-primary" onclick="ttOpenAccept(\'' + node.id + '\')">Accept</button>'
-                + '<button class="tt-btn tt-btn-ghost" onclick="ttReviseNode(\'' + node.id + '\')">Revise</button>'
-                + '<button class="tt-btn tt-btn-ghost" onclick="ttRejectNode(\'' + node.id + '\')">Not for me</button>';
-            else actions = '<div class="tt-locked-note">' + ttIcon('lock', 12) + ' ' + escapeHtml(ttLockReason(node, tt)) + '</div>';
-            // Fresh picks (no goal) can be attached to one so they advance it.
-            if (!node.lineId && ttActiveLines().length) actions += '<button class="tt-btn tt-btn-ghost" onclick="ttAttachToLine(\'' + node.id + '\')">' + ttIcon('branch', 13) + '<span>Attach to a goal</span></button>';
-            ttShowSheet('<div class="tt-sheet-body">'
-                + '<div class="tt-sheet-kicker" style="color:' + color + '">' + escapeHtml(typeLabel) + (line ? ' · ' + escapeHtml((ttGoalForLine(line)||{}).shortName || '') : ' · fresh pick') + '</div>'
-                + '<h3 class="tt-sheet-title">' + escapeHtml(node.title) + '</h3>'
-                + (node.description ? '<p class="tt-sheet-desc">' + escapeHtml(node.description) + '</p>' : '')
-                + '<div class="tt-sheet-meta">' + escapeHtml(ttDimName(node.dimensionId)) + numbers + '</div>'
-                + '<div class="tt-sheet-actions">' + actions + '</div>'
-                + '</div>');
-        };
-        window.ttAttachToLine = function(nodeId) {
-            var tt = ensureTechTree();
-            var lines = ttActiveLines();
-            if (!lines.length) return;
-            var rows = lines.map(function(l) {
-                var g = ttGoalForLine(l);
-                return '<button class="tt-seg-row" style="--rc:' + l.color + '" onclick="ttDoAttach(\'' + nodeId + '\',\'' + l.id + '\')">'
-                    + '<span class="tt-seg-dot" style="background:' + l.color + '"></span>'
-                    + '<span class="tt-seg-name">' + escapeHtml(g ? g.shortName : 'Line') + '<span class="tt-avail-sub">→ ' + escapeHtml(l.terminus.title) + '</span></span></button>';
-            }).join('');
-            ttShowSheet('<div class="tt-sheet-body"><div class="tt-sheet-kicker">Attach</div><h3 class="tt-sheet-title">Put this on a line</h3>'
-                + '<p class="tt-sheet-desc">It joins the frontier segment of the line you pick, and can then fan new nodes when resolved.</p>'
-                + '<div class="tt-seg-list">' + rows + '</div></div>');
-        };
-        window.ttDoAttach = function(nodeId, lineId) {
-            var tt = ensureTechTree();
-            var node = tt.nodes.find(function(n){return n.id===nodeId;});
-            var line = (tt.lines||[]).find(function(l){return l.id===lineId;});
-            if (!node || !line) return;
-            var next = ttNextUnreachedStation(line);
-            node.lineId = lineId; node.segmentIndex = next ? next.index : 0;
-            evaluateTechTreeMastery();
-            saveUserData().catch(function(){});
-            ttCloseSheet(); renderTechTree();
-            showToast('🧭 Attached to ' + ((ttGoalForLine(line)||{}).shortName || 'line'), 'green');
-        };
-        function ttNodeNumbers(node) {
             var pl = node.payload || {};
+            var roleLabel = { anchor: 'Anchor — you already do this', upgrade: 'Upgrade', fusion: 'Fusion', wildcard: 'Wildcard', suggestion: pl.type === 'quest' ? 'Quest' : pl.type === 'challenge' ? 'Challenge' : 'Suggestion' }[node.role] || 'Suggestion';
+            var stateLabel = { resolved: 'mastered', active: 'in progress', available: 'open', locked: 'locked' }[state];
+            var goals = ttNodeGoals(node);
+            var goalChips = goals.map(function(g) { return '<span class="tt-mini-chip" style="--gc:' + (g.color || '#888') + '">' + escapeHtml(g.shortName || 'Goal') + '</span>'; }).join('');
+
+            var html = '<div class="tt-sheet-body">'
+                + '<div class="tt-sheet-kicker" style="color:' + color + '">' + escapeHtml(roleLabel) + ' · ' + stateLabel + '</div>'
+                + '<h3 class="tt-sheet-title">' + escapeHtml(node.title) + '</h3>'
+                + (node.description ? '<p class="tt-sheet-desc">' + escapeHtml(node.description) + '</p>' : '');
+            if (node.whyNow) html += '<div class="tt-whynow">💡 ' + escapeHtml(node.whyNow) + '</div>';
+
+            // Duplicate pre-flag (§7.4) — cheap fuzzy match, no AI call.
+            var dup = null;
+            if (state === 'available' && pl.type === 'activity' && !pl.activityId) {
+                dup = ttDupCandidate(node);
+                if (dup) html += '<div class="tt-dupflag">💡 Looks close to <b>' + escapeHtml(dup.activity.name) + '</b> — already yours? Link it instead of creating a twin.</div>';
+            }
+
+            // 3 glanceable stats.
+            html += ttStatTiles(node);
+            if (goalChips) html += '<div class="tt-goal-feed">Feeds ' + goalChips + '</div>';
+
+            // Quest structure preview on the pitch (§7.2).
+            if (pl.type === 'quest' && state === 'available') html += ttQuestPreviewHtml(node);
+
+            var actions = '';
+            if (state === 'resolved') {
+                actions = '<div class="tt-resolved-badge">' + ttIcon('star', 14) + ' Mastered</div>';
+            } else if (state === 'active') {
+                actions = '<button class="tt-btn tt-btn-ghost" onclick="ttGotoPayload(\'' + node.id + '\')">Open ' + (pl.type === 'quest' ? 'quest' : pl.type === 'challenge' ? 'challenge' : 'activity') + '</button>';
+            } else if (state === 'available') {
+                if (pl.type === 'activity') {
+                    actions = '<button class="tt-btn tt-btn-primary" onclick="ttOpenAccept(\'' + node.id + '\')">Accept — shape it →</button>'
+                        + '<button class="tt-btn tt-btn-ghost' + (dup ? ' tt-btn-glow' : '') + '" onclick="ttOpenLinkPicker(\'' + node.id + '\')">' + ttIcon('link', 13) + '<span>I already do this — link it</span></button>'
+                        + '<button class="tt-btn tt-btn-ghost" onclick="ttReviseNode(\'' + node.id + '\')">Revise</button>'
+                        + '<button class="tt-btn tt-btn-ghost" onclick="ttRejectNode(\'' + node.id + '\')">Not now</button>';
+                } else if (pl.type === 'quest') {
+                    actions = '<button class="tt-btn tt-btn-primary" onclick="ttAcceptQuestToBuilder(\'' + node.id + '\')">Accept — set it up →</button>'
+                        + '<button class="tt-btn tt-btn-ghost" onclick="ttReviseNode(\'' + node.id + '\')">Revise</button>'
+                        + '<button class="tt-btn tt-btn-ghost" onclick="ttRejectNode(\'' + node.id + '\')">Not now</button>';
+                } else if (pl.type === 'challenge') {
+                    actions = '<button class="tt-btn tt-btn-primary" onclick="ttAcceptChallengeNode(\'' + node.id + '\')">Accept</button>'
+                        + '<button class="tt-btn tt-btn-ghost" onclick="ttRejectNode(\'' + node.id + '\')">Not now</button>';
+                }
+            } else {
+                actions = '<div class="tt-locked-note">' + ttIcon('lock', 12) + ' ' + escapeHtml(ttLockReason(node, tt)) + '</div>';
+            }
+            if (!goals.length && node.role !== 'wildcard' && ttActiveGoals().length) {
+                actions += '<button class="tt-btn tt-btn-ghost" onclick="ttAttachToGoal(\'' + node.id + '\')">' + ttIcon('branch', 13) + '<span>Attach to a goal</span></button>';
+            }
+            html += '<div class="tt-sheet-actions">' + actions + '</div></div>';
+            ttShowSheet(html);
+        };
+
+        function ttStatTiles(node) {
+            var pl = node.payload || {};
+            var tiles = [];
             if (pl.type === 'activity') {
-                if (pl.activityId) { var e = ttFindActivity(pl.activityId); if (e) { var p = ttMasteryProgress(e.activity); return ' · ' + (p.mastered ? 'mastered' : (p.count + '/' + p.target + ' toward mastery')); } }
-                return ' · ' + (pl.spec ? (pl.spec.frequency + ' · ' + pl.spec.baseXP + ' XP') : '');
+                var s = pl.spec || {};
+                tiles = [[(s.baseXP || 10) + ' XP', 'per completion'], [s.frequency || 'weekly', 'suggested pace'], [ttShort(ttDimName(node.dimensionId), 12), 'dimension']];
+            } else if (pl.type === 'quest') {
+                var counts = { linked: 0, tasks: 0, newActs: 0 };
+                ttWalkLeaves((pl.spec && pl.spec.groups) || [], function(l) {
+                    if (l.type === 'activity' && l.linkedActivityId) counts.linked++;
+                    else if (l.type === 'activity' && l.spec) counts.newActs++;
+                    else counts.tasks++;
+                });
+                tiles = [[pl.spec && pl.spec.cadence && pl.spec.cadence.type === 'recurring' ? 'recurring' : 'one-shot', 'cadence'],
+                    [counts.linked + counts.newActs + counts.tasks + ' steps', counts.linked + ' already yours'],
+                    [ttShort(ttDimName(node.dimensionId), 12), 'dimension']];
+            } else if (pl.type === 'challenge') {
+                var sp = pl.spec || {};
+                tiles = [[(sp.durationDays || 30) + ' days', 'time-boxed'], [Object.keys(sp.activityTargets || {}).length + ' activities', 'a pace over'], [ttShort(ttDimName(node.dimensionId), 12), 'dimension']];
             }
-            if (pl.type === 'quest') {
-                if (pl.projectId) { var pr = ttFindProject(pl.projectId); if (pr) { if (pl.spec.cadence.type === 'recurring') return ' · ' + ttCleanCycles(pr) + '/' + ((pl.resolveRule&&pl.resolveRule.cleanCycles)||4) + ' clean cycles'; return ' · ' + (pr.status === 'completed' ? 'completed' : 'in progress'); } }
-                return ' · ' + (pl.spec.cadence.type === 'recurring' ? 'recurring quest' : 'one-shot quest');
-            }
-            return '';
+            if (!tiles.length) return '';
+            return '<div class="tt-stat-row">' + tiles.map(function(t) {
+                return '<div class="tt-stat"><div class="tt-stat-v">' + escapeHtml(String(t[0])) + '</div><div class="tt-stat-k">' + escapeHtml(t[1]) + '</div></div>';
+            }).join('') + '</div>';
         }
+
         function ttLockReason(node, tt) {
-            var unmet = (node.prerequisites||[]).filter(function(pr){
-                if (pr.type==='node_mastered'){var t=tt.nodes.find(function(n){return n.id===pr.nodeId;});return t&&!t.resolvedAt;}
-                if (pr.type==='activity_mastered'){var e=ttFindActivity(pr.activityId);return !(e&&e.activity.techTreeMasteredAt);}
-                return false;
+            var unmet = (node.prerequisites || []).filter(function(pr) { return !ttPrereqMet(pr, node, tt); });
+            if (!unmet.length) return 'Locked';
+            var parts = unmet.slice(0, 2).map(function(pr) {
+                if (pr.type === 'node_mastered') { var t = tt.nodes.find(function(n) { return n.id === pr.nodeId; }); return t ? ttShort(t.title, 24) : 'a prerequisite'; }
+                var e = ttFindActivity(pr.activityId); return e ? 'mastering ' + ttShort(e.activity.name, 20) : 'a prerequisite';
             });
-            if (unmet.length) { var t=tt.nodes.find(function(n){return n.id===unmet[0].nodeId;}); return 'Unlocks after ' + (t?ttShort(t.title,24):'a prerequisite') + ' resolves'; }
-            if (node.lineId && (node.segmentIndex||0)>0) { var line=(tt.lines||[]).find(function(l){return l.id===node.lineId;}); var prev=line&&(line.stations||[]).find(function(s){return s.index===node.segmentIndex-1;}); if (prev) return 'Unlocks when ' + escapeHtml(prev.title) + ' is reached'; }
-            return 'Locked';
+            return 'Unlocks after ' + parts.join(' and ');
         }
-        window.ttFocusChainFromNode = function(nodeId){ window._ttFocusChain = ttChainFor(nodeId); window._ttFocusChain[nodeId]=true; ttCloseSheet(); renderTechTree(); };
-        window.ttGotoPayload = function(nodeId){
-            var tt = ensureTechTree(); var node = tt.nodes.find(function(n){return n.id===nodeId;}); if (!node) return;
-            ttCloseSheet();
-            if (node.payload.type==='quest' && node.payload.projectId && typeof openProjectDetail==='function'){ switchTab('challenges'); setTimeout(function(){ try{switchSubTab('challenges','quests');}catch(e){} openProjectDetail(node.payload.projectId); },200); }
-            else { switchTab('activities'); setTimeout(function(){ try{switchSubTab('activities','list');}catch(e){} },150); }
-        };
 
-        // ── Accept (spec §6.3) — atomic materialization ──────────────────
-        function ttWalkLeaves(groups, fn) {
-            (function walk(nodes){ (nodes||[]).forEach(function(n){ if (n.kind==='group') walk(n.children); else fn(n); }); })(groups);
+        // Cheap fuzzy match: lowercase token overlap ≥ 0.5 (§7.4).
+        function ttTokenOverlap(a, b) {
+            function toks(s) { return String(s || '').toLowerCase().split(/[^a-z0-9]+/).filter(function(t) { return t.length > 2; }); }
+            var A = toks(a), B = toks(b);
+            if (!A.length || !B.length) return 0;
+            var setB = {}; B.forEach(function(t) { setB[t] = true; });
+            var hit = A.filter(function(t) { return setB[t]; }).length;
+            return hit / Math.min(A.length, B.length);
         }
-        window.ttOpenAccept = function(nodeId) {
-            var tt = ensureTechTree();
-            var node = tt.nodes.find(function(n){return n.id===nodeId;});
-            if (!node || node.lifecycle !== 'available') return;
-            ttCloseSheet();
-            window._ttAcceptNodeId = nodeId;
-            var pl = node.payload;
-            if (pl.type === 'activity') { ttRenderAcceptActivity(node); return; }
-            if (pl.type === 'challenge') { ttRenderAcceptChallenge(node); return; }
-            ttRenderAcceptQuest(node);
-        };
+        function ttDupCandidate(node) {
+            var name = (node.payload && node.payload.spec && node.payload.spec.name) || node.title;
+            var best = null, bestScore = 0;
+            ttAllActivities().forEach(function(e) {
+                var s = Math.max(ttTokenOverlap(name, e.activity.name), ttTokenOverlap(node.title, e.activity.name));
+                if (s >= 0.5 && s > bestScore) { best = e; bestScore = s; }
+            });
+            return best;
+        }
 
-        function ttLoadMeterHtml(adds) {
-            var cur = ttWeeklyLoad();
-            var total = Math.round((cur + adds) * 10) / 10;
-            var warn = total >= TT_LOAD_SOFT_WARN;
-            var pct = Math.min(100, adds / TT_LOAD_WEIGHT.daily * 100 * 0.5);
-            return '<div class="tt-load"><div class="tt-load-row"><span>Weekly load after accepting</span><span class="tt-load-n' + (warn ? ' tt-load-warn' : '') + '" id="ttAccTotal">' + total + '</span></div>'
-                + '<div class="tt-load-bar"><i style="width:' + Math.min(80, cur * 4) + '%;background:#3a5a72"></i><i id="ttAccAddBar" style="width:' + Math.min(20, pct) + '%;background:#5a9fd4"></i></div>'
-                + '<div class="tt-load-h">You\'re at <b>' + cur + ' actions/week</b>. This adds <b id="ttAccAdd">' + adds + '</b>.' + (warn ? ' <b class="tt-load-warn">That\'s a full plate — you can still accept.</b>' : '') + '</div></div>';
-        }
-        function ttRenderAcceptActivity(node) {
-            var s = node.payload.spec, add = ttFreqWeight(s.frequency);
-            ttShowSheet('<div class="tt-accept">'
-                + '<div class="tt-sheet-kicker">Activity</div><h3 class="tt-sheet-title">' + escapeHtml(s.name) + '</h3>'
-                + '<p class="tt-sheet-desc">' + escapeHtml(s.description || node.description || '') + '</p>'
-                + '<div class="tt-acc-grp"><div class="tt-acc-row" style="--rc:' + ttDimHexRaw(s.dimensionId) + '"><div class="tt-acc-rb"><div class="tt-acc-rn">' + escapeHtml(s.name) + '</div><div class="tt-acc-rs">' + escapeHtml(s.frequency) + ' · ' + s.baseXP + ' XP · own streak</div></div><span class="tt-chip">New</span></div></div>'
-                + ttLoadMeterHtml(add)
-                + '<div class="tt-acc-actions"><button class="tt-btn tt-btn-primary" onclick="ttAcceptActivityNode()">Accept</button><button class="tt-btn tt-btn-ghost" onclick="ttReviseNode(\'' + node.id + '\')">Revise</button><button class="tt-btn tt-btn-ghost" onclick="ttCloseSheet()">Not now</button></div>'
-                + '</div>');
-        }
-        window.ttAcceptActivityNode = function() {
-            var tt = ensureTechTree();
-            var node = tt.nodes.find(function(n){return n.id===window._ttAcceptNodeId;});
-            if (!node) return;
-            if (!canAddActivity()) { ttActivityCapMessage(1); return; }
-            var s = node.payload.spec;
-            var act = ttCreateActivityFromSpec(s, node.id, node.payload.mastery);
-            node.payload.activityId = act.id;
-            node.lifecycle = 'active';
-            evaluateTechTreeMastery();
-            saveUserData().catch(function(){});
-            ttCloseSheet();
-            showToast('🌱 "' + s.name + '" is on your tracker', 'green');
-            renderTechTree();
-        };
-
-        function ttRenderAcceptQuest(node) {
-            var pl = node.payload, groups = pl.spec.groups || [];
+        function ttQuestPreviewHtml(node) {
+            var pl = node.payload, groups = (pl.spec && pl.spec.groups) || [];
             var newActs = [], tasks = [], linked = [];
-            ttWalkLeaves(groups, function(l){
+            ttWalkLeaves(groups, function(l) {
                 if (l.type === 'activity' && !l.linkedActivityId && l.spec) newActs.push(l);
                 else if (l.type === 'activity' && l.linkedActivityId) linked.push(l);
                 else tasks.push(l);
             });
-            window._ttAcceptLeaves = { newActs: newActs, tasks: tasks };
-            var adds = newActs.reduce(function(s,l){return s+ttFreqWeight(l.spec.frequency);},0);
-            var html = '<div class="tt-accept">'
-                + '<div class="tt-sheet-kicker">' + (pl.spec.cadence.type==='recurring'?'Recurring quest':'Quest') + '</div>'
-                + '<h3 class="tt-sheet-title">' + escapeHtml(pl.spec.name) + '</h3>'
-                + '<p class="tt-sheet-desc">' + escapeHtml(pl.spec.description || node.description || '') + '</p>';
-            if (newActs.length) {
-                html += '<div class="tt-acc-grp"><div class="tt-acc-gh">Joins your tracker<span>' + newActs.length + ' new</span></div>'
-                    + newActs.map(function(l){ var c = ttDimHexRaw(l.spec.dimensionId); return '<div class="tt-acc-row" style="--rc:' + c + '">'
-                        + '<span class="tt-acc-cb on" data-ttacc-cb="' + l.id + '" onclick="ttAccToggleCb(this)" style="--rc:' + c + '">' + ttIcon('check', 11) + '</span>'
-                        + '<div class="tt-acc-rb"><div class="tt-acc-rn">' + escapeHtml(l.spec.name) + '</div><div class="tt-acc-rs">' + escapeHtml(l.spec.frequency) + ' · ' + l.spec.baseXP + ' XP · own streak</div></div>'
-                        + '<span class="tt-chip" data-chip="' + l.id + '">New</span></div>'; }).join('') + '</div>';
-            }
-            if (tasks.length) {
-                html += '<div class="tt-acc-grp"><div class="tt-acc-gh">Lives inside this quest<span>' + tasks.length + ' task' + (tasks.length===1?'':'s') + '</span></div>'
-                    + tasks.map(function(l){ return '<div class="tt-acc-row" style="--rc:#454545"><div class="tt-acc-rb"><div class="tt-acc-rn">' + escapeHtml(l.name) + '</div><div class="tt-acc-rs">' + (l.resetMode==='once'?'Once':'Per cycle') + ' · no streak</div></div>'
-                        + (l._promotable ? '<button class="tt-acc-pr" data-ttacc-pr="' + l.id + '" onclick="ttAccTogglePr(this)">Make activity</button>' : '') + '</div>'; }).join('') + '</div>';
-            }
+            var html = '';
             if (linked.length) {
                 html += '<div class="tt-acc-grp"><div class="tt-acc-gh">Links what you already do<span>' + linked.length + '</span></div>'
-                    + linked.map(function(l){ var e = ttFindActivity(l.linkedActivityId); return '<div class="tt-acc-row" style="--rc:#8a9a5b"><div class="tt-acc-rb"><div class="tt-acc-rn">' + escapeHtml(e?e.activity.name:'(activity)') + '</div><div class="tt-acc-rs">Keeps its streak · nothing duplicated</div></div><span class="tt-chip tt-chip-yours">Yours</span></div>'; }).join('') + '</div>';
+                    + linked.map(function(l) { var e = ttFindActivity(l.linkedActivityId); return '<div class="tt-acc-row" style="--rc:#8a9a5b"><div class="tt-acc-rb"><div class="tt-acc-rn">' + escapeHtml(e ? e.activity.name : '(activity)') + '</div><div class="tt-acc-rs">Keeps its streak · nothing duplicated</div></div><span class="tt-chip tt-chip-yours">Yours</span></div>'; }).join('') + '</div>';
             }
-            html += ttLoadMeterHtml(adds)
-                + '<div class="tt-acc-actions"><button class="tt-btn tt-btn-primary" onclick="ttAcceptQuestNode()">Accept</button><button class="tt-btn tt-btn-ghost" onclick="ttReviseNode(\'' + node.id + '\')">Revise</button><button class="tt-btn tt-btn-ghost" onclick="ttCloseSheet()">Not now</button></div>'
-                + '</div>';
-            ttShowSheet(html);
+            if (newActs.length) {
+                html += '<div class="tt-acc-grp"><div class="tt-acc-gh">Would join your tracker<span>' + newActs.length + ' new</span></div>'
+                    + newActs.map(function(l) { var c = ttDimHexRaw(l.spec.dimensionId); return '<div class="tt-acc-row" style="--rc:' + c + '"><div class="tt-acc-rb"><div class="tt-acc-rn">' + escapeHtml(l.spec.name) + '</div><div class="tt-acc-rs">' + escapeHtml(l.spec.frequency) + ' · ' + l.spec.baseXP + ' XP · own streak</div></div><span class="tt-chip">New</span></div>'; }).join('') + '</div>';
+            }
+            if (tasks.length) {
+                html += '<div class="tt-acc-grp"><div class="tt-acc-gh">Lives inside this quest<span>' + tasks.length + ' task' + (tasks.length === 1 ? '' : 's') + '</span></div>'
+                    + tasks.map(function(l) { return '<div class="tt-acc-row" style="--rc:#454545"><div class="tt-acc-rb"><div class="tt-acc-rn">' + escapeHtml(l.name) + '</div><div class="tt-acc-rs">' + (l.resetMode === 'once' ? 'Once' : 'Per cycle') + ' · no streak</div></div><span class="tt-chip">Task</span></div>'; }).join('') + '</div>';
+            }
+            return html;
         }
-        window.ttAccToggleCb = function(el){ el.classList.toggle('on'); var id=el.getAttribute('data-ttacc-cb'); var chip=document.querySelector('[data-chip="'+id+'"]'); if(chip)chip.textContent=el.classList.contains('on')?'New':'Task'; ttAccRecalc(); };
-        window.ttAccTogglePr = function(el){ el.classList.toggle('on'); el.textContent=el.classList.contains('on')?'Activity ✓':'Make activity'; ttAccRecalc(); };
-        function ttAccRecalc() {
-            var L = window._ttAcceptLeaves; if (!L) return;
-            var adds = 0;
-            L.newActs.forEach(function(l){ var cb=document.querySelector('[data-ttacc-cb="'+l.id+'"]'); if (cb&&cb.classList.contains('on')) adds+=ttFreqWeight(l.spec.frequency); });
-            L.tasks.forEach(function(l){ if (!l._promotable) return; var pr=document.querySelector('[data-ttacc-pr="'+l.id+'"]'); if (pr&&pr.classList.contains('on')) adds+=ttFreqWeight(l._promotable.frequency); });
-            adds = Math.round(adds*10)/10;
-            var cur = ttWeeklyLoad();
-            var addEl=document.getElementById('ttAccAdd'); if(addEl)addEl.textContent=adds;
-            var totEl=document.getElementById('ttAccTotal'); if(totEl)totEl.textContent=Math.round((cur+adds)*10)/10;
-            var bar=document.getElementById('ttAccAddBar'); if(bar)bar.style.width=Math.min(20, adds/TT_LOAD_WEIGHT.daily*50)+'%';
+
+        window.ttGotoPayload = function(nodeId) {
+            var tt = ensureTechTree(); var node = tt.nodes.find(function(n) { return n.id === nodeId; }); if (!node) return;
+            ttCloseSheet();
+            if (node.payload.type === 'quest' && node.payload.projectId && typeof openProjectDetail === 'function') { switchTab('challenges'); setTimeout(function() { try { switchSubTab('challenges', 'quests'); } catch (e) {} openProjectDetail(node.payload.projectId); }, 200); }
+            else { switchTab('activities'); setTimeout(function() { try { switchSubTab('activities', 'list'); } catch (e) {} }, 150); }
+        };
+
+        // ── Sheet 2 — shape it (§7.1): the REAL activity form ────────────
+        function ttWalkLeaves(groups, fn) {
+            (function walk(nodes) { (nodes || []).forEach(function(n) { if (n.kind === 'group') walk(n.children); else fn(n); }); })(groups);
         }
-        window.ttAcceptQuestNode = function() {
+
+        window.ttOpenAccept = function(nodeId) {
             var tt = ensureTechTree();
-            var node = tt.nodes.find(function(n){return n.id===window._ttAcceptNodeId;});
+            var node = tt.nodes.find(function(n) { return n.id === nodeId; });
+            if (!node || node.lifecycle !== 'available') return;
+            var pl = node.payload;
+            if (pl.type !== 'activity') return;
+            if (!canAddActivity()) { showToast('You\'re at your activity limit — level up to open more slots', 'olive'); return; }
+            ttCloseSheet();
+            window._ttAcceptContext = { nodeId: nodeId };
+            var s = pl.spec || {};
+            // Prefill the real creation form. Nothing is created until save.
+            openActivityModal(null, null, null);
+            var nameEl = document.getElementById('activityName'); if (nameEl) nameEl.value = s.name || node.title;
+            var descEl = document.getElementById('activityDescription'); if (descEl) descEl.value = s.description || node.description || '';
+            var xpEl = document.getElementById('activityXP'); if (xpEl) xpEl.value = s.baseXP || 10;
+            try { syncActivityXPPreset(); } catch (e) {}
+            var freqEl = document.getElementById('activityFrequency'); if (freqEl && ['daily', 'weekly', 'biweekly', 'monthly', 'occasional'].indexOf(s.frequency) !== -1) freqEl.value = s.frequency;
+            var dimSel = document.getElementById('activityDimSelect');
+            if (dimSel && s.dimensionId && (window.userData.dimensions || []).some(function(d) { return d.id === s.dimensionId; })) {
+                dimSel.value = s.dimensionId;
+                try { populateActivityPathSelect(); } catch (e) {}
+            }
+            // ttMasteryGroup stays hidden — mastery is Sheet 3's one question.
+            var ttGrp = document.getElementById('ttMasteryGroup'); if (ttGrp) ttGrp.style.display = 'none';
+            ttInjectStepStrip(2);
+        };
+
+        // Step indicator strip (3 segments) inside the activity modal.
+        function ttInjectStepStrip(step) {
+            var t = document.getElementById('activityModalTitle');
+            if (!t) return;
+            var s = document.getElementById('ttStepStrip');
+            if (!s) { s = document.createElement('div'); s.id = 'ttStepStrip'; s.className = 'tt-steps'; t.insertAdjacentElement('afterend', s); }
+            s.innerHTML = [1, 2, 3].map(function(i) { return '<i class="' + (i < step ? 'done' : i === step ? 'active' : '') + '"></i>'; }).join('');
+            s.style.display = 'flex';
+        }
+        function ttRemoveStepStrip() { var s = document.getElementById('ttStepStrip'); if (s) s.remove(); }
+
+        // Called from saveActivity the moment the shaped activity exists —
+        // links the node and moves to Sheet 3 (mastery).
+        window.ttResolveAcceptedNode = function(activity) {
+            var ctx = window._ttAcceptContext;
+            window._ttAcceptContext = null;
+            if (!ctx || !activity) return;
+            var tt = ensureTechTree(); if (!tt) return;
+            var node = tt.nodes.find(function(n) { return n.id === ctx.nodeId; });
             if (!node) return;
-            var groups = JSON.parse(JSON.stringify(node.payload.spec.groups || []));
-            // Decide leaf fates from DOM, count activities to create for pre-flight.
-            var toCreate = [];
-            ttWalkLeaves(groups, function(l){
-                if (l.type === 'activity' && !l.linkedActivityId && l.spec) {
-                    var cb = document.querySelector('[data-ttacc-cb="'+l.id+'"]');
-                    if (cb && !cb.classList.contains('on')) { l._demote = true; }
-                    else toCreate.push({ leaf: l, spec: l.spec });
-                } else if (l.type === 'task' && l._promotable) {
-                    var pr = document.querySelector('[data-ttacc-pr="'+l.id+'"]');
-                    if (pr && pr.classList.contains('on')) toCreate.push({ leaf: l, spec: { name: l.name, baseXP: l._promotable.baseXP, frequency: l._promotable.frequency, dimensionId: l._promotable.dimensionId, description: '' }, promote: true });
-                }
-            });
-            var counts = (typeof getActivityCounts === 'function') ? getActivityCounts() : { total: 0, limit: 999 };
-            if (toCreate.length > (counts.limit - counts.total)) { ttActivityCapMessage(toCreate.length); return; }
-            // Create activities, rewrite leaves.
-            toCreate.forEach(function(tc){
-                var act = ttCreateActivityFromSpec(tc.spec, node.id, null);
-                tc.leaf.type = 'activity'; tc.leaf.linkedActivityId = act.id; tc.leaf.name = ''; delete tc.leaf.spec;
-            });
-            // Demote unticked new activities to tasks; strip _promotable + worker-only fields.
-            ttWalkLeaves(groups, function(l){
-                if (l._demote) { l.type = 'task'; l.name = (l.spec && l.spec.name) || l.name || 'Task'; delete l.spec; delete l._demote; }
-                delete l._promotable;
-                if (l.kind !== 'leaf') return;
-                l.completedCount = 0;
-            });
-            (function fix(nodes){ (nodes||[]).forEach(function(n){ if (n.kind==='group'){ n.repsDone=0; fix(n.children);} }); })(groups);
-            // Build the project exactly like saveProject's create branch.
-            var dims = (typeof computeProjectDimensions === 'function') ? computeProjectDimensions(groups) : { dimensionIds: [], dimensionId: null };
-            var proj = { id: prId('proj'), name: node.payload.spec.name, emoji: node.payload.spec.emoji || '🎯', description: node.payload.spec.description || '',
-                dimensionIds: dims.dimensionIds, dimensionId: dims.dimensionId, status: 'active', cadence: { type: node.payload.spec.cadence.type },
-                groups: groups, schemaVersion: 2, currentCycle: 1, cycleHistory: [], questXP: 0, questLevel: 1,
-                createdAt: new Date().toISOString(), startedCycleAt: new Date().toISOString(), createdFromNodeId: node.id };
-            getProjects().push(proj);
-            node.payload.projectId = proj.id;
+            node.payload.activityId = activity.id;
+            setTimeout(function() { ttOpenMasterySheet(node.id, activity.id); }, 260);
+        };
+
+        // ── Sheet 3 — mastery (§7.1) ─────────────────────────────────────
+        window.ttOpenMasterySheet = function(nodeId, activityId) {
+            var tt = ensureTechTree();
+            var node = tt.nodes.find(function(n) { return n.id === nodeId; });
+            var e = ttFindActivity(activityId);
+            if (!node || !e) return;
+            var act = e.activity;
+            var def = (node.payload.mastery && node.payload.mastery.target)
+                ? { count: node.payload.mastery.target, windowDays: node.payload.mastery.windowDays }
+                : ttMasteryDefaultFor(act.frequency);
+            var hint = def.windowDays
+                ? 'About ' + def.count + '× inside ' + def.windowDays + ' days — steady, not heroic. The web opens what this unlocks.'
+                : def.count + '× total, whenever — no clock on this one.';
+            window._ttMasteryCtx = { nodeId: nodeId, activityId: activityId };
+            ttShowSheet('<div class="tt-accept">'
+                + '<div class="tt-steps"><i class="done"></i><i class="done"></i><i class="active"></i></div>'
+                + '<div class="tt-sheet-kicker">Step 3 of 3</div>'
+                + '<h3 class="tt-sheet-title">When is this mastered?</h3>'
+                + '<p class="tt-sheet-desc">Mastery marks "' + escapeHtml(act.name) + '" as part of who you are — and opens the nodes waiting behind it.</p>'
+                + '<div class="tt-mastery-q"><input type="number" id="ttMastN" class="pl-input" min="1" max="999" value="' + (def.count || 6) + '"> <span>times within</span> '
+                + '<input type="number" id="ttMastD" class="pl-input" min="1" max="3650" value="' + (def.windowDays || '') + '" placeholder="∞"> <span>days</span></div>'
+                + '<p class="tt-mastery-hint">' + escapeHtml(hint) + ' Leave days blank for no window.</p>'
+                + '<div class="tt-acc-actions"><button class="tt-btn tt-btn-ghost" onclick="ttBackToShape()">← Back</button>'
+                + '<button class="tt-btn tt-btn-primary" onclick="ttSaveMastery()">Set mastery</button></div>'
+                + '</div>');
+        };
+        window.ttBackToShape = function() {
+            var ctx = window._ttMasteryCtx;
+            if (!ctx) { ttCloseSheet(); return; }
+            var idx = ttFindActivityIndexes(ctx.activityId);
+            ttCloseSheet();
+            if (!idx) return;
+            // Reopen the real form in edit mode — form state is the activity
+            // itself, so everything the user typed survives the round-trip.
+            window._ttAcceptContext = { nodeId: ctx.nodeId };
+            openActivityModal(idx.di, idx.pi, idx.ai);
+            var ttGrp = document.getElementById('ttMasteryGroup'); if (ttGrp) ttGrp.style.display = 'none';
+            ttInjectStepStrip(2);
+        };
+        window.ttSaveMastery = function() {
+            var ctx = window._ttMasteryCtx;
+            window._ttMasteryCtx = null;
+            if (!ctx) { ttCloseSheet(); return; }
+            var tt = ensureTechTree();
+            var node = tt.nodes.find(function(n) { return n.id === ctx.nodeId; });
+            var e = ttFindActivity(ctx.activityId);
+            if (!node || !e) { ttCloseSheet(); return; }
+            var n = Math.max(1, parseInt((document.getElementById('ttMastN') || {}).value, 10) || 6);
+            var dRaw = (document.getElementById('ttMastD') || {}).value;
+            var d = dRaw === '' || dRaw == null ? null : Math.max(1, parseInt(dRaw, 10) || 30);
+            e.activity.techTreeMastery = { count: n, windowDays: d };
             node.lifecycle = 'active';
             evaluateTechTreeMastery();
-            saveUserData().catch(function(){});
+            saveUserData().catch(function() {});
             ttCloseSheet();
-            showToast('🎯 Quest "' + proj.name + '" started', 'green');
-            renderTechTree();
+            showToast('🌱 "' + e.activity.name + '" is on your tracker — its ring is live on the web', 'green');
+            ttRenderIfVisible();
         };
-        function ttActivityCapMessage(n) {
-            showToast('You\'re near your activity limit. Untick some new activities (they stay as tasks in the quest) or free up room — level ' + ((window.userData.level||1)+1) + ' opens more.', 'olive');
-        }
-        function ttRenderAcceptChallenge(node) {
-            ttShowSheet('<div class="tt-accept"><div class="tt-sheet-kicker">Challenge</div><h3 class="tt-sheet-title">' + escapeHtml(node.payload.spec.name) + '</h3>'
-                + '<p class="tt-sheet-desc">' + escapeHtml(node.payload.spec.description || '') + '</p>'
-                + '<div class="tt-acc-actions"><button class="tt-btn tt-btn-primary" onclick="ttAcceptChallengeNode()">Accept</button><button class="tt-btn tt-btn-ghost" onclick="ttCloseSheet()">Not now</button></div></div>');
-        }
-        window.ttAcceptChallengeNode = function() {
+
+        // ── Link-existing (§7.3) — "the web already knows me" ────────────
+        window.ttOpenLinkPicker = function(nodeId) {
             var tt = ensureTechTree();
-            var node = tt.nodes.find(function(n){return n.id===window._ttAcceptNodeId;});
+            var node = tt.nodes.find(function(n) { return n.id === nodeId; });
+            if (!node) return;
+            var nodeName = (node.payload && node.payload.spec && node.payload.spec.name) || node.title;
+            var rows = ttAllActivities()
+                .filter(function(e) { return !e.activity.archived && !e.activity.deleted; })
+                .map(function(e) {
+                    var th = e.activity.techTreeMastery
+                        ? { count: e.activity.techTreeMastery.count, windowDays: e.activity.techTreeMastery.windowDays }
+                        : (node.payload.mastery && node.payload.mastery.target ? { count: node.payload.mastery.target, windowDays: node.payload.mastery.windowDays } : ttMasteryDefaultFor(e.activity.frequency));
+                    var target = Math.max(1, th.count || 1);
+                    var cutoff = th.windowDays ? (Date.now() - th.windowDays * 86400000) : null;
+                    var k = (e.activity.completionHistory || []).filter(function(ev) {
+                        if (ev.isPenalty || (ev.xp || 0) <= 0) return false;
+                        return cutoff === null || new Date(ev.date).getTime() >= cutoff;
+                    }).length;
+                    var score = ttTokenOverlap(nodeName, e.activity.name) * 2
+                        + (e.dim.id === node.dimensionId ? 0.5 : 0)
+                        + Math.min(1, k / target) * 0.2;
+                    return { e: e, k: k, target: target, windowDays: th.windowDays, score: score, resolves: e.activity.techTreeMasteredAt || k >= target };
+                })
+                .sort(function(a, b) { return b.score - a.score || a.e.activity.name.localeCompare(b.e.activity.name); });
+            if (!rows.length) { showToast('No activities to link yet', 'olive'); return; }
+            var html = '<div class="tt-sheet-body"><div class="tt-sheet-kicker">Link an activity</div>'
+                + '<h3 class="tt-sheet-title">Which one is it?</h3>'
+                + '<p class="tt-sheet-desc">Best matches first. If it already meets the mastery bar, the node resolves on the spot.</p>'
+                + '<div class="tt-seg-list">'
+                + rows.map(function(r) {
+                    var a = r.e.activity;
+                    var winTxt = r.windowDays ? 'in the last ' + r.windowDays + ' days' : 'lifetime';
+                    var verdict = r.resolves
+                        ? '<span class="tt-seg-badge tt-verdict-gold">' + Math.min(r.k, 999) + '/' + r.target + ' ✓ resolves</span>'
+                        : '<span class="tt-seg-badge tt-seg-open">' + r.k + '/' + r.target + ' · links</span>';
+                    return '<button class="tt-seg-row" style="--rc:' + ttDimHexRaw(r.e.dim.id) + '" onclick="ttDoLinkActivity(\'' + nodeId + '\',\'' + a.id + '\')">'
+                        + '<span class="tt-seg-dot" style="background:' + ttDimHexRaw(r.e.dim.id) + '"></span>'
+                        + '<span class="tt-seg-name">' + escapeHtml(a.name) + '<span class="tt-avail-sub">' + r.k + '× ' + winTxt + ' · ' + escapeHtml(r.e.dim.name) + '</span></span>'
+                        + verdict + '</button>';
+                }).join('')
+                + '</div></div>';
+            ttShowSheet(html);
+        };
+
+        window.ttDoLinkActivity = function(nodeId, activityId) {
+            var tt = ensureTechTree();
+            var node = tt.nodes.find(function(n) { return n.id === nodeId; });
+            var e = ttFindActivity(activityId);
+            if (!node || !e) return;
+            var act = e.activity;
+            node.payload.activityId = activityId;
+            node.dimensionId = e.dim.id;
+            // Apply the node's mastery target ONLY if the activity has none —
+            // never overwrite a user's own threshold (§7.3).
+            if (!act.techTreeMastery) {
+                act.techTreeMastery = (node.payload.mastery && node.payload.mastery.target)
+                    ? { count: node.payload.mastery.target, windowDays: node.payload.mastery.windowDays !== undefined ? node.payload.mastery.windowDays : 90 }
+                    : ttMasteryDefaultFor(act.frequency);
+            }
+            node.lifecycle = 'active';
+            // §3 retroactive resolve: evaluate the rolling window right now.
+            var lockedBefore = {};
+            tt.nodes.forEach(function(n) { if (n.lifecycle === 'locked') lockedBefore[n.id] = true; });
+            var prog = ttMasteryProgress(act);
+            var resolved = false;
+            if (prog.mastered || prog.count >= prog.target) {
+                if (!act.techTreeMasteredAt) act.techTreeMasteredAt = new Date().toISOString();
+                node.resolvedAt = new Date().toISOString();
+                node.resolvedVia = 'linked_history';
+                resolved = true;
+                ttAwardXP(ttNodeResolveBonus(node));
+            }
+            evaluateTechTreeMastery();
+            saveUserData().catch(function() {});
+            ttCloseSheet();
+            if (resolved) {
+                // The highest-value interaction in the feature — celebrate it.
+                window._ttFlashNodeId = node.id;
+                ttGoldFlash();
+                var opened = tt.nodes.filter(function(n) { return lockedBefore[n.id] && n.lifecycle === 'available'; }).map(function(n) { return n.title; });
+                showToast('⭐ The web already knows you — "' + node.title + '" resolved on the spot', 'green');
+                if (opened.length) setTimeout(function() { showToast('🔓 Opened: ' + opened.slice(0, 3).join(', ') + (opened.length > 3 ? ' +' + (opened.length - 3) : ''), 'blue'); }, 1400);
+            } else {
+                showToast('🔗 Linked — ' + prog.count + '/' + prog.target + ' toward mastery', 'green');
+            }
+            ttRenderIfVisible();
+        };
+
+        function ttGoldFlash() {
+            try {
+                var el = document.createElement('div');
+                el.className = 'tt-gold-flash';
+                document.body.appendChild(el);
+                setTimeout(function() { el.remove(); }, 950);
+            } catch (e) {}
+        }
+
+        // ── Quest accept → the REAL builder, prefilled (§7.2) ────────────
+        // Nothing is created before the builder is saved. New-activity leaves
+        // ride along as named task rows; ttFinishQuestAccept materializes the
+        // survivors into real activities at save time.
+        window.ttAcceptQuestToBuilder = function(nodeId) {
+            var tt = ensureTechTree();
+            var node = tt.nodes.find(function(n) { return n.id === nodeId; });
+            if (!node || node.lifecycle !== 'available' || node.payload.type !== 'quest') return;
+            var spec = node.payload.spec;
+            var groups = JSON.parse(JSON.stringify(spec.groups || []));
+            var newSpecs = {};
+            ttWalkLeaves(groups, function(l) {
+                if (l.type === 'activity' && !l.linkedActivityId && l.spec) {
+                    newSpecs[l.id] = l.spec;
+                    l.type = 'task';
+                    l.name = l.spec.name || 'Practice';
+                }
+                delete l.spec; delete l._promotable;
+            });
+            window._ttQuestAccept = { nodeId: nodeId, newSpecs: newSpecs };
+            ttCloseSheet();
+            openProjectModal();
+            document.getElementById('projectModalTitle').textContent = 'Set up this quest';
+            document.getElementById('projectName').value = spec.name || node.title;
+            document.getElementById('projectEmoji').value = spec.emoji || '🎯';
+            document.getElementById('projectDesc').value = spec.description || node.description || '';
+            try { setProjectCadence((spec.cadence && spec.cadence.type) === 'recurring' ? 'recurring' : 'oneoff'); } catch (e) {}
+            var host = document.getElementById('projectBuilder');
+            host.innerHTML = '';
+            (groups.length ? groups : [null]).forEach(function(g) { addGroupCard(host, g); });
+            renderProjectDimReadout();
+            // Badge the rows that become real activities on save.
+            Object.keys(newSpecs).forEach(function(leafId) {
+                var row = host.querySelector('[data-id="' + leafId + '"] .pr-b-item-meta');
+                if (row) row.innerHTML = '<span class="tt-newact-badge">→ becomes an activity (' + escapeHtml(newSpecs[leafId].frequency || 'weekly') + ')</span>';
+            });
+        };
+
+        // Runs inside saveProject's create branch, before its save/close.
+        window.ttFinishQuestAccept = function(proj) {
+            var ctx = window._ttQuestAccept;
+            window._ttQuestAccept = null;
+            if (!ctx || !proj) return;
+            var tt = ensureTechTree();
+            var node = tt.nodes.find(function(n) { return n.id === ctx.nodeId; });
+            var created = 0;
+            (function walk(nodes) {
+                (nodes || []).forEach(function(l) {
+                    if (l.kind === 'group') return walk(l.children);
+                    if (l.type === 'task' && ctx.newSpecs[l.id]) {
+                        if (!canAddActivity()) return;   // cap hit — it stays a task
+                        var spec = Object.assign({}, ctx.newSpecs[l.id]);
+                        if (l.name && l.name.trim()) spec.name = l.name.trim();
+                        var act = ttCreateActivityFromSpec(spec, ctx.nodeId, null);
+                        l.type = 'activity'; l.linkedActivityId = act.id; l.name = '';
+                        created++;
+                    }
+                });
+            })(proj.groups);
+            if (created && typeof computeProjectDimensions === 'function') {
+                var dims = computeProjectDimensions(proj.groups);
+                proj.dimensionIds = dims.dimensionIds; proj.dimensionId = dims.dimensionId;
+            }
+            proj.createdFromNodeId = ctx.nodeId;
+            if (node) {
+                node.payload.projectId = proj.id;
+                node.lifecycle = 'active';
+            }
+            evaluateTechTreeMastery();
+            showToast('🎯 Quest is live on your web', 'green');
+            ttRenderIfVisible();
+        };
+
+        // ── Challenge accept (unchanged from v2, §7.5) ───────────────────
+        window.ttAcceptChallengeNode = function(nodeId) {
+            var tt = ensureTechTree();
+            var node = tt.nodes.find(function(n) { return n.id === (nodeId || window._ttAcceptNodeId); });
             if (!node || node.payload.type !== 'challenge') return;
-            var sp = node.payload.spec, targets = sp.activityTargets || {}, ids = Object.keys(targets).filter(function(id){return ttFindActivity(id);});
+            var sp = node.payload.spec, targets = sp.activityTargets || {}, ids = Object.keys(targets).filter(function(id) { return ttFindActivity(id); });
             if (!ids.length) { showToast('The activities for this challenge no longer exist', 'olive'); return; }
-            var totalBase = ids.reduce(function(s,id){var e=ttFindActivity(id);return s+(e.activity.baseXP||1)*targets[id];},0);
-            var progress = {}; ids.forEach(function(id){progress[id]=0;});
+            var totalBase = ids.reduce(function(s, id) { var e = ttFindActivity(id); return s + (e.activity.baseXP || 1) * targets[id]; }, 0);
+            var progress = {}; ids.forEach(function(id) { progress[id] = 0; });
             if (!window.userData.challenges) window.userData.challenges = [];
-            var ch = { id: Date.now().toString(), name: sp.name, description: sp.description||'', targetCount: ids.reduce(function(s,id){return s+targets[id];},0),
-                bonusXP: Math.max(1, Math.round(totalBase*0.2)), startDate: toLocalDateStr(new Date()), endDate: toLocalDateStr(new Date(Date.now()+(sp.durationDays||30)*86400000)),
+            var ch = { id: Date.now().toString(), name: sp.name, description: sp.description || '', targetCount: ids.reduce(function(s, id) { return s + targets[id]; }, 0),
+                bonusXP: Math.max(1, Math.round(totalBase * 0.2)), startDate: toLocalDateStr(new Date()), endDate: toLocalDateStr(new Date(Date.now() + (sp.durationDays || 30) * 86400000)),
                 activityIds: ids, activityTargets: targets, activityProgress: progress, activityId: null, currentCount: 0,
                 metricEnabled: false, metricQty: null, metricUnit: null, metricCurrent: 0, activityProgressCollapsed: true,
                 enforceActivities: false, enforceDateRange: false, status: 'active', createdAt: new Date().toISOString(), source: 'tech_tree' };
             window.userData.challenges.push(ch);
             node.payload.challengeId = ch.id; node.lifecycle = 'active';
-            saveUserData().catch(function(){});
+            saveUserData().catch(function() {});
             ttCloseSheet(); showToast('🏆 Challenge added', 'green'); updateDashboard(); renderTechTree();
         };
 
-        // Create a real activity from a payload spec, tagged for reversal (§6.3).
+        // Create a real activity from a payload spec, tagged for lineage.
         function ttCreateActivityFromSpec(spec, nodeId, mastery) {
             var path = ttTargetPathFor(spec.dimensionId);
-            var freq = ['daily','weekly','biweekly','monthly','occasional','custom','one-time'].indexOf(spec.frequency) !== -1 ? spec.frequency : 'weekly';
+            var freq = ['daily', 'weekly', 'biweekly', 'monthly', 'occasional', 'custom', 'one-time'].indexOf(spec.frequency) !== -1 ? spec.frequency : 'weekly';
             var act = {
                 id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
                 name: (spec.name || 'Practice').slice(0, 80), baseXP: Math.min(50, Math.max(1, spec.baseXP || 8)),
@@ -15949,7 +16186,7 @@
         }
         function ttTargetPathFor(dimId) {
             var dims = window.userData.dimensions || [];
-            var di = dims.findIndex(function(d){return d.id===dimId;});
+            var di = dims.findIndex(function(d) { return d.id === dimId; });
             if (di === -1) { var u = getOrCreateUncategorized(); var p = dims[u.di].paths[u.pi]; if (!p.activities) p.activities = []; return p; }
             var dim = dims[di];
             if (dim.paths && dim.paths.length) { if (!dim.paths[0].activities) dim.paths[0].activities = []; return dim.paths[0]; }
@@ -15959,18 +16196,19 @@
         // ── Node actions ─────────────────────────────────────────────────
         window.ttRejectNode = function(nodeId) {
             var tt = ensureTechTree();
-            var node = tt.nodes.find(function(n){return n.id===nodeId;});
+            var node = tt.nodes.find(function(n) { return n.id === nodeId; });
             if (!node) return;
             node.lifecycle = 'archived';
-            // Negative signal survives regenerate (spec §2.8), FIFO cap 40.
-            tt.rejections = (tt.rejections || []).concat([{ nodeTitle: node.title, reason: 'not_me', at: new Date().toISOString() }]).slice(-40);
-            saveUserData().catch(function(){});
+            // Negative signal (with role, so the model learns "this user
+            // rejects wildcards") survives regenerate. FIFO cap 40.
+            tt.rejections = (tt.rejections || []).concat([{ nodeTitle: node.title, role: node.role || 'suggestion', reason: 'not_me', at: new Date().toISOString() }]).slice(-40);
+            saveUserData().catch(function() {});
             ttCloseSheet(); renderTechTree();
         };
         window.ttReviseNode = function(nodeId) {
             var tt = ensureTechTree();
             if ((tt.revisionsUsed || 0) >= TT_REVISION_LIMIT) { showToast('Revision limit reached for now', 'olive'); return; }
-            var node = tt.nodes.find(function(n){return n.id===nodeId;});
+            var node = tt.nodes.find(function(n) { return n.id === nodeId; });
             if (!node) return;
             ttCloseSheet();
             window._ttReviseConfirm = function() {
@@ -15986,64 +16224,103 @@
                 + '<div class="tt-form-actions"><button class="tt-btn tt-btn-ghost" onclick="ttCloseOverlay()">Cancel</button><button class="tt-btn tt-btn-primary" onclick="window._ttReviseConfirm&&window._ttReviseConfirm()">Send revision</button></div></div>');
         };
 
-        // ── Quest patch proposals (spec §7.7) ────────────────────────────
+        window.ttAttachToGoal = function(nodeId) {
+            var goals = ttActiveGoals();
+            if (!goals.length) return;
+            var rows = goals.map(function(g) {
+                return '<button class="tt-seg-row" style="--rc:' + (g.color || '#888') + '" onclick="ttDoAttachGoal(\'' + nodeId + '\',\'' + g.id + '\')">'
+                    + '<span class="tt-seg-dot" style="background:' + (g.color || '#888') + '"></span>'
+                    + '<span class="tt-seg-name">' + escapeHtml(g.shortName || 'Goal') + '<span class="tt-avail-sub">' + escapeHtml(g.sharpened || g.rawText || '') + '</span></span></button>';
+            }).join('');
+            ttShowSheet('<div class="tt-sheet-body"><div class="tt-sheet-kicker">Attach</div><h3 class="tt-sheet-title">Thread this through a goal</h3>'
+                + '<p class="tt-sheet-desc">It takes that goal\'s colour and feeds it from now on.</p>'
+                + '<div class="tt-seg-list">' + rows + '</div></div>');
+        };
+        window.ttDoAttachGoal = function(nodeId, goalId) {
+            var tt = ensureTechTree();
+            var node = tt.nodes.find(function(n) { return n.id === nodeId; });
+            var goal = ttGoalById(goalId);
+            if (!node || !goal) return;
+            if (!Array.isArray(node.goalIds)) node.goalIds = [];
+            if (node.goalIds.indexOf(goalId) === -1) node.goalIds.push(goalId);
+            evaluateTechTreeMastery();
+            saveUserData().catch(function() {});
+            ttCloseSheet(); renderTechTree();
+            showToast('🧵 Threaded through ' + (goal.shortName || 'the goal'), 'green');
+        };
+
+        // ── Quest patch proposals (accept/decline cards) ─────────────────
+        function ttFindGroupByName(groups, name) {
+            var want = String(name || '').trim().toLowerCase();
+            var hit = null;
+            (function walk(nodes) {
+                (nodes || []).forEach(function(n) {
+                    if (hit || !n || n.kind !== 'group') return;
+                    if (String(n.name || '').trim().toLowerCase() === want) { hit = n; return; }
+                    walk(n.children);
+                });
+            })(groups);
+            return hit;
+        }
         window.ttApplyQuestPatch = function(patchId) {
             var tt = ensureTechTree();
-            var patch = (tt.questPatches || []).find(function(q){return q.id===patchId;});
+            var patch = (tt.questPatches || []).find(function(q) { return q.id === patchId; });
             if (!patch) return;
             var proj = ttFindProject(patch.projectId);
-            if (!proj) { patch.status = 'gone'; saveUserData().catch(function(){}); renderTechTree(); return; }
-            if (patch.op === 'add_group' && patch.group) { proj.groups = (proj.groups || []).concat([patch.group]); if (typeof migrateProject === 'function') migrateProject(proj); }
+            if (!proj) { patch.status = 'gone'; saveUserData().catch(function() {}); renderTechTree(); return; }
+            if (patch.op === 'add_group' && patch.group) {
+                proj.groups = (proj.groups || []).concat([patch.group]);
+                if (typeof migrateProject === 'function') migrateProject(proj);
+                showToast('➕ Quest grew — new group added', 'green');
+            } else if (patch.op === 'link_activity') {
+                // Quests grow with the web (§6.1): fold the new activity into
+                // the named group as a linked leaf.
+                if (!ttFindActivity(patch.activityId)) { patch.status = 'gone'; saveUserData().catch(function() {}); renderTechTree(); return; }
+                var already = false;
+                ttWalkLeaves(proj.groups || [], function(l) { if (l.linkedActivityId === patch.activityId) already = true; });
+                if (!already) {
+                    var grp = ttFindGroupByName(proj.groups, patch.groupName);
+                    if (!grp) {
+                        grp = { id: ttNewId('grp'), kind: 'group', name: String(patch.groupName || 'New').slice(0, 60), ordered: false, repeat: 1, repsDone: 0, children: [] };
+                        proj.groups = (proj.groups || []).concat([grp]);
+                    }
+                    grp.children.push({
+                        id: ttNewId('lf'), kind: 'leaf', type: 'activity', linkedActivityId: patch.activityId,
+                        name: '', resetMode: patch.resetMode === 'once' ? 'once' : 'per-cycle',
+                        requiredCount: Math.max(1, parseInt(patch.requiredCount, 10) || 1), completedCount: 0
+                    });
+                    if (typeof migrateProject === 'function') migrateProject(proj);
+                }
+                showToast('🧵 Folded into "' + proj.name + '"', 'green');
+            }
             patch.status = 'applied';
-            saveUserData().catch(function(){});
-            showToast('➕ Quest grew — new group added', 'green'); renderTechTree();
+            saveUserData().catch(function() {});
+            renderTechTree();
         };
         window.ttDeclineQuestPatch = function(patchId) {
             var tt = ensureTechTree();
-            var patch = (tt.questPatches || []).find(function(q){return q.id===patchId;});
+            var patch = (tt.questPatches || []).find(function(q) { return q.id === patchId; });
             if (!patch) return;
             patch.status = 'declined';
-            tt.rejections = (tt.rejections || []).concat([{ nodeTitle: 'patch:' + (patch.group && patch.group.name || ''), reason: 'not_now', at: new Date().toISOString() }]).slice(-40);
-            saveUserData().catch(function(){}); renderTechTree();
+            var label = patch.op === 'link_activity'
+                ? 'absorb:' + (ttFindActivity(patch.activityId) ? ttFindActivity(patch.activityId).activity.name : patch.activityId)
+                : 'patch:' + ((patch.group && patch.group.name) || '');
+            tt.rejections = (tt.rejections || []).concat([{ nodeTitle: label, role: 'absorption', reason: 'not_now', at: new Date().toISOString() }]).slice(-40);
+            saveUserData().catch(function() {}); renderTechTree();
         };
 
-        // ── Readings + merge (spec §3.5, §3.6) ───────────────────────────
-        window.ttEditReadings = function() {
-            var tt = ensureTechTree();
-            var goals = (tt.goals || []).filter(function(g){return !g.retiredAt;});
-            var rows = goals.map(function(g){ return '<label class="tt-read-row"><span class="tt-read-raw">' + escapeHtml(g.rawText) + '</span>'
-                + '<input type="text" class="pl-input" data-ttread="' + g.id + '" maxlength="200" value="' + escapeHtml(g.sharpened || '') + '"></label>'; }).join('');
-            window._ttReadConfirm = function() {
-                var changed = [];
-                document.querySelectorAll('[data-ttread]').forEach(function(el){
-                    var g = goals.find(function(x){return x.id===el.getAttribute('data-ttread');});
-                    if (g && (el.value||'').trim() && el.value.trim() !== g.sharpened) { g.sharpened = el.value.trim(); g.sharpenedEditedByUser = true; changed.push(g); }
-                });
-                ttCloseOverlay();
-                if (changed.length) {
-                    var line = (tt.lines || []).find(function(l){return l.goalId===changed[0].id;});
-                    if (line) { ttSubmitRequest({ type: 'regenerate', payload: { lineId: line.id } }); showToast('Re-reading that goal — the line will redraw', 'blue'); }
-                    else saveUserData().catch(function(){});
-                }
-            };
-            ttShowOverlay('<div class="tt-form"><h3 class="tt-form-title">How we read your goals</h3>'
-                + '<p class="tt-muted">Edit any reading. Changing one triggers a redraw of just that line.</p>' + rows
-                + '<div class="tt-form-actions"><button class="tt-btn tt-btn-ghost" onclick="ttCloseOverlay()">Cancel</button><button class="tt-btn tt-btn-primary" onclick="window._ttReadConfirm&&window._ttReadConfirm()">Save</button></div></div>');
-        };
-        window.ttDismissMerge = function(){ var tt = ensureTechTree(); tt.mergeSuggestion = null; saveUserData().catch(function(){}); renderTechTree(); };
-
-        // ── User-authored nodes (spec §8.8) ──────────────────────────────
+        // ── User-authored nodes ──────────────────────────────────────────
         window.ttOpenCustomNodeForm = function() {
-            var dims = (window.userData.dimensions || []).filter(function(d){return d.id!=='uncategorized';});
-            var lines = ttActiveLines();
-            var dimOpts = '<option value="uncategorized">Uncategorized</option>' + dims.map(function(d){return '<option value="'+d.id+'">'+escapeHtml(d.name)+'</option>';}).join('');
-            var lineOpts = '<option value="">Fresh pick (no line)</option>' + lines.map(function(l){ var g=ttGoalForLine(l); return '<option value="'+l.id+'">'+escapeHtml(g?g.shortName:'Line')+'</option>'; }).join('');
+            var dims = (window.userData.dimensions || []).filter(function(d) { return d.id !== 'uncategorized'; });
+            var goals = ttActiveGoals();
+            var dimOpts = '<option value="uncategorized">Uncategorized</option>' + dims.map(function(d) { return '<option value="' + d.id + '">' + escapeHtml(d.name) + '</option>'; }).join('');
+            var goalOpts = '<option value="">No goal (free node)</option>' + goals.map(function(g) { return '<option value="' + g.id + '">' + escapeHtml(g.shortName || 'Goal') + '</option>'; }).join('');
             ttShowOverlay('<div class="tt-form"><h3 class="tt-form-title">Add your own</h3>'
                 + '<p class="tt-muted">Place a node the AI missed. A hand-placed node is the best signal about what it got wrong.</p>'
                 + '<label class="pl-field-label">Title</label><input type="text" id="ttCustomTitle" class="pl-input" maxlength="80" placeholder="e.g. Train for a 10k">'
                 + '<label class="pl-field-label" style="margin-top:8px;">Description (optional)</label><input type="text" id="ttCustomDesc" class="pl-input" maxlength="200">'
                 + '<label class="pl-field-label" style="margin-top:8px;">Dimension</label><select id="ttCustomDim" class="pl-input ay-select">' + dimOpts + '</select>'
-                + '<label class="pl-field-label" style="margin-top:8px;">On which line</label><select id="ttCustomLine" class="pl-input ay-select">' + lineOpts + '</select>'
+                + '<label class="pl-field-label" style="margin-top:8px;">Feeds which goal</label><select id="ttCustomGoal" class="pl-input ay-select">' + goalOpts + '</select>'
                 + '<div class="tt-form-actions"><button class="tt-btn tt-btn-ghost" onclick="ttCloseOverlay()">Cancel</button><button class="tt-btn tt-btn-primary" onclick="ttSaveCustomNode()">Add node</button></div></div>');
         };
         window.ttSaveCustomNode = function() {
@@ -16051,56 +16328,53 @@
             if (!title) { showToast('Give the node a title', 'olive'); return; }
             var tt = ensureTechTree();
             var dimId = document.getElementById('ttCustomDim').value || 'uncategorized';
-            var lineId = document.getElementById('ttCustomLine').value || null;
-            var line = lineId ? (tt.lines || []).find(function(l){return l.id===lineId;}) : null;
-            var seg = 0;
-            if (line) { var next = ttNextUnreachedStation(line); seg = next ? next.index : 0; }
+            var goalId = document.getElementById('ttCustomGoal').value || null;
             tt.nodes.push({
                 id: ttNewId('ttn'), source: 'user', createdAt: new Date().toISOString(),
-                lineId: lineId, segmentIndex: lineId ? seg : null, isTerminus: false,
-                lifecycle: 'available', resolvedAt: null, resolvedVia: null, interchange: null,
+                role: 'suggestion', goalIds: goalId ? [goalId] : [], dimensionId: dimId,
+                lifecycle: 'available', resolvedAt: null, resolvedVia: null,
                 title: title.slice(0, 80), description: (document.getElementById('ttCustomDesc').value || '').trim().slice(0, 240),
-                dimensionId: dimId, prerequisites: [], parentNodeId: null,
+                whyNow: null, prerequisites: [],
                 payload: { type: 'activity', activityId: null, spec: { name: title, description: '', baseXP: 10, frequency: 'weekly', dimensionId: dimId, suggestedPathId: null }, mastery: { target: 6, windowDays: 90 } }
             });
-            saveUserData().catch(function(){});
+            saveUserData().catch(function() {});
             ttCloseOverlay(); renderTechTree();
         };
         window.ttAddActivityToTree = function(activityId) {
             var tt = ensureTechTree();
-            if (tt.nodes.some(function(n){return (n.payload && n.payload.activityId)===activityId || (n._v1 && n._v1.activityId===activityId);})) { showToast('Already on your map', 'olive'); return; }
+            if (tt.nodes.some(function(n) { return (n.payload && n.payload.activityId) === activityId; })) { showToast('Already on your web', 'olive'); return; }
             var e = ttFindActivity(activityId);
             if (!e) return;
             tt.nodes.push({
                 id: ttNewId('ttn'), source: 'user', createdAt: new Date().toISOString(),
-                lineId: null, segmentIndex: null, isTerminus: false,
-                lifecycle: 'active', resolvedAt: e.activity.techTreeMasteredAt || null, resolvedVia: e.activity.techTreeMasteredAt ? 'user_added' : null, interchange: null,
-                title: e.activity.name, description: e.activity.description || '', dimensionId: e.dim.id,
-                prerequisites: [], parentNodeId: null,
+                role: 'anchor', goalIds: [], dimensionId: e.dim.id,
+                lifecycle: 'active', resolvedAt: e.activity.techTreeMasteredAt || null, resolvedVia: e.activity.techTreeMasteredAt ? 'mastery' : null,
+                title: e.activity.name, description: e.activity.description || '',
+                whyNow: null, prerequisites: [],
                 payload: { type: 'activity', activityId: activityId, spec: { name: e.activity.name, description: e.activity.description || '', baseXP: e.activity.baseXP || 10, frequency: e.activity.frequency || 'weekly', dimensionId: e.dim.id, suggestedPathId: null }, mastery: e.activity.techTreeMastery ? { target: e.activity.techTreeMastery.count, windowDays: e.activity.techTreeMastery.windowDays } : { target: 6, windowDays: 90 } }
             });
             if (!e.activity.techTreeMastery) e.activity.techTreeMastery = ttMasteryDefaultFor(e.activity.frequency);
             evaluateTechTreeMastery();
-            saveUserData().catch(function(){});
-            showToast('🌱 "' + e.activity.name + '" added to your map (fresh pick)', 'green');
+            saveUserData().catch(function() {});
+            showToast('🌱 "' + e.activity.name + '" anchored on your web', 'green');
             ttRenderIfVisible();
         };
 
         // ── Overlays + sheets ────────────────────────────────────────────
         function ttShowOverlay(innerHtml) {
             var el = document.getElementById('ttOverlay');
-            if (!el) { el = document.createElement('div'); el.id = 'ttOverlay'; el.className = 'tt-overlay'; el.addEventListener('click', function(ev){ if (ev.target === el) ttCloseOverlay(); }); document.body.appendChild(el); }
+            if (!el) { el = document.createElement('div'); el.id = 'ttOverlay'; el.className = 'tt-overlay'; el.addEventListener('click', function(ev) { if (ev.target === el) ttCloseOverlay(); }); document.body.appendChild(el); }
             el.innerHTML = '<div class="tt-overlay-card">' + innerHtml + '</div>';
             el.style.display = 'flex';
         }
-        window.ttCloseOverlay = function() { var el = document.getElementById('ttOverlay'); if (el) el.style.display = 'none'; window._ttReviseConfirm = window._ttReadConfirm = window._ttAddLineConfirm = null; };
+        window.ttCloseOverlay = function() { var el = document.getElementById('ttOverlay'); if (el) el.style.display = 'none'; window._ttReviseConfirm = window._ttReadConfirm = window._ttAddGoalConfirm = null; };
         function ttShowSheet(innerHtml) {
             var el = document.getElementById('ttSheet');
-            if (!el) { el = document.createElement('div'); el.id = 'ttSheet'; el.className = 'tt-sheet-scrim'; el.addEventListener('click', function(ev){ if (ev.target === el) ttCloseSheet(); }); document.body.appendChild(el); }
+            if (!el) { el = document.createElement('div'); el.id = 'ttSheet'; el.className = 'tt-sheet-scrim'; el.addEventListener('click', function(ev) { if (ev.target === el) ttCloseSheet(); }); document.body.appendChild(el); }
             el.innerHTML = '<div class="tt-sheet-card">' + innerHtml + '</div>';
             el.style.display = 'flex';
         }
-        window.ttCloseSheet = function() { var el = document.getElementById('ttSheet'); if (el) el.style.display = 'none'; window._ttAcceptNodeId = null; window._ttAcceptLeaves = null; };
+        window.ttCloseSheet = function() { var el = document.getElementById('ttSheet'); if (el) el.style.display = 'none'; };
 
         // ── Hooks into existing flows ────────────────────────────────────
         (function() {
@@ -16140,6 +16414,27 @@
                     return r;
                 };
             }
+            // Cancelling the activity form or quest builder abandons any
+            // in-flight accept context (and its step strip).
+            if (typeof window.closeActivityModal === 'function' && !window._ttWrappedCloseAct) {
+                window._ttWrappedCloseAct = true;
+                var _oc = window.closeActivityModal;
+                window.closeActivityModal = function() {
+                    var r = _oc.apply(this, arguments);
+                    window._ttAcceptContext = null;
+                    ttRemoveStepStrip();
+                    return r;
+                };
+            }
+            if (typeof window.closeProjectModal === 'function' && !window._ttWrappedCloseProj) {
+                window._ttWrappedCloseProj = true;
+                var _op = window.closeProjectModal;
+                window.closeProjectModal = function() {
+                    var r = _op.apply(this, arguments);
+                    window._ttQuestAccept = null;
+                    return r;
+                };
+            }
         }, 0);
         (function() {
             var _orig = window.openGridActionMenu;
@@ -16151,8 +16446,8 @@
                     var cancel = inner.querySelector('.gc-action-cancel');
                     var btn = document.createElement('button');
                     btn.className = 'gc-action-item'; btn.setAttribute('data-tt-add', '1');
-                    btn.innerHTML = '<span class="gc-action-icon">' + ttIcon('branch', 14) + '</span><span>Add to map</span>';
-                    btn.addEventListener('click', function(e) { e.stopPropagation(); closeGridActionMenu(); setTimeout(function(){ ttAddActivityToTree(activityId); }, 60); });
+                    btn.innerHTML = '<span class="gc-action-icon">' + ttIcon('branch', 14) + '</span><span>Add to web</span>';
+                    btn.addEventListener('click', function(e) { e.stopPropagation(); closeGridActionMenu(); setTimeout(function() { ttAddActivityToTree(activityId); }, 60); });
                     inner.insertBefore(btn, cancel);
                 };
             }
@@ -16166,7 +16461,6 @@
                 else if (tries > 60) clearInterval(timer);
             }, 1000);
         })();
-
         /* ═══════════════════════════════════════════════════════════════════
            QUESTS (Projects) — v5 redesign: recursive groups
            A Quest is a tree of GROUPS and LEAVES. A Group is a container —
@@ -17610,6 +17904,11 @@
                     status: 'active', cadence: cadence, groups: groups, schemaVersion: 2, currentCycle: 1, cycleHistory: [],
                     questXP: 0, questLevel: 1, createdAt: new Date().toISOString(), startedCycleAt: new Date().toISOString() };
                 getProjects().push(proj);
+                // Tech Tree quest accept: link the node and materialize any
+                // pending new-activity leaves now that the builder saved.
+                if (window._ttQuestAccept && typeof ttFinishQuestAccept === 'function') {
+                    ttFinishQuestAccept(proj);
+                }
                 saveUserData(); closeProjectModal(); showToast('✓ Quest created', 'green'); openProjectDetail(proj.id);
             }
         };
