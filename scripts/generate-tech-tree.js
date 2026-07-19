@@ -63,8 +63,10 @@ const PROVIDERS = [
         base: 'https://api.anthropic.com',
         // Sonnet by default: quest construction (nested groups, linked
         // leaves) needs the stronger model. Keys without claude-sonnet-5
-        // access fall through Sonnet 4.5, then Haiku.
-        model: process.env.TECH_TREE_MODEL || 'claude-sonnet-5',
+        // access fall through Sonnet 4.5, then Haiku. ANTHROPIC_MODEL pins
+        // this provider alone (TECH_TREE_MODEL applies to every provider,
+        // so an Anthropic model id there would poison the others).
+        model: process.env.ANTHROPIC_MODEL || process.env.TECH_TREE_MODEL || 'claude-sonnet-5',
         fallbackModels: ['claude-sonnet-4-5', 'claude-haiku-4-5'],
         maxTokens: { generate: 9000, add_goal: 6000, expand: 3500, regenerate: 6000, revise: 2500, quest_patch: 2500 },
         keyHint: 'ANTHROPIC_API_KEY',
@@ -1841,6 +1843,7 @@ async function main() {
         }
     }
     console.log(`Done. Processed: ${processed}, failed: ${failed}, scanned: ${snapshot.size}`);
+    return { processed, failed };
 }
 
 // Exported for unit tests; only run the cron when invoked directly.
@@ -1851,7 +1854,11 @@ module.exports = {
 };
 
 if (require.main === module) {
+    // A run that had work and completed NONE of it must show up red on the
+    // Actions dashboard — exiting 0 there hid a full outage behind green
+    // checkmarks. Partial failures stay green: the failed request's attempts
+    // counter retries it on the next cron run.
     main()
-        .then(() => process.exit(0))
+        .then(({ processed, failed }) => process.exit(failed > 0 && processed === 0 ? 1 : 0))
         .catch(err => { console.error('Fatal error:', err); process.exit(1); });
 }
