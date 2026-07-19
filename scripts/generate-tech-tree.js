@@ -594,11 +594,20 @@ function isNetworkError(err) {
         || (err.cause && err.cause.code));
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-// Full v3 generations (mandatory quest JSON, ~8-9k output tokens,
-// non-streaming) routinely run past a minute — 45s aborted every attempt and
-// left users stuck on the weaving screen. The Actions job cap is 10 minutes;
-// two minutes per model call is safe.
+// Full v3 generations (mandatory quest JSON, ~8-9k output tokens) can run
+// well past two minutes of wall-clock on Sonnet-class models. The Anthropic
+// path therefore STREAMS: the call only dies if the stream stalls for
+// IDLE_TIMEOUT_MS or exceeds the hard TOTAL cap — never on healthy, slow
+// generation. OpenAI-compatible providers (fast flash/groq models) keep a
+// plain non-streaming timeout.
 const FETCH_TIMEOUT_MS = 120000;
+const STREAM_IDLE_TIMEOUT_MS = 60000;
+const STREAM_TOTAL_TIMEOUT_MS = 420000;
+function timeoutError(msg) {
+    const err = new Error(msg);
+    err.name = 'TimeoutError';
+    return err;
+}
 
 async function callModel(prompt, maxTokens) {
     if (!PROVIDER.key) {
@@ -606,30 +615,66 @@ async function callModel(prompt, maxTokens) {
     }
     async function once(tokens) {
         if (PROVIDER.kind === 'anthropic') {
-            const res = await fetch(PROVIDER.base + '/v1/messages', {
-                method: 'POST',
-                signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-                headers: {
-                    'x-api-key': PROVIDER.key,
-                    'anthropic-version': '2023-06-01',
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    model: PROVIDER.activeModel || PROVIDER.model,
-                    max_tokens: tokens,
-                    temperature: 0.6,
-                    system: prompt.system,
-                    messages: [{ role: 'user', content: prompt.user }],
-                }),
-            });
-            if (!res.ok) {
-                const text = await res.text().catch(() => '');
-                throw new Error(`Model API error ${res.status}: ${text.slice(0, 300)}`);
+            // Streamed SSE call: abort on a stalled stream, not on duration.
+            const controller = new AbortController();
+            let idleTimer = null;
+            const totalTimer = setTimeout(() => controller.abort(timeoutError('model stream exceeded ' + (STREAM_TOTAL_TIMEOUT_MS / 1000) + 's total')), STREAM_TOTAL_TIMEOUT_MS);
+            const bumpIdle = () => {
+                if (idleTimer) clearTimeout(idleTimer);
+                idleTimer = setTimeout(() => controller.abort(timeoutError('model stream stalled >' + (STREAM_IDLE_TIMEOUT_MS / 1000) + 's')), STREAM_IDLE_TIMEOUT_MS);
+            };
+            bumpIdle();
+            try {
+                const res = await fetch(PROVIDER.base + '/v1/messages', {
+                    method: 'POST',
+                    signal: controller.signal,
+                    headers: {
+                        'x-api-key': PROVIDER.key,
+                        'anthropic-version': '2023-06-01',
+                        'Content-Type': 'application/json',
+                        'Accept': 'text/event-stream',
+                    },
+                    body: JSON.stringify({
+                        model: PROVIDER.activeModel || PROVIDER.model,
+                        max_tokens: tokens,
+                        temperature: 0.6,
+                        system: prompt.system,
+                        messages: [{ role: 'user', content: prompt.user }],
+                        stream: true,
+                    }),
+                });
+                if (!res.ok) {
+                    const text = await res.text().catch(() => '');
+                    throw new Error(`Model API error ${res.status}: ${text.slice(0, 300)}`);
+                }
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buf = '', text = '', stopReason = null;
+                for (;;) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    bumpIdle();
+                    buf += decoder.decode(value, { stream: true });
+                    let nl;
+                    while ((nl = buf.indexOf('\n')) !== -1) {
+                        const line = buf.slice(0, nl).trim();
+                        buf = buf.slice(nl + 1);
+                        if (!line.startsWith('data:')) continue;
+                        const payload = line.slice(5).trim();
+                        if (!payload || payload === '[DONE]') continue;
+                        let ev;
+                        try { ev = JSON.parse(payload); } catch (e) { continue; }
+                        if (ev.type === 'content_block_delta' && ev.delta && typeof ev.delta.text === 'string') text += ev.delta.text;
+                        else if (ev.type === 'message_delta' && ev.delta && ev.delta.stop_reason) stopReason = ev.delta.stop_reason;
+                        else if (ev.type === 'error') throw new Error('Model stream error: ' + JSON.stringify(ev.error || ev).slice(0, 300));
+                    }
+                }
+                if (!text) throw new Error('Model returned no content');
+                return { content: text, finishReason: stopReason === 'max_tokens' ? 'length' : (stopReason || 'stop') };
+            } finally {
+                clearTimeout(totalTimer);
+                if (idleTimer) clearTimeout(idleTimer);
             }
-            const data = await res.json();
-            const text = (data.content || []).map(c => c.text || '').join('');
-            if (!text) throw new Error('Model returned no content');
-            return { content: text, finishReason: data.stop_reason === 'max_tokens' ? 'length' : data.stop_reason };
         }
         const res = await fetch(PROVIDER.base + '/chat/completions', {
             method: 'POST',
@@ -710,6 +755,13 @@ async function callModel(prompt, maxTokens) {
                 }
                 if (!isNetworkError(err)) throw err;
                 netAttempts++;
+                // Two straight timeouts on one provider — try the next one
+                // before giving up on the whole request.
+                if (netAttempts === 2 && advanceProvider()) {
+                    console.warn(`  Repeated network trouble (${describeError(err)}) — switching provider`);
+                    netAttempts = 0;
+                    continue;
+                }
                 if (netAttempts >= 3) break;
                 console.warn(`  Network error (attempt ${netAttempts}/3): ${describeError(err)}`);
                 await sleep(2000 * netAttempts);
