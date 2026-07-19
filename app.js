@@ -15043,22 +15043,19 @@
         function ttNodeUnlocked(node, tt) {
             return (node.prerequisites || []).every(function(pr) { return ttPrereqMet(pr, node, tt); });
         }
-        // Fusion prerequisites are provenance, not gates: a fusion opens when
-        // both its sources are ALIVE (being done), not mastered. Everything
-        // else needs the prerequisite genuinely mastered.
+        // Mastery is the ONLY key that opens a node — fusions included. A
+        // fusion with two sources stays locked until BOTH are genuinely
+        // mastered; merely doing an activity is never enough.
         function ttPrereqMet(pr, node, tt) {
-            var fusion = node.role === 'fusion';
             if (pr.type === 'node_mastered') {
                 var target = tt.nodes.find(function(n) { return n.id === pr.nodeId; });
                 if (!target) return true;                    // dangling ref — don't brick the branch
                 if (target.lifecycle === 'archived') return false;
-                if (fusion) return !!(target.resolvedAt || target.lifecycle === 'active');
                 return !!target.resolvedAt;
             }
             if (pr.type === 'activity_mastered') {
                 var e = ttFindActivity(pr.activityId);
                 if (!e) return false;
-                if (fusion) return true;                     // alive = enough for a fusion
                 return !!e.activity.techTreeMasteredAt;
             }
             return true;
