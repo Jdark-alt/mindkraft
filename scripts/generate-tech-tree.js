@@ -62,9 +62,10 @@ const PROVIDERS = [
         key: (process.env.ANTHROPIC_API_KEY || '').trim(),
         base: 'https://api.anthropic.com',
         // Sonnet by default: quest construction (nested groups, linked
-        // leaves) needs the stronger model; Haiku kept as the fallback.
+        // leaves) needs the stronger model. Keys without claude-sonnet-5
+        // access fall through Sonnet 4.5, then Haiku.
         model: process.env.TECH_TREE_MODEL || 'claude-sonnet-5',
-        fallbackModels: ['claude-haiku-4-5'],
+        fallbackModels: ['claude-sonnet-4-5', 'claude-haiku-4-5'],
         maxTokens: { generate: 9000, add_goal: 6000, expand: 3500, regenerate: 6000, revise: 2500, quest_patch: 2500 },
         keyHint: 'ANTHROPIC_API_KEY',
     },
@@ -593,7 +594,11 @@ function isNetworkError(err) {
         || (err.cause && err.cause.code));
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const FETCH_TIMEOUT_MS = 45000;
+// Full v3 generations (mandatory quest JSON, ~8-9k output tokens,
+// non-streaming) routinely run past a minute — 45s aborted every attempt and
+// left users stuck on the weaving screen. The Actions job cap is 10 minutes;
+// two minutes per model call is safe.
+const FETCH_TIMEOUT_MS = 120000;
 
 async function callModel(prompt, maxTokens) {
     if (!PROVIDER.key) {
