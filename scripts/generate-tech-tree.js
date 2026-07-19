@@ -61,12 +61,15 @@ const PROVIDERS = [
         kind: 'anthropic', // native Messages API, not OpenAI-compatible
         key: (process.env.ANTHROPIC_API_KEY || '').trim(),
         base: 'https://api.anthropic.com',
-        // Sonnet by default: quest construction (nested groups, linked
-        // leaves) needs the stronger model. Keys without claude-sonnet-5
-        // access fall through Sonnet 4.5, then Haiku.
-        model: process.env.TECH_TREE_MODEL || 'claude-sonnet-5',
-        fallbackModels: ['claude-sonnet-4-5', 'claude-haiku-4-5'],
-        maxTokens: { generate: 9000, add_goal: 6000, expand: 3500, regenerate: 6000, revise: 2500, quest_patch: 2500 },
+        // Haiku, strictly: Sonnet's precision never justified its ~3-5x
+        // token price for this feature, and quest reliability turned out to
+        // be a prompt/validator problem, not a model-strength problem.
+        // ANTHROPIC_MODEL pins this provider alone (TECH_TREE_MODEL applies
+        // to every provider, so an Anthropic id there would poison the
+        // others).
+        model: process.env.ANTHROPIC_MODEL || process.env.TECH_TREE_MODEL || 'claude-haiku-4-5',
+        fallbackModels: [],
+        maxTokens: { generate: 7000, add_goal: 4500, expand: 2000, regenerate: 4500, revise: 2000, quest_patch: 1500 },
         keyHint: 'ANTHROPIC_API_KEY',
     },
     {
@@ -124,7 +127,7 @@ const WILDCARD_MAX_XP = 8;               // §8: wildcards ≤8 XP
 const ACTIVITY_SNAPSHOT_CAP = 80;        // §6: raised from 60
 const VALID_FREQUENCIES = ['daily', 'weekly', 'biweekly', 'monthly', 'occasional'];
 
-const MAX_TOKENS = { generate: 8000, add_goal: 5500, expand: 3500, regenerate: 5500, revise: 2000, quest_patch: 2000 };
+const MAX_TOKENS = { generate: 7000, add_goal: 4500, expand: 2000, regenerate: 4500, revise: 1800, quest_patch: 1500 };
 function tokenBudget(type) {
     const t = type === 'add_line' ? 'add_goal' : type;
     return (PROVIDER.maxTokens && (PROVIDER.maxTokens[t] || PROVIDER.maxTokens.add_line)) || MAX_TOKENS[t] || 4000;
@@ -312,11 +315,20 @@ function canProcessRequest(req, techTree, userData) {
 
 // ── Prompt building ─────────────────────────────────────────────────────────
 
-function activitySnapshot(userData) {
-    return collectActivities(userData).slice(0, ACTIVITY_SNAPSHOT_CAP).map(({ act, dim }) => ({
+// lean=true drops descriptions/streaks — expansion calls run every few days
+// and only need names + mastery state, so the fat snapshot was pure input
+// cost there.
+function activitySnapshot(userData, lean) {
+    return collectActivities(userData).slice(0, ACTIVITY_SNAPSHOT_CAP).map(({ act, dim }) => (lean ? {
         activityId: act.id,
         name: act.name,
-        description: (act.description || '').slice(0, 120),
+        dimensionId: dim.id,
+        frequency: act.frequency,
+        mastered: !!act.techTreeMasteredAt,
+    } : {
+        activityId: act.id,
+        name: act.name,
+        description: (act.description || '').slice(0, 90),
         dimensionId: dim.id,
         frequency: act.frequency,
         completionCount: act.completionCount || (act.completionHistory || []).length || 0,
@@ -343,41 +355,22 @@ function typicalXP(userData) {
 }
 
 const PAYLOAD_RULES = `
-PAYLOAD — every node IS one of three things. Choose by what the thing IS, never
-by whether it already exists:
-- "activity": a durable practice that deserves its own streak and should
-  outlive any quest containing it. It is part of who the user becomes.
-  e.g. "Zone 2 run, 3x/week".
-- "quest": a composite — several things that only mean something together, or a
-  sequence with a shape. cadence.type "oneoff" when it finishes ("Ship video
-  #1"); "recurring" when it's a theme that seals and restarts forever ("Weekly
-  training block", resolveRule.cleanCycles ~4).
-- "challenge": a time-boxed pace over activities that already exist.
-
-QUEST GROUPS (must match the app's shape EXACTLY):
-  group = { "kind":"group", "name":str, "ordered":bool, "repeat":int>=1,
-            "children":[group|leaf] }   // ordered=true is a pipeline, false a checklist
-  leaf  = { "kind":"leaf", "type":"activity"|"task", "name":str,
-            "resetMode":"per-cycle"|"once", "requiredCount":int>=1,
-            "linkedActivityId":str|null,          // activity leaves that reuse a real activity
-            "spec":{ "baseXP":1..50, "frequency":str, "dimensionId":str } | null,
-            "_promotable":{ "baseXP":1..50, "frequency":str, "dimensionId":str } | null }
-  Decide each leaf the same way: scaffolding that dies with the quest -> "task";
-  a practice that should outlive it -> "activity" (give it a "spec"); a practice
-  the user ALREADY has -> "activity" with "linkedActivityId" set (no spec).
-  Build quest leaves PREFERENTIALLY from linkedActivityId references to the
-  anchors — quests that lean on what the user already does get finished.
-  Nobody wants a streak on "make a thumbnail"; nobody wants "sleep window"
-  trapped inside one quest.
-  HARD CAP: at most ${MAX_NEW_ACTIVITIES_PER_QUEST} NEW activities per quest
-  (activity leaves with a spec and no linkedActivityId). No cap on tasks.
-  Attach "_promotable" to any TASK leaf that could sensibly become a real
-  activity later (it powers a "Make activity" button; it is dropped on accept).
-
-For an "activity" node, payload is:
-  { "type":"activity", "spec":{ "name":str,"description":str,"baseXP":1..50,
-    "frequency":"daily|weekly|biweekly|monthly|occasional","dimensionId":str },
-    "mastery":{ "target":int, "windowDays":int|null } }`;
+PAYLOAD SHAPES (copy these EXACTLY):
+activity — a durable practice with its own streak:
+ {"type":"activity","spec":{"name":str,"description":str,"baseXP":1..50,
+  "frequency":"daily|weekly|biweekly|monthly|occasional","dimensionId":str},
+  "mastery":{"target":int,"windowDays":int|null}}
+quest — a few steps that only mean something together. A simple flat
+checklist is a GOOD quest:
+ {"type":"quest","spec":{"name":str,"emoji":str,"description":str,
+  "cadence":{"type":"oneoff"|"recurring"},
+  "groups":[{"kind":"group","name":str,"ordered":bool,"repeat":1,"children":[LEAF,...]}]},
+  "resolveRule":{"cleanCycles":4}}      // resolveRule ONLY when recurring
+LEAF, pick per step:
+ reuses a real activity: {"kind":"leaf","type":"activity","linkedActivityId":"<real activityId>","resetMode":"per-cycle","requiredCount":1}
+ one-off step:           {"kind":"leaf","type":"task","name":str,"resetMode":"once","requiredCount":1}
+ new practice (max ${MAX_NEW_ACTIVITIES_PER_QUEST}/quest): {"kind":"leaf","type":"activity","spec":{"name":str,"baseXP":1..50,"frequency":str,"dimensionId":str},"resetMode":"per-cycle","requiredCount":1}
+Prefer linked leaves (what the user already does) and task leaves.`;
 
 function buildGeneratePrompt(userData, opts) {
     const techTree = userData.techTree;
@@ -391,124 +384,75 @@ function buildGeneratePrompt(userData, opts) {
     const userNodes = (techTree.nodes || []).filter(n => n.source === 'user').map(n => n.title);
     const resolvedTitles = (techTree.nodes || []).filter(n => n.resolvedAt).map(n => n.title);
 
-    const system = `You are the Web generation engine for Mindkraft, a life-planning app. The map
-is an ACTIVITY-CENTRIC WEB: the user's REAL activities are the foundation
-(anchors), AI suggestions grow OUT OF those anchors, and goals are coloured
-threads running through the connections — not containers. Serendipity is the
-product: cross-dimensional fusions and a wildcard or two the user's goals
-would never surface.
+    const system = `You generate the Web for Mindkraft, a life-gamification app: the user's REAL
+activities are anchors, and a TIERED ROADMAP of new activities grows out of
+them toward each goal. Output ONLY one valid JSON object — no prose, no
+markdown fences. Be TERSE everywhere: "description" is one plain sentence
+(<=90 chars), never tips or coaching talk; set "whyNow" to null unless one
+short clause genuinely earns its place.
 
-Output ONLY one valid JSON object — no prose, no markdown fences.
+1. GOALS — one "goals" entry per DISTINCT goal (split an input entry only
+   when it names separate life domains; max ${MAX_GOALS} total).
+   "sharpened": one concrete, defensible reading (a target, not a
+   restatement). "shortName": <=14 chars, unique. "fromGoalId": the input
+   goalId it derives from, or null. "kind": "destination" if any outcome is
+   stated, else "rhythm" (then "kindReason" is required; else null).
 
-STEP 1 — READ THE GOALS. The user's entries may each pack SEVERAL separate
-ambitions. Emit one "goals" object per DISTINCT goal:
-  - SPLIT an entry into multiple goals when it names genuinely SEPARATE life
-    domains ("Get fit, cook at home, sleep on a schedule" is THREE goals).
-    Do NOT split a single goal that is a routine PLUS its outcome ("get
-    healthy" = one goal).
-  - "sharpened": a concrete, DEFENSIBLE reading. Turn "get fit" into "Lose 8kg
-    and hold it by December", not a restatement. "shortName": <=14 chars,
-    UNIQUE across goals. "fromGoalId": the input goalId this was derived from
-    (lineage), or null.
-  - "kind": "destination" if there is a stated outcome/number/event, OR the
-    goal is both routine and outcome. "rhythm" ONLY when there is genuinely no
-    outcome at all. "kindReason": REQUIRED non-null when kind is "rhythm";
-    else null.
-  - Cap: at most ${MAX_GOALS} goals total. Keep the most distinct.
+2. ANCHORS — per goal, the 2-5 input activityIds that genuinely serve it:
+   {"activityId":str,"whyNow":null}. Only real ids from the input.
 
-STEP 2 — CHOOSE ANCHORS. From activeActivities, pick the 2-5 per goal that
-GENUINELY serve it. Emit them in that goal's "anchors" array:
-  { "activityId": str, "whyNow": str }
-An activity may anchor multiple goals. Do NOT invent activities here; only
-reference real activityIds from the input. Anchors are the roots of the web —
-not every user activity becomes one, only the ones woven in.
+3. ROADMAP (the core of the response) — per goal, map the WHOLE journey to
+   the goal as TIERS of new activities, 4-9 nodes: tier 1 builds directly
+   on the anchors, each later tier is the next real step after the one
+   before, and the final tier is the goal within reach. Be thorough in
+   COVERAGE (every major step appears, correctly sequenced), shallow in
+   DETAIL (small nodes, terse text). EVERY roadmap node carries >=1
+   prerequisite — that is what draws the tree:
+     tier 1:      [{"type":"activity_mastered","activityId":"<anchor id>"}]
+     later tiers: [{"type":"node_mastered","nodeTitle":"<EXACT title of a
+                   node in YOUR output for this goal>"}]
+   role: "suggestion" (or "upgrade" when it deepens one anchor directly).
+   The user sees the whole locked chain from day one and unlocks it by
+   mastering tier after tier — sequence it honestly.
 
-STEP 3 — GROW THE WEB. Per goal, 4-7 new nodes total in its "nodes" array,
-across these roles:
-  • "quest" (1-2 — NON-NEGOTIABLE: a goal with ZERO quest nodes is an
-    INVALID response). A quest is a routine or project the user drives,
-    payload type "quest". Build it the way a coach would: break the outcome
-    into small steps, then sort each step honestly — a step the user ALREADY
-    does becomes a linked leaf (linkedActivityId on an anchor); a step that
-    deserves its own streak for THIS user becomes a NEW activity leaf
-    (respect the cap); one-off scaffolding stays a task. Example: a user who
-    already scripts, records and edits videos should get a recurring "Ship
-    one video" quest whose cycle links those three activities plus a
-    "publish it" task — or a repeat:12 group for a 12-piece season. Use the
-    shapes that exist: ordered groups (pipelines), repeat counts,
-    requiredCounts. This is the highest-effort part of the response — spend
-    your tokens here.
-  • "upgrade" (1-3): take an anchor one notch higher — same time-slot, deeper
-    practice — or a worthy alternative to run alongside it. prerequisites:
-    [{"type":"activity_mastered","activityId":"<that anchor's id>"}]. Never a
-    rebrand; new CONTENT ("a more consistent version of X" is forbidden).
-  • "deeper" (1-2): locked behind an upgrade or quest — visible desire.
-    prerequisites: [{"type":"node_mastered","nodeTitle":"<exact title of
-    another node in YOUR output for this goal>"}].
-Each node: { "role", "title", "description" (<=240), "whyNow" (one sharp
-sentence: why this, why now), "dimensionId", "prerequisites", "payload" }.
-Get more specific further out: a deep node reads like a coach's prescription.
-Never pad a goal to hit a number; if an activity is too ambiguous, omit it.
+4. QUESTS — 0-2 in the WHOLE response, not per goal. Only where a few steps
+   genuinely belong together; a simple checklist whose leaves link real
+   anchor activityIds is ideal (payload type "quest" below, in the most
+   relevant goal's "nodes"). Skip freely if none fits.
 
-STEP 4 — FUSIONS (2-4 per generation, the whole point). Top-level "fusions"
-array. Find PAIRS of anchors in DIFFERENT dimensions whose combination
-unlocks something neither could alone. THE BAR: a fusion must be a NATURAL,
-recognisable combination — something an average person hears and nods at
-("of course those go together"): a walking phone call, cooking for friends,
-a book club, training with a partner. If explaining the connection takes
-more than one plain sentence, it is a stretch — drop it. Where the
-combination genuinely lives in a third dimension too, say so via goal/
-dimension placement (a social workout IS health + social). Respect the
-user's own style as their activities show it — a yoga person gets
-yoga-shaped fusions, not a run club; never default to gym/running framing.
-Each: { "title", "description", "whyNow", "dimensionId",
-"sourceActivityIds": [id, id], "payload" }. If no honest, natural fusion
-exists, emit fewer — NEVER force one.
+5. FUSIONS — top-level "fusions": 0-2. A pair of anchors from DIFFERENT
+   dimensions whose combination is so natural anyone would nod (a walking
+   phone call, cooking for friends). If the connection needs explaining,
+   drop it — never force one. {"title","description","whyNow":null,
+   "dimensionId","sourceActivityIds":[id,id],"payload"}. A fusion only
+   unlocks once BOTH sources are mastered.
 
-STEP 5 — WILDCARDS (exactly 1-2). Top-level "wildcards" array. No goal, no
-prerequisites, always available, tiny load (<=2 actions/week, baseXP <=${WILDCARD_MAX_XP}),
-universally positive practices the user's goals would never surface. Not
-motivational fluff — concrete acts. { "title", "description", "whyNow",
-"dimensionId", "payload" (activity) }.
+6. WILDCARD — top-level "wildcards": exactly 1. No goal, no prerequisites,
+   tiny (<=2 actions/week, baseXP <=${WILDCARD_MAX_XP}), a universally positive concrete
+   practice their goals would never surface.
 
-LOAD RULE: the load budget applies ONLY to nodes born available (anchors cost
-0 — they're already being done; locked tiers are exempt: visibility is free,
-commitment is gated). The user is at ${load} actions/week; available-at-birth
-additions must not exceed +${LOAD_BUDGET_HEADROOM}/week.
-
-XP RULE: match this user's own scale. Their activities average ${xp.average}
-XP (typical range ${xp.p25}-${xp.p75}). Centre suggested baseXP near that
-average — an 8-XP suggestion feels insulting to a user whose average is 20,
-and a 40-XP one feels inflated to a user whose average is 6. Wildcards stay
-small regardless (<=${WILDCARD_MAX_XP} XP).
-
-MASTERY RULE: mastery must be reachable inside 60-90 days at the stated
-frequency — NEVER longer. Daily practices may use up to ~45-day windows with
-higher counts (reps come fast); weekly ≈ 6 in 90 days; biweekly ≈ 3 in 90;
-monthly ≈ 2 in 90. Never set a threshold that makes the user wait half a
-year to clear one node and unlock the tier behind it.
-
-Honour "rejections" (things the user turned down, with their roles — learn
-the pattern). Do not re-suggest resolved or user-added titles.
+RULES: baseXP near the user's average (${xp.average}, typical ${xp.p25}-${xp.p75}).
+Mastery reachable in 60-90 days at the stated frequency (daily: up to
+~45-day window; weekly ~6/90d; biweekly ~3/90d; monthly ~2/90d) — never
+longer. Available-at-birth load may add at most +${LOAD_BUDGET_HEADROOM}/week
+(locked tiers are exempt; the user is at ${load}/week). Do not re-suggest
+anything in rejections, userAddedNodeTitles or alreadyResolved.
 ${PAYLOAD_RULES}
 
-VISION: also return "vision" — 1-2 sentences, second person, vivid and
-specific to their goals. No motivation-poster fluff.
+Also "vision": 1-2 second-person sentences specific to their goals.
 
-OUTPUT SCHEMA (a single JSON object, nothing else):
+OUTPUT (one JSON object, nothing else):
 { "vision": str,
-  "goals": [{
-     "fromGoalId": str|null, "sharpened": str, "shortName": str,
+  "goals": [{ "fromGoalId": str|null, "sharpened": str, "shortName": str,
      "kind": "destination"|"rhythm", "kindReason": str|null,
-     "anchors": [{ "activityId": str, "whyNow": str }],
-     "nodes": [{ "role":"upgrade"|"quest"|"deeper", "title": str,
-                 "description": str, "whyNow": str, "dimensionId": str,
+     "anchors": [{ "activityId": str, "whyNow": null }],
+     "nodes": [{ "role": str, "title": str, "description": str,
+                 "whyNow": null, "dimensionId": str,
                  "prerequisites": [{"type":"activity_mastered","activityId":str}|{"type":"node_mastered","nodeTitle":str}],
-                 "payload": <activity|quest payload> }]
-  }],
-  "fusions": [{ "title": str, "description": str, "whyNow": str, "dimensionId": str,
-                "sourceActivityIds": [str, str], "payload": <activity|quest payload> }],
-  "wildcards": [{ "title": str, "description": str, "whyNow": str, "dimensionId": str,
+                 "payload": <activity|quest payload> }] }],
+  "fusions": [{ "title": str, "description": str, "whyNow": null, "dimensionId": str,
+                "sourceActivityIds": [str, str], "payload": <activity payload> }],
+  "wildcards": [{ "title": str, "description": str, "whyNow": null, "dimensionId": str,
                   "payload": <activity payload> }] }`;
 
     const input = {
@@ -522,15 +466,12 @@ OUTPUT SCHEMA (a single JSON object, nothing else):
         userAddedNodeTitles: userNodes,
         alreadyResolved: resolvedTitles,
     };
-    if (opts.questReminder) {
-        input._questReminder = 'Your previous response contained NO quest nodes. That is invalid. Every goal MUST include at least one payload-type "quest" node built per STEP 3 — link the user\'s existing activities as leaves wherever they fit.';
-    }
     if (opts.mode === 'add_goal') {
         input._mode = 'ADD ONE GOAL: weave nodes for the single goal above into the existing web; do not touch other goals. Fusions may pair its anchors with anchors of existing goals (listed in _existingAnchors). Emit 0-1 wildcards only if the web has none.';
         input._existingAnchors = opts.existingAnchors || [];
     }
     if (opts.mode === 'regenerate') {
-        input._mode = 'REWEAVE this goal\'s thread: replace its unclaimed suggestions with a fresh set (same contract: anchors, upgrades, mandatory quest, deeper tier). Build on alreadyResolved; honour rejections. Do not emit wildcards.';
+        input._mode = 'REWEAVE this goal\'s thread: replace its unclaimed suggestions with a fresh tiered roadmap (same contract). Build on alreadyResolved; honour rejections. Do not emit wildcards.';
         input._resolvedOnGoal = opts.resolvedOnGoal || [];
     }
     if (opts.mode === 'revise') {
@@ -547,24 +488,25 @@ OUTPUT SCHEMA (a single JSON object, nothing else):
 function buildExpandPrompt(userData, ctx) {
     const load = weeklyLoad(userData);
     const { dimensionList } = activePathsAndDims(userData);
-    const system = `You extend a user's Web after they MASTERED something. Emit 2-3 nodes that
-this mastery now makes possible — the next notch, not a restart.
+    const system = `You extend a user's Web after they MASTERED something. Emit 1-3 SMALL
+complementary nodes this mastery now makes possible — support work, the
+next notch, or a natural pairing with another REAL activity from the input
+(including ones not yet on the map, if they genuinely fit). Not a restart,
+no filler; emit fewer over forcing one. Be TERSE: "description" one plain
+sentence (<=90 chars), no tips; "whyNow": null.
 
-Allowed: "upgrade" nodes prerequisite on the mastered node; NEW FUSIONS that
-pair the mastered thing with a real activity in a DIFFERENT dimension
-(role "fusion", prerequisites on both); a "quest" if several things genuinely
-belong together. Prerequisites may reference the mastered node by
-{"type":"node_mastered","nodeTitle":"${'${RESOLVED}'}"} — use the EXACT title given
-in input.resolvedNode.title — or any real activity via
-{"type":"activity_mastered","activityId":...}. Never invent activityIds.
+EVERY node carries >=1 prerequisite: the mastered node via
+{"type":"node_mastered","nodeTitle":"<EXACT input.resolvedNode.title>"} or a
+real activity via {"type":"activity_mastered","activityId":...}. Never
+invent activityIds. A "fusion" node must carry BOTH sources as
+prerequisites — it unlocks only when both are mastered.
 
-Respect the load budget (user is at ${load}/week; do not push past
-+${LOAD_BUDGET_HEADROOM}). Do not re-suggest anything in rejections or
-existingNodeTitles. Every node needs "whyNow" — one sharp sentence.
+Do not re-suggest anything in rejections or existingNodeTitles. Added load
+stays under +${LOAD_BUDGET_HEADROOM}/week (user is at ${load}/week).
 ${PAYLOAD_RULES}
 
 Output ONLY: { "nodes":[{ "role":"upgrade"|"fusion"|"quest"|"suggestion",
-  "title":str, "description":str, "whyNow":str, "dimensionId":str,
+  "title":str, "description":str, "whyNow":null, "dimensionId":str,
   "prerequisites":[...], "payload": <payload> }] }`;
     const input = {
         resolvedNode: ctx.resolvedNode,
@@ -828,12 +770,28 @@ function validatePayload(raw, ctx) {
     }
 
     if (raw.type === 'quest') {
-        const s = raw.spec || {};
+        // Lenient on the envelope: models (Haiku especially) drop the "spec"
+        // wrapper or put leaves where groups belong. Repair instead of
+        // silently discarding the whole quest — that discard was why quests
+        // "never generated".
+        const s = raw.spec || raw;
         const counter = { newActs: 0 };
-        const groups = (Array.isArray(s.groups) ? s.groups : [])
-            .map(g => validateGroup(g, ctx, counter)).filter(Boolean);
+        const rawGroups = Array.isArray(s.groups) ? s.groups
+            : (Array.isArray(raw.groups) ? raw.groups : []);
+        const looksLeaf = x => x && typeof x === 'object' && x.kind !== 'group'
+            && (x.kind === 'leaf' || x.type || x.linkedActivityId);
+        const groupsIn = [], looseLeaves = [];
+        rawGroups.forEach(x => {
+            if (x && typeof x === 'object' && x.kind === 'group') groupsIn.push(x);
+            else if (looksLeaf(x)) looseLeaves.push(x);
+        });
+        if (looseLeaves.length) {
+            groupsIn.push({ kind: 'group', name: 'Steps', ordered: false, repeat: 1, children: looseLeaves });
+        }
+        const groups = groupsIn.map(g => validateGroup(g, ctx, counter)).filter(Boolean);
         if (!groups.length) return null;                    // every quest needs ≥1 valid group
-        const cadType = (s.cadence && s.cadence.type === 'recurring') ? 'recurring' : 'oneoff';
+        const cadence = s.cadence || raw.cadence;
+        const cadType = (cadence && cadence.type === 'recurring') ? 'recurring' : 'oneoff';
         const payload = {
             type: 'quest',
             projectId: null,
@@ -846,7 +804,7 @@ function validatePayload(raw, ctx) {
             },
         };
         if (cadType === 'recurring') {
-            payload.resolveRule = { cleanCycles: Math.min(12, Math.max(1, parseInt((raw.resolveRule || {}).cleanCycles, 10) || 4)) };
+            payload.resolveRule = { cleanCycles: Math.min(12, Math.max(1, parseInt((raw.resolveRule || s.resolveRule || {}).cleanCycles, 10) || 4)) };
         }
         return payload;
     }
@@ -1005,8 +963,9 @@ function reaches(fromId, targetId, byId, guard) {
 }
 
 // Lifecycle at birth (§6): anchors -> active (resolved if rolling window
-// already met); nodes with met prereqs, fusions with live sources, wildcards
-// -> available; deeper tiers -> locked.
+// already met); nodes with met prereqs and wildcards -> available; everything
+// else -> locked. Mastery is the ONLY key — fusions included: a fusion with
+// any unmastered source is born locked, exactly like a tier node.
 function lifecycleAtBirth(node, actById, resolvedByAnchor) {
     if (node.role === 'anchor') return 'active';
     if (node.role === 'wildcard') return 'available';
@@ -1014,12 +973,10 @@ function lifecycleAtBirth(node, actById, resolvedByAnchor) {
         if (pr.type === 'activity_mastered') {
             const act = actById[pr.activityId];
             if (!act) return false;
-            if (node.role === 'fusion') return true;           // alive is enough for fusion
             return !!act.techTreeMasteredAt || rollingWindowMet(act);
         }
         if (pr.type === 'node_mastered') {
             // Within a fresh response only anchors can already be resolved.
-            if (node.role === 'fusion') return true;
             return !!resolvedByAnchor[pr.nodeId];
         }
         return true;
@@ -1156,7 +1113,7 @@ function materializeWeb(parsed, userData, existingGoals, opts) {
     // Fusions (STEP 4): sources must be real activities in DIFFERENT
     // dimensions. goalIds = union of the source anchors' goals. Never forced —
     // dishonest ones are dropped.
-    (parsed.fusions || []).slice(0, 4).forEach(fr => {
+    (parsed.fusions || []).slice(0, 2).forEach(fr => {
         if (!fr || typeof fr !== 'object') return;
         const srcIds = (Array.isArray(fr.sourceActivityIds) ? fr.sourceActivityIds : []).filter(id => actById[id]);
         const srcDims = Array.from(new Set(srcIds.map(id => actDim[id])));
@@ -1308,20 +1265,12 @@ async function processGenerateFamily(docRef, userData, req, type) {
     // Nested materialization: each goal object carries its own anchors +
     // nodes, so nothing can be orphaned by a key mismatch. GENERATE may split
     // one entry into several distinct goals; scoped modes reuse in order.
-    let parsed = parseModelJson(await callModel(buildGeneratePrompt(userData, opts), tokenBudget(type)));
-    let built = materializeWeb(parsed, userData, scopedGoals, mwOpts);
-    // Quests are non-negotiable (STEP 3). Models love to skip the heavy JSON;
-    // one retry with an explicit reminder catches most of it.
-    const wantsQuest = type === 'generate' || type === 'add_goal' || type === 'regenerate';
-    if (wantsQuest && built.nodes.length && !built.nodes.some(n => n.payload.type === 'quest')) {
-        console.warn('  Response has zero quest nodes — retrying once with quest reminder');
-        opts.questReminder = true;
-        try {
-            const parsed2 = parseModelJson(await callModel(buildGeneratePrompt(userData, opts), tokenBudget(type)));
-            const built2 = materializeWeb(parsed2, userData, scopedGoals, mwOpts);
-            if (built2.nodes.some(n => n.payload.type === 'quest')) { parsed = parsed2; built = built2; }
-        } catch (e) { console.warn('  quest retry failed:', e.message); }
-    }
+    // Quests are optional now (0-2 per response) — the old "mandatory quest"
+    // full retry doubled the cost of a generation and rarely helped; quest
+    // reliability comes from the explicit payload envelope in the prompt and
+    // the lenient quest validator instead.
+    const parsed = parseModelJson(await callModel(buildGeneratePrompt(userData, opts), tokenBudget(type)));
+    const built = materializeWeb(parsed, userData, scopedGoals, mwOpts);
     let newGoals = built.goals;
     let newNodes = built.nodes;
     if (!newGoals.length && (type === 'generate' || type === 'add_goal')) {
@@ -1489,7 +1438,7 @@ async function processExpand(docRef, userData, req) {
                     : null,
             },
             goals: goalNames,
-            activities: activitySnapshot(userData),
+            activities: activitySnapshot(userData, true),
             existingTitles,
             rejections: rejectionStrings(techTree),
         };
@@ -1659,7 +1608,7 @@ Output ONLY: { "wildcards": [{ "title":str, "description":str, "whyNow":str,
   "dimensionId":str, "payload": <activity payload> }] }`;
     const input = {
         dimensions: dimensionList,
-        activeActivities: activitySnapshot(userData).map(a => a.name),
+        activeActivities: activitySnapshot(userData, true).map(a => a.name),
         existingNodeTitles: existingTitles,
         rejections: rejectionStrings(techTree),
     };
@@ -1841,6 +1790,7 @@ async function main() {
         }
     }
     console.log(`Done. Processed: ${processed}, failed: ${failed}, scanned: ${snapshot.size}`);
+    return { processed, failed };
 }
 
 // Exported for unit tests; only run the cron when invoked directly.
@@ -1851,7 +1801,11 @@ module.exports = {
 };
 
 if (require.main === module) {
+    // A run that had work and completed NONE of it must show up red on the
+    // Actions dashboard — exiting 0 there hid a full outage behind green
+    // checkmarks. Partial failures stay green: the failed request's attempts
+    // counter retries it on the next cron run.
     main()
-        .then(() => process.exit(0))
+        .then(({ processed, failed }) => process.exit(failed > 0 && processed === 0 ? 1 : 0))
         .catch(err => { console.error('Fatal error:', err); process.exit(1); });
 }

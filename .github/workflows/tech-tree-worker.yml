@@ -27,6 +27,10 @@ jobs:
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           ANTHROPIC_API_KEY:        ${{ secrets.ANTHROPIC_API_KEY }}
+          # Strictly Haiku: Sonnet's precision never justified its token
+          # price for this feature, and generation volume grows with every
+          # node-mastery expansion. Keep this pinned.
+          ANTHROPIC_MODEL:          claude-haiku-4-5
           GEMINI_API_KEY:           ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY:             ${{ secrets.GROQ_API_KEY }}
           NVIDIA_API_KEY:           ${{ secrets.NVIDIA_API_KEY }}
