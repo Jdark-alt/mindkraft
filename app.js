@@ -2,6 +2,7 @@
         import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js';
         import { getFirestore, doc, getDoc, getDocFromCache, setDoc, addDoc, updateDoc, deleteDoc, collection, query, where, getDocs, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
         import { getAnalytics, logEvent } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-analytics.js';
+        import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-functions.js';
 
         // Firebase Configuration
         const firebaseConfig = {
@@ -19,6 +20,10 @@
         const auth = getAuth(app);
         const db = getFirestore(app);
         const analytics = getAnalytics(app);
+        // Region must match the one the reminder functions deploy to
+        // (functions/index.js REGION). Mismatch here surfaces as a CORS error
+        // on the callable, which is a confusing way to learn about it.
+        const functions = getFunctions(app, 'us-central1');
 
         // ── Analytics ─────────────────────────────────────────────────────
         // Central wrapper — add PostHog or other tools here later, one line each
@@ -988,6 +993,8 @@
                     handleFriendDeepLink();
                     // Handle deep-link group join (?joinGroup=CODE in URL)
                     handleGroupDeepLink();
+                    // Handle notification tap on a cold start (?reminder=<activityId>)
+                    window.mkHandleReminderDeepLink();
                     // Init the restore backup button visibility (async — non-blocking)
                     updateRestoreBackupBtn().catch(e => {});
                     if (!window.userData.onboardingComplete &&
@@ -1118,6 +1125,10 @@
                 }
                 document.documentElement.setAttribute('data-theme-mode', _mode === 'light' ? 'light' : 'dark');
             } catch (e) { /* non-fatal, loadTheme will set it later */ }
+
+            // Opportunistic timezone backfill (spec §4.1). Non-blocking and
+            // non-fatal — reminders fall back to a default until this lands.
+            try { syncUserTimezone(); } catch (e) { console.warn('Timezone sync skipped:', e); }
         }
 
         // Update Dashboard
@@ -12945,13 +12956,27 @@
                     });
                 }
                 var subJson = sub.toJSON();
-                // Store UTC offset so the server can convert local time → UTC for scheduling
-                window.userData.pushSubscription = {
+                var prev = (window.userData && window.userData.pushSubscription) || {};
+                // tzOffset is retained only because the old GitHub Actions cron
+                // still reads it. The Cloud Functions path uses the IANA zone on
+                // users/{uid}.timezone instead — a fixed offset can't follow DST.
+                var payload = {
                     endpoint: subJson.endpoint,
                     keys: subJson.keys,
-                    reminderTime: localTime,
                     tzOffset: new Date().getTimezoneOffset() // minutes behind UTC
                 };
+                // Only carry reminderTime when there really is a general reminder.
+                // The old cron treats the presence of this field as "send this
+                // user a daily nudge", so writing a placeholder would sign people
+                // up for a reminder they never asked for — which is exactly what
+                // would happen when subscribing purely to enable activity
+                // reminders (localTime is null on that path).
+                if (localTime) {
+                    payload.reminderTime = localTime;
+                } else if (prev.reminderTime) {
+                    payload.reminderTime = prev.reminderTime;
+                }
+                window.userData.pushSubscription = payload;
                 await saveUserData();
                 return true;
             } catch (err) {
@@ -13031,6 +13056,18 @@
             // Try push first (works even when browser is closed/in background)
             var pushOk = await subscribeToPush(time);
 
+            // Mirror into the reminders subcollection, which is what the Cloud
+            // Function reads. The old pushSubscription.reminderTime field is
+            // still written above and left in place as a rollback net for one
+            // release cycle (spec §3.3) — until cutover it's the field that
+            // actually drives delivery.
+            try {
+                await writeGeneralReminder(time);
+            } catch (err) {
+                // Non-fatal: the legacy path above still delivers this reminder.
+                console.warn('Could not write general reminder doc:', err);
+            }
+
             // Always run the in-tab fallback too (belt and suspenders)
             scheduleReminder();
 
@@ -13048,7 +13085,26 @@
             localStorage.removeItem('reminderTime');
             localStorage.removeItem('reminderLastSent');
             if (_reminderInterval) { clearInterval(_reminderInterval); _reminderInterval = null; }
-            await unsubscribeFromPush();
+            // Deactivate rather than delete, so the time is remembered if the
+            // user turns it back on, and so activity reminders (which share the
+            // push subscription) aren't affected by the unsubscribe below.
+            try { await deactivateGeneralReminder(); } catch (err) { console.warn('Could not deactivate general reminder:', err); }
+
+            // Only tear the push subscription down if nothing else needs it.
+            // Activity reminders are delivered over the same subscription, so
+            // unsubscribing here would silently kill them too.
+            var hasActivityReminders = (window._activityReminders || []).some(function(r) { return r.active; });
+            if (hasActivityReminders) {
+                // Drop just the field the old cron keys off, keeping delivery alive.
+                try {
+                    if (window.userData && window.userData.pushSubscription) {
+                        delete window.userData.pushSubscription.reminderTime;
+                        await saveUserData();
+                    }
+                } catch (err) { console.warn('Could not clear legacy reminder time:', err); }
+            } else {
+                await unsubscribeFromPush();
+            }
             var el = document.getElementById('reminderTime');
             if (el) el.value = '';
             var statusEl = document.getElementById('reminderPermStatus');
@@ -13063,6 +13119,22 @@
             var isOpen = body.classList.toggle('open');
             if (btn) btn.classList.toggle('open', isOpen);
             if (isOpen) {
+                // Pull the reminder docs and paint the activity list. Async, so
+                // the section opens immediately and fills in a beat later.
+                refreshReminderState().then(function() {
+                    // Prefer the stored doc over localStorage — it survives a
+                    // device change, which localStorage does not.
+                    var general = window._generalReminderDoc;
+                    var timeInput = document.getElementById('reminderTime');
+                    if (general && general.localTime && timeInput && !timeInput.value) {
+                        timeInput.value = general.localTime;
+                    }
+                    renderActivityReminders();
+                }).catch(function(err) {
+                    console.warn('Could not load reminders:', err);
+                    renderActivityReminders();
+                });
+
                 // Populate saved time
                 var saved = localStorage.getItem('reminderTime');
                 var timeEl = document.getElementById('reminderTime');
@@ -13085,6 +13157,501 @@
                         : "You'll be asked to allow notifications when you save.";
                 }
             }
+        };
+
+        // ═══════════════════════════════════════════════════════════════════
+        // REMINDERS v2 — Firestore-backed, delivered by Cloud Functions
+        // ═══════════════════════════════════════════════════════════════════
+        // Reminders live at users/{uid}/reminders/{reminderId}:
+        //   "general"  — singleton daily nudge, fixed doc id
+        //   <auto-id>  — one per activity reminder, max 5 active
+        //
+        // A Cloud Function queries them by nextSendAt every minute and sends
+        // the Web Push. See functions/index.js and DEPLOY.md. This replaces
+        // the GitHub Actions cron, which had no execution-time guarantee.
+        //
+        // Note the two documents never live in the same place: reminders are a
+        // SUBCOLLECTION, not fields on the user doc. That's deliberate —
+        // saveUserData() does a full setDoc() overwrite of users/{uid}, so
+        // anything the server wrote at the top level would be clobbered on the
+        // client's next save. Subcollection docs are immune to that.
+
+        var MAX_ACTIVITY_REMINDERS = 5;
+
+        // Cutover switch (spec §9.1). While false, the general reminder doc is
+        // written and kept up to date but stays inactive, because the GitHub
+        // Actions cron is still sending general reminders off
+        // pushSubscription.reminderTime — activating both would double-send.
+        // Flip to true at cutover; see DEPLOY.md step 7.
+        //
+        // Activity reminders are NOT gated by this. The old system knows
+        // nothing about them, so there is no double-send to avoid and they
+        // work as soon as the functions are deployed.
+        var REMINDERS_V2_GENERAL_ACTIVE = false;
+
+        window._activityReminders = [];
+        window._generalReminderDoc = null;
+        var _arEditingId = null;
+        var _arSelectedActivityId = null;
+
+        var REMINDER_TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+        // ── Timezone ──────────────────────────────────────────────────────
+        // The old system stored only a numeric UTC offset, which cannot follow
+        // DST. We capture the real IANA zone instead.
+        function mkDetectTimezone() {
+            try {
+                var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                if (typeof tz !== 'string' || !tz) return null;
+                // Guard against runtimes that hand back an offset string —
+                // the server rejects those, so don't bother sending them.
+                return (tz === 'UTC' || tz.indexOf('/') !== -1) ? tz : null;
+            } catch (e) { return null; }
+        }
+
+        // Opportunistic backfill on load (spec §4.1). Cheap, non-blocking, and
+        // self-healing: a user who travels picks up the new zone on next open.
+        async function syncUserTimezone() {
+            var tz = mkDetectTimezone();
+            if (!tz || !window.currentUser || !window.userData) return;
+            if (window.userData.timezone === tz) return;
+
+            var isChange = !!window.userData.timezone;
+            window.userData.timezone = tz;
+            saveUserData().catch(function() {});
+
+            // Propagate to existing reminders so nextSendAt gets recomputed.
+            //
+            // Spec §4.3 asked for a Firestore onUpdate trigger on users/{uid}
+            // to do this server-side. Deliberate deviation: that document holds
+            // the user's entire app state and is rewritten on nearly every
+            // interaction, so a trigger there would fire constantly and ship
+            // the whole document to a function each time — for a field that
+            // changes maybe twice a year. The client is what detects the change
+            // anyway, and rules let it write its own reminders, so it does it
+            // here. onReminderWrite then recomputes nextSendAt as normal.
+            if (!isChange) return;
+            try {
+                var reminders = await loadRemindersFromFirestore();
+                for (var i = 0; i < reminders.length; i++) {
+                    if (reminders[i].timezone === tz) continue;
+                    await updateDoc(reminderDocRef(reminders[i].id), { timezone: tz, updatedAt: new Date() });
+                }
+                if (reminders.length) console.log('Timezone changed to ' + tz + ' — reminders rescheduled');
+            } catch (e) {
+                console.warn('Could not propagate timezone to reminders:', e);
+            }
+        }
+
+        // ── Firestore access ──────────────────────────────────────────────
+        function remindersColRef() {
+            if (!window.currentUser) return null;
+            return collection(db, 'users', window.currentUser.uid, 'reminders');
+        }
+
+        function reminderDocRef(reminderId) {
+            if (!window.currentUser) return null;
+            return doc(db, 'users', window.currentUser.uid, 'reminders', reminderId);
+        }
+
+        async function loadRemindersFromFirestore() {
+            var col = remindersColRef();
+            if (!col) return [];
+            var snap = await getDocs(col);
+            var out = [];
+            snap.forEach(function(d) { out.push(Object.assign({ id: d.id }, d.data())); });
+            return out;
+        }
+
+        async function refreshReminderState() {
+            var all = await loadRemindersFromFirestore();
+            window._generalReminderDoc = all.filter(function(r) { return r.id === 'general'; })[0] || null;
+            window._activityReminders = all
+                .filter(function(r) { return r.type === 'activity'; })
+                .sort(function(a, b) { return String(a.localTime || '').localeCompare(String(b.localTime || '')); });
+            return all;
+        }
+
+        // ── General reminder ──────────────────────────────────────────────
+        async function writeGeneralReminder(localTime) {
+            var ref = reminderDocRef('general');
+            if (!ref) return;
+            var tz = mkDetectTimezone() || (window.userData && window.userData.timezone) || null;
+
+            // Read rather than trusting cached state — saveReminder() can run
+            // before the settings panel has ever loaded the reminder docs, and
+            // guessing wrong here would blank out a computed nextSendAt.
+            var exists = false;
+            try {
+                var snap = await getDoc(ref);
+                exists = snap.exists();
+            } catch (e) {
+                exists = !!window._generalReminderDoc;
+            }
+
+            if (exists) {
+                // Update rather than overwrite, so a re-save doesn't wipe the
+                // nextSendAt the trigger computed. (The trigger recovers from a
+                // null anyway, but there's no reason to make it.)
+                var patch = {
+                    localTime: localTime,
+                    active: REMINDERS_V2_GENERAL_ACTIVE,
+                    updatedAt: new Date()
+                };
+                // Only touch the zone when we actually detected one — writing
+                // null over a good stored value would push the reminder onto
+                // the fallback zone for no reason.
+                if (tz) patch.timezone = tz;
+                await updateDoc(ref, patch);
+            } else {
+                await setDoc(ref, {
+                    type: 'general',
+                    activityId: null,
+                    activityName: null,
+                    localTime: localTime,
+                    timezone: tz,
+                    active: REMINDERS_V2_GENERAL_ACTIVE,
+                    // Left null on purpose — onReminderWrite computes it with a
+                    // real timezone library. Two implementations of DST maths is
+                    // exactly one too many, and the client has no Luxon.
+                    nextSendAt: null,
+                    lastSentDate: null,
+                    createdAt: new Date(),
+                    updatedAt: new Date()
+                });
+            }
+            await refreshReminderState();
+        }
+
+        async function deactivateGeneralReminder() {
+            var ref = reminderDocRef('general');
+            if (!ref || !window._generalReminderDoc) return;
+            await updateDoc(ref, { active: false, updatedAt: new Date() });
+            await refreshReminderState();
+        }
+
+        // ── Shared permission + subscription gate ─────────────────────────
+        async function ensureNotificationPermission() {
+            if (typeof Notification === 'undefined' || !('Notification' in window)) {
+                showToast('Notifications not supported in this browser', 'red');
+                return false;
+            }
+            if (Notification.permission === 'denied') {
+                showToast('Notifications blocked — please allow them in browser settings', 'red');
+                return false;
+            }
+            if (Notification.permission === 'default') {
+                var perm = await Notification.requestPermission();
+                if (perm !== 'granted') {
+                    showToast('Notification permission denied', 'red');
+                    return false;
+                }
+            }
+            // Activity reminders are push-only — they're sent from the server,
+            // so a subscription has to exist even if the user never set up the
+            // general reminder. null keeps reminderTime out of the payload.
+            if (!(window.userData && window.userData.pushSubscription)) {
+                var ok = await subscribeToPush(null);
+                if (!ok) {
+                    showToast('Could not enable push on this device', 'red');
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        function reminderErrorMessage(err) {
+            var code = (err && err.code) ? String(err.code) : '';
+            if (code.indexOf('resource-exhausted') !== -1) return 'Max ' + MAX_ACTIVITY_REMINDERS + ' reminders — remove one to add another';
+            if (code.indexOf('already-exists') !== -1) return 'That activity already has a reminder';
+            if (code.indexOf('not-found') !== -1) return 'That activity no longer exists';
+            if (code.indexOf('unauthenticated') !== -1) return 'Please sign in again';
+            if (code.indexOf('invalid-argument') !== -1) return 'Please pick a valid time';
+            if (code.indexOf('internal') !== -1 || code.indexOf('unavailable') !== -1) return 'Reminder service unreachable — try again';
+            return (err && err.message) ? err.message : 'Could not save reminder';
+        }
+
+        // ── Activity reminders — list ─────────────────────────────────────
+        window.renderActivityReminders = function() {
+            var listEl = document.getElementById('arList');
+            if (!listEl) return;
+            var counterEl = document.getElementById('arCounter');
+            var addBtn = document.getElementById('arAddBtn');
+            var noteEl = document.getElementById('arMaxNote');
+
+            var reminders = window._activityReminders || [];
+            var activeCount = reminders.filter(function(r) { return r.active; }).length;
+
+            if (counterEl) counterEl.textContent = activeCount + ' / ' + MAX_ACTIVITY_REMINDERS + ' set';
+
+            if (!reminders.length) {
+                listEl.innerHTML = '<p class="ar-empty">No activity reminders yet — add one to get nudged about a specific activity.</p>';
+            } else {
+                listEl.innerHTML = reminders.map(function(r) {
+                    var id = escapeHtml(String(r.id));
+                    return '' +
+                        '<div class="ar-row' + (r.active ? '' : ' ar-row-off') + '">' +
+                            '<button class="ar-row-main" type="button" onclick="openActivityReminderModal(\'' + id + '\')">' +
+                                '<span class="ar-row-name">' + escapeHtml(r.activityName || 'Activity') + '</span>' +
+                                '<span class="ar-row-time">' + escapeHtml(r.localTime || '--:--') + '</span>' +
+                            '</button>' +
+                            '<label class="ar-switch" title="' + (r.active ? 'Active — tap to pause' : 'Paused — tap to resume') + '">' +
+                                '<input type="checkbox"' + (r.active ? ' checked' : '') +
+                                    ' onchange="toggleActivityReminder(\'' + id + '\', this.checked)">' +
+                                '<span class="ar-switch-track"><span class="ar-switch-thumb"></span></span>' +
+                            '</label>' +
+                            '<button class="ar-row-del" type="button" aria-label="Delete reminder" title="Delete reminder" onclick="deleteActivityReminder(\'' + id + '\')">' +
+                                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>' +
+                            '</button>' +
+                        '</div>';
+                }).join('');
+            }
+
+            var atCap = activeCount >= MAX_ACTIVITY_REMINDERS;
+            if (addBtn) {
+                addBtn.disabled = atCap;
+                addBtn.classList.toggle('ar-add-btn-off', atCap);
+            }
+            if (noteEl) noteEl.style.display = atCap ? 'block' : 'none';
+        };
+
+        // ── Activity reminders — add/edit modal ───────────────────────────
+        window.openActivityReminderModal = function(reminderId) {
+            var modal = document.getElementById('activityReminderModal');
+            if (!modal) return;
+
+            _arEditingId = reminderId || null;
+            _arSelectedActivityId = null;
+
+            var pickerGroup = document.getElementById('arPickerGroup');
+            var titleEl = document.getElementById('arModalTitle');
+            var eyebrowEl = document.getElementById('arModalEyebrow');
+            var timeEl = document.getElementById('arReminderTime');
+            var searchEl = document.getElementById('arActivitySearch');
+
+            if (_arEditingId) {
+                var existing = (window._activityReminders || []).filter(function(r) { return r.id === _arEditingId; })[0];
+                if (!existing) return;
+                _arSelectedActivityId = existing.activityId;
+                if (eyebrowEl) eyebrowEl.textContent = 'Edit reminder';
+                if (titleEl) titleEl.textContent = existing.activityName || 'Activity reminder';
+                if (pickerGroup) pickerGroup.style.display = 'none';
+                if (timeEl) timeEl.value = existing.localTime || '';
+            } else {
+                if (eyebrowEl) eyebrowEl.textContent = 'Activity reminder';
+                if (titleEl) titleEl.textContent = 'Add reminder';
+                if (pickerGroup) pickerGroup.style.display = '';
+                if (timeEl) timeEl.value = '';
+                if (searchEl) searchEl.value = '';
+                renderActivityReminderPicker('');
+            }
+
+            modal.classList.add('active');
+        };
+
+        window.closeActivityReminderModal = function() {
+            var modal = document.getElementById('activityReminderModal');
+            if (modal) modal.classList.remove('active');
+            _arEditingId = null;
+            _arSelectedActivityId = null;
+        };
+
+        window.renderActivityReminderPicker = function(term) {
+            var listEl = document.getElementById('arActivityList');
+            if (!listEl) return;
+            var emptyEl = document.getElementById('arActivityEmpty');
+
+            // One reminder per activity — hide the ones already spoken for.
+            var taken = {};
+            (window._activityReminders || []).forEach(function(r) { taken[String(r.activityId)] = true; });
+
+            var q = String(term || '').trim().toLowerCase();
+            var acts = [];
+            try { acts = getAllActivitiesFlat(); } catch (e) { acts = []; }
+            acts = acts.filter(function(a) {
+                if (taken[String(a.id)]) return false;
+                if (!q) return true;
+                return String(a.name || '').toLowerCase().indexOf(q) !== -1;
+            });
+
+            if (!acts.length) {
+                listEl.innerHTML = '';
+                if (emptyEl) {
+                    emptyEl.style.display = 'block';
+                    emptyEl.textContent = q
+                        ? 'No activities match that search.'
+                        : 'No activities available — every one already has a reminder, or you haven\'t created any yet.';
+                }
+                return;
+            }
+            if (emptyEl) emptyEl.style.display = 'none';
+
+            listEl.innerHTML = acts.map(function(a) {
+                var selected = String(a.id) === String(_arSelectedActivityId);
+                return '<button type="button" class="ar-pick' + (selected ? ' ar-pick-on' : '') + '" ' +
+                        'onclick="selectActivityReminderActivity(\'' + escapeHtml(String(a.id)) + '\')">' +
+                        '<span class="ar-pick-name">' + escapeHtml(a.name || 'Activity') + '</span>' +
+                        '<span class="ar-pick-meta">' + escapeHtml(a.dimName || '') + '</span>' +
+                    '</button>';
+            }).join('');
+        };
+
+        window.selectActivityReminderActivity = function(activityId) {
+            _arSelectedActivityId = activityId;
+            var searchEl = document.getElementById('arActivitySearch');
+            renderActivityReminderPicker(searchEl ? searchEl.value : '');
+        };
+
+        window.saveActivityReminder = async function() {
+            var timeEl = document.getElementById('arReminderTime');
+            var localTime = timeEl ? timeEl.value : '';
+            if (!REMINDER_TIME_RE.test(localTime)) {
+                showToast('Please pick a time first', 'red');
+                return;
+            }
+
+            var btn = document.getElementById('arSaveBtn');
+            if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+            try {
+                if (_arEditingId) {
+                    var patch = { localTime: localTime, updatedAt: new Date() };
+                    // Same reasoning as writeGeneralReminder — don't null out a
+                    // stored zone just because detection came back empty.
+                    var detected = mkDetectTimezone();
+                    if (detected) patch.timezone = detected;
+                    await updateDoc(reminderDocRef(_arEditingId), patch);
+                    showToast('Reminder updated ✅', 'green');
+                } else {
+                    if (!_arSelectedActivityId) {
+                        showToast('Pick an activity first', 'red');
+                        return;
+                    }
+                    var permitted = await ensureNotificationPermission();
+                    if (!permitted) return;
+
+                    // Creation goes through the callable so the 5-reminder cap
+                    // and the activityId check happen server-side (spec §5.4).
+                    var create = httpsCallable(functions, 'createActivityReminder');
+                    await create({
+                        activityId: String(_arSelectedActivityId),
+                        localTime: localTime,
+                        timezone: mkDetectTimezone() || null
+                    });
+                    showToast('Reminder set ✅', 'green');
+                    try { window.trackEvent && window.trackEvent('activity_reminder_created'); } catch (e) {}
+                }
+
+                closeActivityReminderModal();
+                await refreshReminderState();
+                renderActivityReminders();
+            } catch (err) {
+                console.error('Activity reminder save failed:', err);
+                showToast(reminderErrorMessage(err), 'red');
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+            }
+        };
+
+        window.toggleActivityReminder = async function(reminderId, active) {
+            // Check the cap here as well as server-side. The onReminderWrite
+            // backstop would force this back off a moment later, and silently
+            // reverting a switch the user just flipped is a bad way to say no.
+            if (active) {
+                var activeCount = (window._activityReminders || [])
+                    .filter(function(r) { return r.active && r.id !== reminderId; }).length;
+                if (activeCount >= MAX_ACTIVITY_REMINDERS) {
+                    showToast('Max ' + MAX_ACTIVITY_REMINDERS + ' active — pause another first', 'red');
+                    renderActivityReminders(); // snap the switch back
+                    return;
+                }
+                var permitted = await ensureNotificationPermission();
+                if (!permitted) { renderActivityReminders(); return; }
+            }
+
+            try {
+                await updateDoc(reminderDocRef(reminderId), { active: !!active, updatedAt: new Date() });
+                await refreshReminderState();
+                renderActivityReminders();
+            } catch (err) {
+                console.error('Reminder toggle failed:', err);
+                showToast(reminderErrorMessage(err), 'red');
+                renderActivityReminders();
+            }
+        };
+
+        window.deleteActivityReminder = async function(reminderId) {
+            var existing = (window._activityReminders || []).filter(function(r) { return r.id === reminderId; })[0];
+            var label = existing ? (existing.activityName || 'this activity') : 'this activity';
+            if (!confirm('Delete the reminder for ' + label + '?')) return;
+            try {
+                await deleteDoc(reminderDocRef(reminderId));
+                await refreshReminderState();
+                renderActivityReminders();
+                showToast('Reminder deleted', 'red');
+            } catch (err) {
+                console.error('Reminder delete failed:', err);
+                showToast(reminderErrorMessage(err), 'red');
+            }
+        };
+
+        // ── Notification tap → jump to the activity ───────────────────────
+        // Called by the service worker message handler and by the ?reminder=
+        // deep link when the app is opened cold from a notification.
+        window.mkOpenActivityFromReminder = function(activityId) {
+            if (!activityId) {
+                if (window.switchTab) switchTab('activities');
+                return;
+            }
+            var dims = (window.userData && window.userData.dimensions) || [];
+            for (var di = 0; di < dims.length; di++) {
+                var paths = dims[di].paths || [];
+                for (var pi = 0; pi < paths.length; pi++) {
+                    var acts = paths[pi].activities || [];
+                    for (var ai = 0; ai < acts.length; ai++) {
+                        if (String(acts[ai].id) === String(activityId)) {
+                            // Reuse the existing jump-to-activity flow, which
+                            // already handles sub-tab switching, expanding the
+                            // dimension/path, scrolling and the highlight glow.
+                            if (window.categoriesGoToActivity) {
+                                window.categoriesGoToActivity(di, pi, ai);
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+            // Activity deleted, or the tree isn't loaded yet — fall back to the
+            // Activities tab rather than doing nothing (spec §6).
+            if (window.switchTab) switchTab('activities');
+        };
+
+        // Warm app: the SW posts a message to the focused client.
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.addEventListener('message', function(event) {
+                var msg = event.data || {};
+                if (msg.type !== 'mindkraft-notification-click') return;
+                // Defer so a click arriving mid-boot doesn't race the render.
+                setTimeout(function() {
+                    try { window.mkOpenActivityFromReminder(msg.activityId || null); } catch (e) {}
+                }, 300);
+            });
+        }
+
+        // Cold app: the SW opened a new window with ?reminder=<activityId>.
+        window.mkHandleReminderDeepLink = function() {
+            try {
+                var params = new URLSearchParams(window.location.search);
+                if (!params.has('reminder')) return;
+                var activityId = params.get('reminder');
+                // Clear it so a refresh doesn't re-trigger the jump.
+                params.delete('reminder');
+                var qs = params.toString();
+                window.history.replaceState({}, '', window.location.pathname + (qs ? '?' + qs : ''));
+                setTimeout(function() {
+                    try { window.mkOpenActivityFromReminder(activityId === 'general' ? null : activityId); } catch (e) {}
+                }, 600);
+            } catch (e) { /* deep link is a nicety, never fatal */ }
         };
 
         // ═══════════════════════════════════════════════════════════════════

@@ -15367,3 +15367,296 @@
 @media (prefers-reduced-motion: reduce) {
     .tt-pulse, .tt-node.tt-flash, .tt-gold-flash, .tt-reveal .tt-web-svg .tt-node { animation-duration: 0.01ms !important; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Activity Reminders — Settings › Daily Reminder
+   Settings-adjacent utility UI, so it borrows the existing surface tokens
+   rather than introducing a new visual language. Electric blue
+   (--color-progress, #5a9fd4) carries the interactive affordances; no gold,
+   since nothing here is a milestone moment.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.ar-section {
+    margin-top: 22px;
+    padding-top: 18px;
+    border-top: 1px solid var(--color-border);
+}
+
+.ar-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.ar-head-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--color-text-primary);
+    letter-spacing: -0.01em;
+}
+
+.ar-counter {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.ar-head-sub {
+    font-size: 12.5px;
+    color: var(--color-text-secondary);
+    margin: 4px 0 12px;
+    line-height: 1.5;
+}
+
+.ar-list {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+
+.ar-empty {
+    font-size: 12.5px;
+    color: var(--color-text-secondary);
+    opacity: 0.8;
+    margin: 0;
+    padding: 12px 0;
+    line-height: 1.5;
+}
+
+/* ── A single reminder row ── */
+.ar-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 6px 4px 12px;
+    border-radius: 11px;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    transition: opacity 0.18s ease, border-color 0.18s ease;
+}
+
+.ar-row-off {
+    opacity: 0.55;
+}
+
+.ar-row-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    background: none;
+    border: none;
+    padding: 9px 0;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+    color: inherit;
+}
+
+.ar-row-name {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--color-text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ar-row-time {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--color-progress);
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+
+.ar-row-del {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: none;
+    border: none;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: color 0.15s ease, background 0.15s ease;
+}
+
+.ar-row-del:hover {
+    color: var(--color-accent-red);
+    background: rgba(142, 59, 95, 0.12);
+}
+
+/* ── Active toggle ── */
+.ar-switch {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+}
+
+.ar-switch input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.ar-switch-track {
+    position: relative;
+    display: block;
+    width: 36px;
+    height: 20px;
+    border-radius: 10px;
+    background: var(--color-border);
+    border: 1px solid transparent;
+    transition: background 0.18s ease;
+}
+
+.ar-switch-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--color-text-secondary);
+    transition: transform 0.18s ease, background 0.18s ease;
+}
+
+.ar-switch input:checked + .ar-switch-track {
+    background: rgba(90, 159, 212, 0.32);
+}
+
+.ar-switch input:checked + .ar-switch-track .ar-switch-thumb {
+    background: var(--color-progress);
+    transform: translateX(16px);
+}
+
+.ar-switch input:focus-visible + .ar-switch-track {
+    border-color: var(--color-progress);
+    box-shadow: 0 0 0 2px rgba(90, 159, 212, 0.25);
+}
+
+/* ── Add button ── */
+.ar-max-note {
+    font-size: 11.5px;
+    color: var(--color-text-secondary);
+    opacity: 0.85;
+    margin: 10px 0 0;
+}
+
+.ar-add-btn {
+    margin-top: 12px;
+    width: 100%;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: rgba(90, 159, 212, 0.1);
+    border: 1px dashed rgba(90, 159, 212, 0.45);
+    color: var(--color-progress);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+
+.ar-add-btn:hover:not(:disabled) {
+    background: rgba(90, 159, 212, 0.18);
+    border-color: var(--color-progress);
+}
+
+.ar-add-btn:disabled,
+.ar-add-btn-off {
+    opacity: 0.4;
+    cursor: not-allowed;
+    border-style: solid;
+}
+
+/* ── Add / edit modal ── */
+.ar-field-label {
+    display: block;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-text-secondary);
+    margin-bottom: 7px;
+}
+
+.ar-time-input {
+    width: 100%;
+}
+
+.ar-picker-list {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-top: 9px;
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.ar-picker-empty {
+    text-align: center;
+    font-size: 12px;
+    color: var(--color-text-secondary);
+    opacity: 0.75;
+    padding: 16px;
+    font-weight: 500;
+    line-height: 1.5;
+}
+
+.ar-pick {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 9px;
+    background: var(--color-input-bg);
+    border: 1px solid transparent;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.ar-pick:hover {
+    background: rgba(90, 159, 212, 0.1);
+}
+
+.ar-pick-on {
+    background: rgba(90, 159, 212, 0.16);
+    border-color: var(--color-progress);
+}
+
+.ar-pick-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--color-text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ar-pick-meta {
+    font-size: 11px;
+    color: var(--color-text-secondary);
+    flex-shrink: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ar-row, .ar-switch-track, .ar-switch-thumb, .ar-add-btn, .ar-pick, .ar-row-del {
+        transition: none;
+    }
+}

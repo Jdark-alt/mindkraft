@@ -1,0 +1,24 @@
+{
+  "_comment": [
+    "Reference only — not wired into firebase.json, apply in the Console.",
+    "The composite index below backs the per-minute due-reminder query in",
+    "functions/index.js:",
+    "  db.collectionGroup('reminders')",
+    "    .where('active', '==', true)",
+    "    .where('nextSendAt', '<=', now)",
+    "Note queryScope COLLECTION_GROUP — a plain COLLECTION index will not",
+    "serve a collectionGroup() query, and the sender will fail with",
+    "FAILED_PRECONDITION until this exists."
+  ],
+  "indexes": [
+    {
+      "collectionGroup": "reminders",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "active", "order": "ASCENDING" },
+        { "fieldPath": "nextSendAt", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

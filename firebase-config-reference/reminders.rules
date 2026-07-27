@@ -1,0 +1,33 @@
+// ── Reminders subcollection ───────────────────────────────────────────────
+// Paste this match block INSIDE your existing `match /databases/{db}/documents`
+// block in the Firebase Console. Do not replace your whole ruleset with this
+// file — it only covers reminders.
+//
+// Nesting note: if your existing rules already have a `match /users/{uid}`
+// block, this can go inside it as `match /reminders/{reminderId}` instead —
+// subcollections are NOT covered by their parent's rules unless matched
+// explicitly, so one of the two forms is required either way.
+
+match /users/{uid}/reminders/{reminderId} {
+
+  // Owner-only access. Update covers the active toggle and time edits;
+  // delete covers removing a reminder from the settings list.
+  allow read, update, delete: if request.auth != null
+                              && request.auth.uid == uid;
+
+  // Creation is split (spec §8):
+  //
+  //  - The general reminder is a singleton with a fixed doc id, so there is
+  //    no cap to enforce and the client may create it directly.
+  //  - Activity reminders must go through the createActivityReminder callable,
+  //    which enforces the 5-per-user cap and validates that the activityId
+  //    actually exists in the user's dimension tree. The Admin SDK bypasses
+  //    rules, so denying creation here is what forces clients through it.
+  allow create: if request.auth != null
+                && request.auth.uid == uid
+                && reminderId == 'general'
+                && request.resource.data.type == 'general'
+                && request.resource.data.localTime is string
+                && request.resource.data.localTime.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$')
+                && request.resource.data.active is bool;
+}

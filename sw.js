@@ -7,7 +7,7 @@
 // Bump CACHE_VERSION whenever you deploy a meaningful update.
 // This causes the old cache to be deleted and the new one installed.
 
-const CACHE_VERSION = 'v154';
+const CACHE_VERSION = 'v155';
 const CACHE_NAME = 'mindkraft-shell-' + CACHE_VERSION;
 
 // Files that make up the app shell — must all load for the app to work
@@ -125,33 +125,65 @@ self.addEventListener('fetch', function(event) {
 });
 
 // ── Push Notifications ────────────────────────────────────────────────────
-// Fired by GitHub Actions via Web Push when the user has a reminder set.
-// Works even when the browser tab is closed (browser must still be running).
+// Fired via Web Push (VAPID) by the sendDueReminders Cloud Function. Works
+// even when the browser tab is closed (browser must still be running).
+//
+// Payloads carry a `data` object identifying the reminder:
+//   { type: 'general'|'activity', activityId: string|null }
+// which notificationclick below uses to deep-link to the right activity.
+// Older payloads have no `data` and still work — they fall through as general.
 self.addEventListener('push', function(event) {
     var data = {};
     try { data = event.data ? event.data.json() : {}; } catch(e) {}
 
+    var payload = data.data || {};
     var title   = data.title || 'Mindkraft ⚔️';
     var options = {
         body:      data.body  || "Don't forget to check off today's tasks!",
         icon:      './icon-192.svg',
         badge:     './icon-192.svg',
-        tag:       'mindkraft-daily-reminder', // replaces previous notification instead of stacking
+        // Per-activity tags so two activity reminders due at the same minute
+        // don't silently replace one another. The general reminder keeps its
+        // original tag, so it still collapses onto itself as before.
+        tag:       data.tag || 'mindkraft-daily-reminder',
         renotify:  false,
-        vibrate:   [200, 100, 200]
+        vibrate:   [200, 100, 200],
+        data:      { type: payload.type || 'general', activityId: payload.activityId || null }
     };
     event.waitUntil(self.registration.showNotification(title, options));
 });
 
-// Tapping the notification opens / focuses the app
+// Tapping the notification opens / focuses the app, and jumps to the activity
+// when the reminder was for a specific one (spec §6).
 self.addEventListener('notificationclick', function(event) {
     event.notification.close();
+
+    var payload = event.notification.data || {};
+    var activityId = payload.activityId || null;
+
     event.waitUntil(
         clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(list) {
             for (var i = 0; i < list.length; i++) {
-                if ('focus' in list[i]) return list[i].focus();
+                var client = list[i];
+                if ('focus' in client) {
+                    // App is already open — tell it where to go, then focus.
+                    // postMessage rather than a URL change so we don't reload
+                    // and lose in-memory state.
+                    if (activityId && client.postMessage) {
+                        try {
+                            client.postMessage({
+                                type: 'mindkraft-notification-click',
+                                activityId: activityId
+                            });
+                        } catch (e) { /* focus alone is still useful */ }
+                    }
+                    return client.focus();
+                }
             }
-            if (clients.openWindow) return clients.openWindow('./');
+            // Cold start — carry the target in the URL for the app to pick up.
+            if (clients.openWindow) {
+                return clients.openWindow(activityId ? './?reminder=' + encodeURIComponent(activityId) : './');
+            }
         })
     );
 });

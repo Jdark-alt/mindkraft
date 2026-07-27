@@ -1189,6 +1189,18 @@
                             <button class="btn-settings-save" onclick="saveReminder()">Save Reminder</button>
                             <button class="btn-settings-save" style="background:var(--color-accent-red);border-color:var(--color-accent-red);" onclick="clearReminder()">Clear</button>
                         </div>
+
+                        <!-- Per-activity reminders (max 5) -->
+                        <div class="ar-section" id="activityRemindersSection">
+                            <div class="ar-head">
+                                <span class="ar-head-title">Activity Reminders</span>
+                                <span class="ar-counter" id="arCounter">0 / 5 set</span>
+                            </div>
+                            <p class="ar-head-sub">Get nudged about one specific activity at a time you choose.</p>
+                            <div class="ar-list" id="arList"></div>
+                            <p class="ar-max-note" id="arMaxNote" style="display:none;">Max 5 — remove one to add another.</p>
+                            <button type="button" class="ar-add-btn" id="arAddBtn" onclick="openActivityReminderModal()">+ Add reminder</button>
+                        </div>
                     </div>
                 </div>
 
@@ -1547,6 +1559,37 @@
             <div class="modal-footer pl-modal-footer">
                 <button type="button" class="btn-secondary pl-btn-secondary" onclick="closeProjectActivityPicker()">Cancel</button>
                 <button type="button" class="btn-primary pl-btn-primary" id="projectActivityPickerAdd" onclick="confirmProjectActivityPicker()">Add</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Activity Reminder — add / edit -->
+    <div id="activityReminderModal" class="modal-overlay" style="z-index:1100;">
+        <div class="modal pl-modal ar-modal">
+            <div class="modal-header pl-modal-header">
+                <div>
+                    <div class="pl-modal-eyebrow" id="arModalEyebrow">Activity reminder</div>
+                    <h3 class="modal-title" id="arModalTitle">Add reminder</h3>
+                </div>
+                <button class="pl-modal-close" type="button" onclick="closeActivityReminderModal()" aria-label="Close">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="modal-body pl-modal-body">
+                <div id="arPickerGroup">
+                    <label class="ar-field-label" for="arActivitySearch">Activity</label>
+                    <input type="text" id="arActivitySearch" class="pl-input" placeholder="Search activities…" oninput="renderActivityReminderPicker(this.value)">
+                    <div id="arActivityList" class="ar-picker-list"></div>
+                    <div id="arActivityEmpty" class="ar-picker-empty" style="display:none;"></div>
+                </div>
+                <div>
+                    <label class="ar-field-label" for="arReminderTime">Remind me at</label>
+                    <input type="time" id="arReminderTime" class="reminder-time-input ar-time-input">
+                </div>
+            </div>
+            <div class="modal-footer pl-modal-footer">
+                <button type="button" class="btn-secondary pl-btn-secondary" onclick="closeActivityReminderModal()">Cancel</button>
+                <button type="button" class="btn-primary pl-btn-primary" id="arSaveBtn" onclick="saveActivityReminder()">Save</button>
             </div>
         </div>
     </div>
