@@ -1,0 +1,85 @@
+name: Deploy Reminder Functions
+
+# Deploys the reminder Cloud Functions and the Firestore index they need.
+#
+# Replaces the old send-reminders workflow. That one *sent* the notifications
+# on a GitHub cron, which had no execution-time guarantee and drifted 30-45+
+# minutes. This one only *deploys* — Cloud Scheduler does the sending, on a
+# real schedule. So a slow runner here delays a deploy, never a notification.
+#
+# Firestore security rules are deliberately NOT deployed. They are managed in
+# the Firebase Console and this repo has no copy of them; deploying would wipe
+# the rules protecting profiles, friends and groups. Only indexes are pushed.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'functions/**'
+      - 'firebase.json'
+      - 'firestore.indexes.json'
+      - '.github/workflows/deploy-reminders.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-reminders
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: functions
+
+      - name: Run tests
+        # Scheduling maths is the part that cannot be eyeballed — DST
+        # transitions, timezone changes, the idempotency date key. A failure
+        # here blocks the deploy rather than shipping wrong fire times.
+        run: npm test
+        working-directory: functions
+
+      - name: Write runtime environment
+        env:
+          VAPID_PUBLIC_KEY:    ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY:   ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_CONTACT_EMAIL: ${{ secrets.VAPID_CONTACT_EMAIL }}
+        run: |
+          if [ -z "$VAPID_PUBLIC_KEY" ] || [ -z "$VAPID_PRIVATE_KEY" ]; then
+            echo "::error::VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY secrets are not set."
+            exit 1
+          fi
+          # The Firebase CLI reads functions/.env and turns each line into a
+          # runtime environment variable on the deployed function.
+          printf 'VAPID_PUBLIC_KEY=%s\n'    "$VAPID_PUBLIC_KEY"    >  functions/.env
+          printf 'VAPID_PRIVATE_KEY=%s\n'   "$VAPID_PRIVATE_KEY"   >> functions/.env
+          printf 'VAPID_CONTACT_EMAIL=%s\n' "${VAPID_CONTACT_EMAIL:-admin@mindkraft.life}" >> functions/.env
+
+      - name: Deploy functions and Firestore index
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FIREBASE_PROJECT: life-gamification-app-b7674
+        run: |
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
+            echo "::error::FIREBASE_SERVICE_ACCOUNT secret is not set."
+            exit 1
+          fi
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
+          npx --yes firebase-tools@13 deploy \
+            --only functions,firestore:indexes \
+            --project "$FIREBASE_PROJECT" \
+            --non-interactive \
+            --force
+          rm -f "$RUNNER_TEMP/sa.json"

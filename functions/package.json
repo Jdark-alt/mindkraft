@@ -1,7 +1,7 @@
 {
   "name": "mindkraft-functions",
   "version": "1.0.0",
-  "description": "Cloud Functions for Mindkraft reminder delivery (replaces the GitHub Actions cron)",
+  "description": "Cloud Functions for Mindkraft reminder delivery",
   "private": true,
   "main": "index.js",
   "engines": {

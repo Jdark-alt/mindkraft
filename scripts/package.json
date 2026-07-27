@@ -1,8 +1,9 @@
 {
-  "name": "mindkraft-reminders",
+  "name": "mindkraft-workers",
   "version": "1.0.0",
-  "description": "GitHub Actions script to send Mindkraft daily reminder push notifications",
+  "description": "GitHub Actions worker scripts for Mindkraft (tech tree generation)",
   "private": true,
+  "comment": "web-push is still required — generate-tech-tree.js sends the 'your map is ready' notification. Reminders moved to Cloud Functions (see /functions).",
   "dependencies": {
     "firebase-admin": "^12.0.0",
     "web-push": "^3.6.7"

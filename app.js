@@ -12926,7 +12926,11 @@
         };
 
         // ── Daily Reminder Notifications ──────────────────────────────────────
-        // VAPID public key — paste your generated key here after running vapid-keygen.html
+        // VAPID public key. Safe to expose — it's the public half of the pair,
+        // and it's what the browser uses to build a push subscription.
+        // MUST stay in step with the VAPID_PUBLIC_KEY secret used by the
+        // deploy workflow and the tech tree worker: changing it invalidates
+        // every existing subscription.
         var VAPID_PUBLIC_KEY = 'BCsaPZ-4JC3l8b_bSvbQO4PZpq_x3cj6lkEJ_y-F9mnp24tB469h-D1UIhlV5k_-4h2l3Nv1L4__GZIdutiSmuw';
 
         // Convert VAPID base64 URL key to Uint8Array (required by PushManager)
@@ -12939,13 +12943,9 @@
             return arr;
         }
 
-        // Subscribe user to Web Push and save subscription + reminder time to Firestore
-        async function subscribeToPush(localTime) {
+        // Subscribe this device to Web Push and store the endpoint on the user doc.
+        async function subscribeToPush() {
             if (!('serviceWorker' in navigator) || !('PushManager' in window)) return false;
-            if (VAPID_PUBLIC_KEY === 'PASTE_YOUR_VAPID_PUBLIC_KEY_HERE') {
-                console.warn('VAPID public key not configured — push notifications disabled');
-                return false;
-            }
             try {
                 var reg = await navigator.serviceWorker.ready;
                 var sub = await reg.pushManager.getSubscription();
@@ -12956,27 +12956,17 @@
                     });
                 }
                 var subJson = sub.toJSON();
-                var prev = (window.userData && window.userData.pushSubscription) || {};
-                // tzOffset is retained only because the old GitHub Actions cron
-                // still reads it. The Cloud Functions path uses the IANA zone on
-                // users/{uid}.timezone instead — a fixed offset can't follow DST.
-                var payload = {
+                // Delivery address only. When and what to send lives on the
+                // reminder documents; the old reminderTime/tzOffset fields went
+                // away with the cron that read them.
+                //
+                // Shared with the tech tree worker's "your map is ready" push,
+                // which reads endpoint + keys off this same field — so it is
+                // never torn down just because a reminder was switched off.
+                window.userData.pushSubscription = {
                     endpoint: subJson.endpoint,
-                    keys: subJson.keys,
-                    tzOffset: new Date().getTimezoneOffset() // minutes behind UTC
+                    keys: subJson.keys
                 };
-                // Only carry reminderTime when there really is a general reminder.
-                // The old cron treats the presence of this field as "send this
-                // user a daily nudge", so writing a placeholder would sign people
-                // up for a reminder they never asked for — which is exactly what
-                // would happen when subscribing purely to enable activity
-                // reminders (localTime is null on that path).
-                if (localTime) {
-                    payload.reminderTime = localTime;
-                } else if (prev.reminderTime) {
-                    payload.reminderTime = prev.reminderTime;
-                }
-                window.userData.pushSubscription = payload;
                 await saveUserData();
                 return true;
             } catch (err) {
@@ -12985,29 +12975,24 @@
             }
         }
 
-        // Unsubscribe from Web Push and remove from Firestore
-        async function unsubscribeFromPush() {
-            try {
-                if ('serviceWorker' in navigator) {
-                    var reg = await navigator.serviceWorker.ready;
-                    var sub = await reg.pushManager.getSubscription();
-                    if (sub) await sub.unsubscribe();
-                }
-                if (window.userData && window.userData.pushSubscription) {
-                    delete window.userData.pushSubscription;
-                    await saveUserData();
-                }
-            } catch (err) {
-                console.error('Unsubscribe failed:', err);
-            }
-        }
-
-        // Fallback: in-tab interval check (fires if browser is open, no push infrastructure needed)
+        // Fallback: in-tab interval check, for devices where push doesn't work
+        // (chiefly iOS Safari outside an installed PWA). Only fires while the
+        // app is open, and needs no server infrastructure.
         let _reminderInterval = null;
         function scheduleReminder() {
             var time = localStorage.getItem('reminderTime');
             // Guard: iOS Safari does not expose the Notification API at all
             if (!time || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+
+            // Never run alongside push. If this device has a subscription the
+            // server is already sending the reminder, and running the timer too
+            // would show a second notification whenever the app happened to be
+            // open at the reminder time.
+            if (window.userData && window.userData.pushSubscription) {
+                if (_reminderInterval) { clearInterval(_reminderInterval); _reminderInterval = null; }
+                return;
+            }
+
             if (_reminderInterval) clearInterval(_reminderInterval);
             function checkAndNotify() {
                 var now = new Date();
@@ -13053,31 +13038,36 @@
 
             localStorage.setItem('reminderTime', time);
 
-            // Try push first (works even when browser is closed/in background)
-            var pushOk = await subscribeToPush(time);
-
-            // Mirror into the reminders subcollection, which is what the Cloud
-            // Function reads. The old pushSubscription.reminderTime field is
-            // still written above and left in place as a rollback net for one
-            // release cycle (spec §3.3) — until cutover it's the field that
-            // actually drives delivery.
-            try {
-                await writeGeneralReminder(time);
-            } catch (err) {
-                // Non-fatal: the legacy path above still delivers this reminder.
-                console.warn('Could not write general reminder doc:', err);
-            }
-
-            // Always run the in-tab fallback too (belt and suspenders)
-            scheduleReminder();
+            // Register this device for push (works when the browser is closed)
+            var pushOk = await subscribeToPush();
 
             var statusEl = document.getElementById('reminderPermStatus');
+
             if (pushOk) {
-                if (statusEl) statusEl.textContent = '✅ Push reminder set for ' + time + ' — works even when browser is closed.';
-                showToast('Push reminder set for ' + time + ' ✅', 'green');
+                // Server-side delivery. The reminder document is the single
+                // source of truth — a Cloud Function reads it every minute.
+                try {
+                    await writeGeneralReminder(time);
+                } catch (err) {
+                    console.error('Could not save reminder:', err);
+                    if (statusEl) statusEl.textContent = '⚠️ Could not save your reminder. Please try again.';
+                    showToast('Could not save reminder — try again', 'red');
+                    return;
+                }
+                // The in-tab timer is NOT started here. It would fire a second
+                // notification whenever the app happened to be open at the
+                // reminder time — it exists purely as a fallback for when push
+                // is unavailable.
+                if (_reminderInterval) { clearInterval(_reminderInterval); _reminderInterval = null; }
+                if (statusEl) statusEl.textContent = '✅ Reminder set for ' + time + ' — arrives even when the app is closed.';
+                showToast('Reminder set for ' + time + ' ✅', 'green');
             } else {
-                if (statusEl) statusEl.textContent = '⚠️ In-tab reminder set for ' + time + '. Push not available — needs VAPID key configured.';
-                showToast('Reminder set for ' + time + ' (browser must be open) ✅', 'green');
+                // Push unavailable on this device (commonly iOS Safari outside
+                // an installed PWA). Fall back to the in-tab timer so the
+                // reminder still does something while the app is open.
+                scheduleReminder();
+                if (statusEl) statusEl.textContent = '⚠️ Reminder set for ' + time + ', but this browser does not support background notifications — it only fires while the app is open.';
+                showToast('Reminder set for ' + time + ' (app must be open)', 'olive');
             }
         };
 
@@ -13086,25 +13076,13 @@
             localStorage.removeItem('reminderLastSent');
             if (_reminderInterval) { clearInterval(_reminderInterval); _reminderInterval = null; }
             // Deactivate rather than delete, so the time is remembered if the
-            // user turns it back on, and so activity reminders (which share the
-            // push subscription) aren't affected by the unsubscribe below.
+            // user turns it back on.
             try { await deactivateGeneralReminder(); } catch (err) { console.warn('Could not deactivate general reminder:', err); }
 
-            // Only tear the push subscription down if nothing else needs it.
-            // Activity reminders are delivered over the same subscription, so
-            // unsubscribing here would silently kill them too.
-            var hasActivityReminders = (window._activityReminders || []).some(function(r) { return r.active; });
-            if (hasActivityReminders) {
-                // Drop just the field the old cron keys off, keeping delivery alive.
-                try {
-                    if (window.userData && window.userData.pushSubscription) {
-                        delete window.userData.pushSubscription.reminderTime;
-                        await saveUserData();
-                    }
-                } catch (err) { console.warn('Could not clear legacy reminder time:', err); }
-            } else {
-                await unsubscribeFromPush();
-            }
+            // The push subscription is deliberately left alone. It is shared
+            // infrastructure — activity reminders and the tech tree's "your map
+            // is ready" notification both deliver over it — so tearing it down
+            // because one reminder was switched off would silently break those.
             var el = document.getElementById('reminderTime');
             if (el) el.value = '';
             var statusEl = document.getElementById('reminderPermStatus');
@@ -13167,8 +13145,7 @@
         //   <auto-id>  — one per activity reminder, max 5 active
         //
         // A Cloud Function queries them by nextSendAt every minute and sends
-        // the Web Push. See functions/index.js and DEPLOY.md. This replaces
-        // the GitHub Actions cron, which had no execution-time guarantee.
+        // the Web Push. See functions/index.js and REMINDERS.md.
         //
         // Note the two documents never live in the same place: reminders are a
         // SUBCOLLECTION, not fields on the user doc. That's deliberate —
@@ -13177,17 +13154,6 @@
         // client's next save. Subcollection docs are immune to that.
 
         var MAX_ACTIVITY_REMINDERS = 5;
-
-        // Cutover switch (spec §9.1). While false, the general reminder doc is
-        // written and kept up to date but stays inactive, because the GitHub
-        // Actions cron is still sending general reminders off
-        // pushSubscription.reminderTime — activating both would double-send.
-        // Flip to true at cutover; see DEPLOY.md step 7.
-        //
-        // Activity reminders are NOT gated by this. The old system knows
-        // nothing about them, so there is no double-send to avoid and they
-        // work as soon as the functions are deployed.
-        var REMINDERS_V2_GENERAL_ACTIVE = false;
 
         window._activityReminders = [];
         window._generalReminderDoc = null;
@@ -13295,7 +13261,7 @@
                 // null anyway, but there's no reason to make it.)
                 var patch = {
                     localTime: localTime,
-                    active: REMINDERS_V2_GENERAL_ACTIVE,
+                    active: true,
                     updatedAt: new Date()
                 };
                 // Only touch the zone when we actually detected one — writing
@@ -13310,7 +13276,7 @@
                     activityName: null,
                     localTime: localTime,
                     timezone: tz,
-                    active: REMINDERS_V2_GENERAL_ACTIVE,
+                    active: true,
                     // Left null on purpose — onReminderWrite computes it with a
                     // real timezone library. Two implementations of DST maths is
                     // exactly one too many, and the client has no Luxon.
@@ -13351,7 +13317,7 @@
             // so a subscription has to exist even if the user never set up the
             // general reminder. null keeps reminderTime out of the payload.
             if (!(window.userData && window.userData.pushSubscription)) {
-                var ok = await subscribeToPush(null);
+                var ok = await subscribeToPush();
                 if (!ok) {
                     showToast('Could not enable push on this device', 'red');
                     return false;

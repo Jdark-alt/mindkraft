@@ -4,9 +4,8 @@
 // Mindkraft reminder delivery — Cloud Functions (2nd gen)
 // ══════════════════════════════════════════════════════════════════════════
 //
-// Replaces the GitHub Actions cron in .github/workflows/send-reminders.yml,
-// which has no execution-time SLA and drifted 30-45+ minutes under load.
-// Cloud Scheduler fires this on a real schedule.
+// Replaced a GitHub Actions cron, which had no execution-time SLA and
+// drifted 30-45+ minutes under load. Cloud Scheduler has a real guarantee.
 //
 // Design: nextSendAt is precomputed in UTC whenever a reminder is created,
 // edited, or fires. The per-minute job is then a single indexed range query
@@ -20,7 +19,6 @@ const { getFirestore, Timestamp, FieldValue } = require('firebase-admin/firestor
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
-const { defineSecret } = require('firebase-functions/params');
 const logger = require('firebase-functions/logger');
 
 const {
@@ -45,12 +43,12 @@ const {
 initializeApp();
 const db = getFirestore();
 
-// VAPID credentials live in Secret Manager. These are the same three values
-// currently held as GitHub Actions secrets — see DEPLOY.md for the commands
-// to copy them across.
-const VAPID_PUBLIC_KEY = defineSecret('VAPID_PUBLIC_KEY');
-const VAPID_PRIVATE_KEY = defineSecret('VAPID_PRIVATE_KEY');
-const VAPID_CONTACT_EMAIL = defineSecret('VAPID_CONTACT_EMAIL');
+// VAPID credentials arrive as runtime environment variables. The deploy
+// workflow writes functions/.env from the repo's GitHub secrets, and the
+// Firebase CLI turns that into the deployed function's environment.
+//
+// Deliberately not Secret Manager: that would need extra IAM roles and an
+// interactive CLI step, and this project deploys entirely from CI.
 
 // ⚠️ CHECK THIS BEFORE THE FIRST DEPLOY.
 // Firestore triggers must run in the region hosting the database, and this
@@ -58,7 +56,7 @@ const VAPID_CONTACT_EMAIL = defineSecret('VAPID_CONTACT_EMAIL');
 // us-central1 is what a project gets when the database is created without an
 // explicit location choice (nam5/us-central). Confirm with
 //   firebase firestore:databases:list
-// and change this one constant if it says otherwise. See DEPLOY.md §1.
+// and change this one constant if it says otherwise. See REMINDERS.md.
 const REGION = 'us-central1';
 
 // Ceiling on reminders handled in a single minute. Well above realistic
@@ -94,19 +92,21 @@ async function rollForward(ref, reminder, timezone, extra, fromDate) {
 
 exports.sendDueReminders = onSchedule(
     {
+        // "every 1 minutes" fires on a fixed interval, so the timeZone here is
+        // only about when the cron string is interpreted — irrelevant at this
+        // cadence. Per-user local times are handled entirely by nextSendAt.
         schedule: 'every 1 minutes',
         timeZone: 'Etc/UTC',
         region: REGION,
-        secrets: [VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_CONTACT_EMAIL],
         memory: '256MiB',
         timeoutSeconds: 120,
         retryCount: 0,
     },
     async () => {
         configureWebPush({
-            publicKey: VAPID_PUBLIC_KEY.value(),
-            privateKey: VAPID_PRIVATE_KEY.value(),
-            contactEmail: VAPID_CONTACT_EMAIL.value(),
+            publicKey: process.env.VAPID_PUBLIC_KEY,
+            privateKey: process.env.VAPID_PRIVATE_KEY,
+            contactEmail: process.env.VAPID_CONTACT_EMAIL,
         });
 
         const now = Timestamp.now();

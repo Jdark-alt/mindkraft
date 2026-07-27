@@ -31,7 +31,7 @@ function initAdmin() {
 
 // Push is best-effort — a map that generated fine must never fail because a
 // notification couldn't be sent. web-push is only wired up when VAPID keys are
-// present (they already power scripts/send-reminders.js).
+// present (the same keys power the reminder Cloud Functions in /functions).
 let webpush = null;
 try {
     if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
