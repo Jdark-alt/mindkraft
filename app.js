@@ -13109,8 +13109,14 @@
                     }
                     renderActivityReminders();
                 }).catch(function(err) {
-                    console.warn('Could not load reminders:', err);
+                    console.error('Could not load reminders:', err);
                     renderActivityReminders();
+                    if (err && String(err.code || '').indexOf('permission-denied') !== -1) {
+                        var listEl = document.getElementById('arList');
+                        if (listEl) {
+                            listEl.innerHTML = '<p class="ar-empty">Can\'t load reminders — the Firestore reminder rules haven\'t been published yet.</p>';
+                        }
+                    }
                 });
 
                 // Populate saved time
@@ -13328,6 +13334,9 @@
 
         function reminderErrorMessage(err) {
             var code = (err && err.code) ? String(err.code) : '';
+            // Almost always means the Firestore reminder rules haven't been
+            // published — name it, rather than showing a generic failure.
+            if (code.indexOf('permission-denied') !== -1) return 'Permission denied — Firestore reminder rules not published';
             if (code.indexOf('resource-exhausted') !== -1) return 'Max ' + MAX_ACTIVITY_REMINDERS + ' reminders — remove one to add another';
             if (code.indexOf('already-exists') !== -1) return 'That activity already has a reminder';
             if (code.indexOf('not-found') !== -1) return 'That activity no longer exists';
@@ -13509,15 +13518,38 @@
                 }
 
                 closeActivityReminderModal();
-                await refreshReminderState();
-                renderActivityReminders();
             } catch (err) {
                 console.error('Activity reminder save failed:', err);
                 showToast(reminderErrorMessage(err), 'red');
+                return;
             } finally {
                 if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
             }
+
+            // Refreshing the list is a separate concern from saving. It used to
+            // sit inside the try above, so a failure to re-read the collection
+            // was reported as "could not save reminder" — even though the save
+            // had already succeeded and the notification would still arrive.
+            await reloadRemindersUI();
         };
+
+        // Re-read the reminder docs and repaint. Never throws: a read failure
+        // here means the list is stale, not that anything went wrong with the
+        // user's action, so it says so plainly instead of raising an error.
+        async function reloadRemindersUI() {
+            try {
+                await refreshReminderState();
+                renderActivityReminders();
+            } catch (err) {
+                console.error('Could not read reminders:', err);
+                renderActivityReminders();
+                if (err && String(err.code || '').indexOf('permission-denied') !== -1) {
+                    showToast('Saved. List needs the Firestore reminder rules to display.', 'olive');
+                } else {
+                    showToast('Saved, but the list could not be refreshed', 'olive');
+                }
+            }
+        }
 
         window.toggleActivityReminder = async function(reminderId, active) {
             // Check the cap here as well as server-side. The onReminderWrite
@@ -13537,13 +13569,13 @@
 
             try {
                 await updateDoc(reminderDocRef(reminderId), { active: !!active, updatedAt: new Date() });
-                await refreshReminderState();
-                renderActivityReminders();
             } catch (err) {
                 console.error('Reminder toggle failed:', err);
                 showToast(reminderErrorMessage(err), 'red');
-                renderActivityReminders();
+                renderActivityReminders(); // snap the switch back
+                return;
             }
+            await reloadRemindersUI();
         };
 
         window.deleteActivityReminder = async function(reminderId) {
@@ -13552,13 +13584,13 @@
             if (!confirm('Delete the reminder for ' + label + '?')) return;
             try {
                 await deleteDoc(reminderDocRef(reminderId));
-                await refreshReminderState();
-                renderActivityReminders();
                 showToast('Reminder deleted', 'red');
             } catch (err) {
                 console.error('Reminder delete failed:', err);
                 showToast(reminderErrorMessage(err), 'red');
+                return;
             }
+            await reloadRemindersUI();
         };
 
         // ── Notification tap → jump to the activity ───────────────────────
