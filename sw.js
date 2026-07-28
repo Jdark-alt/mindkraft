@@ -7,7 +7,7 @@
 // Bump CACHE_VERSION whenever you deploy a meaningful update.
 // This causes the old cache to be deleted and the new one installed.
 
-const CACHE_VERSION = 'v157';
+const CACHE_VERSION = 'v158';
 const CACHE_NAME = 'mindkraft-shell-' + CACHE_VERSION;
 
 // Files that make up the app shell — must all load for the app to work
@@ -59,9 +59,44 @@ self.addEventListener('activate', function(event) {
     );
 });
 
+// ── Background revalidation throttle ──────────────────────────────────────
+// Decides whether a cache hit is stale enough to be worth re-fetching in the
+// background, so a cached asset isn't re-downloaded on every single request.
+//
+// Freshness comes from the cached response's own Date header, which survives
+// the browser terminating and restarting this worker — a purely in-memory
+// timestamp would reset on every restart and refetch the whole shell again on
+// the next app open, which is most of what we are trying to avoid. The
+// in-memory map is only a fallback for responses served without a Date.
+//
+// One hour is well inside the window where a real deploy would have bumped
+// CACHE_VERSION, which rebuilds the cache from the network outright.
+var REVALIDATE_MS = 60 * 60 * 1000;
+var lastRevalidated = Object.create(null);
+
+function shouldRevalidate(url, cachedResponse) {
+    var now = Date.now();
+
+    var dateHeader = cachedResponse && cachedResponse.headers.get('date');
+    if (dateHeader) {
+        var cachedAt = Date.parse(dateHeader);
+        if (!isNaN(cachedAt)) return (now - cachedAt) >= REVALIDATE_MS;
+    }
+
+    // No usable Date header — fall back to a per-worker-lifetime throttle.
+    var last = lastRevalidated[url];
+    if (last && (now - last) < REVALIDATE_MS) return false;
+    lastRevalidated[url] = now;
+    return true;
+}
+
 // ── Fetch: routing logic ──────────────────────────────────────────────────
 self.addEventListener('fetch', function(event) {
     var url = event.request.url;
+
+    // Only GETs are cacheable; passing anything else through avoids a
+    // pointless cache lookup on every POST/PUT the app makes.
+    if (event.request.method !== 'GET') return;
 
     // Never intercept Firebase or Google auth/api calls
     if (
@@ -92,21 +127,32 @@ self.addEventListener('fetch', function(event) {
         return;
     }
 
-    // App shell — cache first, fallback to network
+    // App shell — cache first, with a THROTTLED background revalidation.
+    //
+    // The previous version re-fetched every cached asset on every request.
+    // The shell is ~1.9 MB (app.js + style.css + index.html), so each app
+    // open quietly re-downloaded all of it in the background — burning mobile
+    // data, and competing with Firestore for bandwidth and with the render for
+    // main-thread time at exactly the moment the app is trying to start up.
+    //
+    // A cached asset is now revalidated at most once per REVALIDATE_MS per
+    // URL. Correctness is unaffected: a real deploy bumps CACHE_VERSION, which
+    // builds a fresh cache from the network in the install handler.
     event.respondWith(
         caches.match(event.request).then(function(cached) {
             if (cached) {
-                // Serve from cache immediately, then refresh cache in background
-                // Background refresh — update cache silently, never block the response
-                fetch(event.request).then(function(networkResponse) {
-                    if (networkResponse && networkResponse.status === 200) {
-                        caches.open(CACHE_NAME).then(function(cache) {
-                            cache.put(event.request, networkResponse.clone());
-                        });
-                    }
-                }).catch(function() {
-                    // Network unavailable — cached copy is already serving the page, no action needed
-                });
+                if (shouldRevalidate(url, cached)) {
+                    // Background refresh — update cache silently, never block the response
+                    fetch(event.request).then(function(networkResponse) {
+                        if (networkResponse && networkResponse.status === 200) {
+                            caches.open(CACHE_NAME).then(function(cache) {
+                                cache.put(event.request, networkResponse.clone());
+                            });
+                        }
+                    }).catch(function() {
+                        // Network unavailable — cached copy is already serving the page, no action needed
+                    });
+                }
                 return cached;
             }
             // Not in cache — fetch from network, fail silently if offline
