@@ -997,7 +997,13 @@
                     window.mkHandleReminderDeepLink();
                     // Init the restore backup button visibility (async — non-blocking)
                     updateRestoreBackupBtn().catch(e => {});
-                    if (!window.userData.onboardingComplete &&
+                    if (window._dataLoadFailed) {
+                        // The account looks empty only because we could not read
+                        // it. Showing the onboarding wizard here would tell the
+                        // user their data is gone and invite them to build a new
+                        // account on top of it. Say what actually happened.
+                        showDataLoadFailure();
+                    } else if (!window.userData.onboardingComplete &&
                         (window.userData.dimensions || []).length === 0 &&
                         (window.userData.totalXP || 0) === 0 &&
                         (window.userData.level || 1) === 1) {
@@ -1056,15 +1062,63 @@
             }
         });
 
+        // ── Failed-load banner ────────────────────────────────────────────
+        // Shown instead of the onboarding wizard when the account could not be
+        // read. The distinction matters to the user: "we couldn't load your
+        // data" is recoverable and their account is untouched, whereas the
+        // onboarding wizard reads as "your data is gone, start again".
+        //
+        // Writes are already blocked by saveUserData's guard, so nothing the
+        // user does from here can make the situation worse.
+        function showDataLoadFailure() {
+            const reason = window._dataLoadError || 'unknown error';
+            const denied = String(reason).indexOf('permission') !== -1;
+
+            let el = document.getElementById('dataLoadFailOverlay');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'dataLoadFailOverlay';
+                el.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.86);' +
+                    'display:flex;align-items:center;justify-content:center;padding:24px;';
+                document.body.appendChild(el);
+            }
+            el.innerHTML =
+                '<div class="tutorial-card" style="max-width:420px;">' +
+                  '<div class="tutorial-emoji">⚠️</div>' +
+                  '<h2 class="tutorial-title">Couldn\'t load your data</h2>' +
+                  '<p class="tutorial-body">' +
+                    'Your account is still there — this device just couldn\'t read it, so the app ' +
+                    'is running read-only and will not save anything until it can.' +
+                    (denied
+                      ? '<br><br>The server refused the request, which usually means the database ' +
+                        'security rules changed. Your activities and XP are untouched.'
+                      : '<br><br>This is usually a connection problem. Check your network and try again.') +
+                    '<br><br><span style="opacity:0.6;font-size:12px;">Reason: ' + escapeHtml(reason) + '</span>' +
+                  '</p>' +
+                  '<button class="tutorial-cta" onclick="window.location.reload()">Try again</button>' +
+                  '<button class="tutorial-skip" onclick="document.getElementById(\'dataLoadFailOverlay\').remove()">' +
+                    'Continue without saving</button>' +
+                '</div>';
+            el.style.display = 'flex';
+        }
+        window.showDataLoadFailure = showDataLoadFailure;
+
         // Load User Data
         async function loadUserData(uid) {
             const userDocRef = doc(db, 'users', uid);
             let userDoc = null;
+            // Distinguishes "Firestore told us there is no document" from
+            // "we never got an answer". Both used to end up in the same blank
+            // fallback below, which is how a failed read could be mistaken for
+            // a brand-new account. See _dataLoadFailed / saveUserData.
+            let readFailed = false;
+            let readError = null;
 
             // Try network first, fall back to Firestore local cache on offline errors
             try {
                 userDoc = await getDoc(userDocRef);
             } catch (netErr) {
+                readError = netErr;
                 const isOffline = netErr.code === 'unavailable' ||
                     (netErr.message && (netErr.message.includes('offline') ||
                      netErr.message.includes('network') || netErr.message.includes('fetch')));
@@ -1075,15 +1129,19 @@
                         console.log('Loaded user data from local Firestore cache');
                         showToast('⚠️ Offline — showing saved data', 'olive');
                     } catch (cacheErr) {
-                        // Cache also empty (first install, cleared storage, etc.)
+                        // Neither the network nor the local cache could answer.
+                        // We do NOT know whether this account has data.
                         console.warn('No local cache available:', cacheErr.message);
                         userDoc = null;
+                        readFailed = true;
                     }
                 }
             }
 
             if (userDoc && userDoc.exists()) {
                 window.userData = userDoc.data();
+                window._dataLoadFailed = false;
+                window._dataLoadError = null;
                 mkTouchActivityIndex();
                 // Backfill friendCode for existing users who don't have one yet
                 if (!window.userData.friendCode) {
@@ -1099,11 +1157,23 @@
                     window._gridCardTypes = _settings.gridCardTypes;
                 }
             } else {
-                // New user or no cache at all — do NOT write to Firestore yet.
-                // The onboarding flow (obQuickStart / obBuildOwn) calls saveUserData()
-                // once the user has actually made a choice. Writing a blank doc here
-                // risks overwriting a real user's data if Firestore returned a false
-                // "not found" due to a network blip or a new-device first login.
+                // Either a genuinely new user (Firestore answered: no such
+                // document) or a read we could not complete. The placeholder
+                // below looks the same in both cases, so _dataLoadFailed is
+                // what tells them apart everywhere downstream.
+                //
+                // This distinction is load-bearing. When the read fails, this
+                // blank object is NOT the user's account — it is a stand-in
+                // for data we could not see. Persisting it would destroy the
+                // real document, and showing onboarding on top of it invites
+                // the user to do exactly that.
+                window._dataLoadFailed = readFailed;
+                window._dataLoadError = readFailed ? (readError && (readError.code || readError.message)) : null;
+                if (readFailed) {
+                    console.error('[loadUserData] Could not read users/' + uid +
+                        ' (' + window._dataLoadError + '). Treating this session as READ-ONLY — ' +
+                        'no writes will be sent until a load succeeds.');
+                }
                 window.userData = {
                     level: 1, currentXP: 0, totalXP: 0,
                     dimensions: [], activities: [], challenges: [],
@@ -8352,6 +8422,31 @@
 
         async function saveUserData() {
             if (!window.currentUser) return;
+
+            // ── Never overwrite data we failed to read ────────────────────
+            // saveUserData does a full setDoc of window.userData — it replaces
+            // the document rather than merging into it. If the initial read
+            // failed, window.userData is the empty placeholder loadUserData
+            // substitutes, and writing it destroys the real account.
+            //
+            // That was not hypothetical. Two callers fired within a second of
+            // load, before the user could touch anything: syncUserTimezone()
+            // (from loadUserData itself) and processStreakPauses() (from the
+            // auth handler). Both call saveUserData, so both were writing an
+            // empty account over a real one whenever a read failed — exactly
+            // the case loadUserData's "do NOT write to Firestore yet" comment
+            // was trying to prevent.
+            //
+            // The guard lives here, at the single chokepoint every write goes
+            // through, rather than at ~90 call sites that would each have to
+            // remember. It clears as soon as a load succeeds.
+            if (window._dataLoadFailed) {
+                console.warn('[saveUserData] Blocked: the last load of this account failed (' +
+                    (window._dataLoadError || 'unknown') + '), so what is in memory is a ' +
+                    'placeholder, not your data. Refusing to overwrite the stored document.');
+                return;
+            }
+
             try {
                 const userDocRef = doc(db, 'users', window.currentUser.uid);
                 const today = localToday();
