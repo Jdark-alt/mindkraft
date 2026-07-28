@@ -20,10 +20,10 @@
         const auth = getAuth(app);
         const db = getFirestore(app);
         const analytics = getAnalytics(app);
-        // Region must match the one the reminder functions deploy to
-        // (functions/index.js REGION). Mismatch here surfaces as a CORS error
-        // on the callable, which is a confusing way to learn about it.
-        const functions = getFunctions(app, 'us-central1');
+        // Must match functions/index.js REGION, which in turn matches the
+        // Firestore database's region (asia-south1). A mismatch here surfaces
+        // as a CORS error on the callable — a confusing way to learn about it.
+        const functions = getFunctions(app, 'asia-south1');
 
         // ── Analytics ─────────────────────────────────────────────────────
         // Central wrapper — add PostHog or other tools here later, one line each

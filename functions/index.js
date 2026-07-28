@@ -50,14 +50,13 @@ const db = getFirestore();
 // Deliberately not Secret Manager: that would need extra IAM roles and an
 // interactive CLI step, and this project deploys entirely from CI.
 
-// ⚠️ CHECK THIS BEFORE THE FIRST DEPLOY.
-// Firestore triggers must run in the region hosting the database, and this
-// repo contains no Firebase config to read it from, so it is a best guess:
-// us-central1 is what a project gets when the database is created without an
-// explicit location choice (nam5/us-central). Confirm with
-//   firebase firestore:databases:list
-// and change this one constant if it says otherwise. See REMINDERS.md.
-const REGION = 'us-central1';
+// Must match the region hosting the Firestore database — confirmed
+// asia-south1 (Mumbai) in the Firebase Console. Firestore triggers will not
+// deploy against a mismatched region, and the callable would fail CORS.
+//
+// If the database is ever moved, change this AND the region passed to
+// getFunctions() in app.js. They have to agree.
+const REGION = 'asia-south1';
 
 // Ceiling on reminders handled in a single minute. Well above realistic
 // volume; exists so a runaway backlog degrades gracefully instead of
