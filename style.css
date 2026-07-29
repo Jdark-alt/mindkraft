@@ -421,7 +421,7 @@
             justify-content: center;
             gap: 10px;
             font-family: inherit;
-            transition: all 0.2s;
+            transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s, width 0.2s, height 0.2s, border-radius 0.2s;
             letter-spacing: -0.01em;
             box-shadow: 0 4px 20px rgba(90,159,212,0.3);
             margin-bottom: 6px;
@@ -700,7 +700,7 @@
             align-items: center;
             justify-content: center;
             gap: 10px;
-            transition: all 0.2s;
+            transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s, width 0.2s, height 0.2s, border-radius 0.2s;
             font-family: inherit;
         }
 
@@ -762,7 +762,7 @@
             cursor: pointer;
             font-size: 11px;
             font-weight: 500;
-            transition: all 0.18s;
+            transition: background-color 0.18s, border-color 0.18s, color 0.18s, box-shadow 0.18s, transform 0.18s, opacity 0.18s, width 0.18s, height 0.18s, border-radius 0.18s;
             text-align: center;
             font-family: inherit;
             white-space: nowrap;
@@ -1311,7 +1311,7 @@
             font-size: 12px;
             font-weight: 500;
             cursor: pointer;
-            transition: all 0.2s;
+            transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s, width 0.2s, height 0.2s, border-radius 0.2s;
             font-family: inherit;
             white-space: nowrap;
         }
@@ -1421,7 +1421,7 @@
             font-size: 14px;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.2s;
+            transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s, width 0.2s, height 0.2s, border-radius 0.2s;
             text-decoration: none;
             letter-spacing: -0.01em;
             box-shadow: 0 4px 16px rgba(74,124,158,0.35);
@@ -1510,7 +1510,7 @@
             font-size: 14px;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.2s;
+            transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s, width 0.2s, height 0.2s, border-radius 0.2s;
             display: flex;
             align-items: center;
             gap: 6px;
@@ -1708,7 +1708,7 @@
             position: relative; padding: 8px 10px;
             background: var(--color-bg-card); border: 1px solid var(--color-border);
             border-radius: 8px; color: var(--color-text-secondary);
-            cursor: pointer; display: flex; align-items: center; transition: all 0.15s;
+            cursor: pointer; display: flex; align-items: center; transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
         }
         .btn-search:hover { border-color: var(--color-accent-blue); color: var(--color-accent-blue); }
         /* ──────────────────────────────────────────────────────────────────
@@ -2075,7 +2075,7 @@
             cursor: pointer;
             font-size: 13px;
             font-weight: 600;
-            transition: all 0.2s;
+            transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s, width 0.2s, height 0.2s, border-radius 0.2s;
             font-family: inherit;
             letter-spacing: 0.01em;
             text-align: center;
@@ -2228,7 +2228,7 @@
             cursor: pointer;
             display: flex;
             align-items: center;
-            transition: all 0.15s;
+            transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
         }
 
         .btn-filter:hover, .btn-filter.active {
@@ -2402,7 +2402,7 @@
             border-radius: 6px;
             color: var(--color-text-secondary);
             cursor: pointer;
-            transition: all 0.18s;
+            transition: background-color 0.18s, border-color 0.18s, color 0.18s, box-shadow 0.18s, transform 0.18s, opacity 0.18s, width 0.18s, height 0.18s, border-radius 0.18s;
             font-size: 11px;
             font-family: inherit;
             white-space: nowrap;
@@ -2914,7 +2914,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            transition: all 0.15s;
+            transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
             -webkit-tap-highlight-color: transparent;
         }
         .day-btn:hover {
@@ -2941,7 +2941,7 @@
             font-weight: 500;
             cursor: pointer;
             text-align: center;
-            transition: all 0.15s;
+            transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
             font-family: inherit;
         }
         .custom-subtype-btn:hover {
@@ -2967,7 +2967,7 @@
             margin-left: 10px;
             margin-top: 2px;
             align-self: flex-start;
-            transition: all 0.18s;
+            transition: background-color 0.18s, border-color 0.18s, color 0.18s, box-shadow 0.18s, transform 0.18s, opacity 0.18s, width 0.18s, height 0.18s, border-radius 0.18s;
             color: transparent;
             font-size: 13px;
             font-weight: 700;
@@ -3848,7 +3848,7 @@
             font-size: 13px;
             font-weight: 500;
             cursor: pointer;
-            transition: all 0.15s;
+            transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
             font-family: inherit;
         }
 
@@ -3865,7 +3865,7 @@
             font-size: 13px;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.15s;
+            transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
             font-family: inherit;
         }
 
@@ -3934,7 +3934,7 @@
             font-size: 12px;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.2s;
+            transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s, width 0.2s, height 0.2s, border-radius 0.2s;
             white-space: nowrap;
         }
 
@@ -4055,7 +4055,7 @@
             border: 2px solid var(--color-border);
             background: var(--color-bg-primary);
             z-index: 1;
-            transition: all 0.3s;
+            transition: background-color 0.3s, border-color 0.3s, color 0.3s, box-shadow 0.3s, transform 0.3s, opacity 0.3s, width 0.3s, height 0.3s, border-radius 0.3s;
         }
 
         .reward-node.unlocked .reward-node-dot {
@@ -4091,7 +4091,7 @@
             border-radius: 12px;
             padding: 18px 20px;
             cursor: default;
-            transition: all 0.25s;
+            transition: background-color 0.25s, border-color 0.25s, color 0.25s, box-shadow 0.25s, transform 0.25s, opacity 0.25s, width 0.25s, height 0.25s, border-radius 0.25s;
             position: relative;
             overflow: hidden;
         }
@@ -4206,7 +4206,7 @@
             color: var(--color-text-secondary);
             font-size: 12px;
             cursor: pointer;
-            transition: all 0.2s;
+            transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s, width 0.2s, height 0.2s, border-radius 0.2s;
         }
 
         .btn-reward-edit:hover {
@@ -4223,7 +4223,7 @@
             color: var(--color-accent-blue);
             font-size: 12px;
             cursor: pointer;
-            transition: all 0.2s;
+            transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s, width 0.2s, height 0.2s, border-radius 0.2s;
         }
 
         .btn-reward-add:hover {
@@ -4315,7 +4315,7 @@
             font-size: 13px;
             font-weight: 700;
             cursor: pointer;
-            transition: all 0.2s;
+            transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s, width 0.2s, height 0.2s, border-radius 0.2s;
             box-shadow: 0 4px 16px rgba(107,124,63,0.4);
         }
 
@@ -4384,7 +4384,7 @@
             background: var(--recessed-bg-3); border: 1px solid rgba(255,255,255,0.08);
             border-radius: 999px; color: var(--color-text-secondary);
             font-size: 11.5px; font-weight: 600; letter-spacing: -0.005em;
-            cursor: pointer; transition: all 0.15s; white-space: nowrap; font-family: inherit; line-height: 1.5;
+            cursor: pointer; transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s; white-space: nowrap; font-family: inherit; line-height: 1.5;
         }
         .filter-pill:hover { border-color: rgba(255,255,255,0.18); color: var(--color-text-primary); }
         .filter-pill.active { background: var(--color-progress); border-color: var(--color-progress); color: #fff; }
@@ -4886,7 +4886,7 @@
             padding: 8px;
             border-radius: 10px;
             border: 2px solid transparent;
-            transition: all 0.2s;
+            transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s, width 0.2s, height 0.2s, border-radius 0.2s;
         }
 
         .theme-swatch:hover { border-color: var(--color-border); background: var(--color-bg-secondary); }
@@ -5111,7 +5111,7 @@
             padding: 3px 6px;
             cursor: pointer;
             flex-shrink: 0;
-            transition: all 0.15s;
+            transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
         }
         .theme-hex-copy:hover { border-color: var(--color-accent-blue); color: var(--color-text-primary); }
 
@@ -5143,7 +5143,7 @@
             font-size: 12px;
             padding: 2px 5px;
             cursor: pointer;
-            transition: all 0.15s;
+            transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
         }
         .theme-color-hex-copy:hover { color: var(--color-text-primary); border-color: var(--color-accent-blue); }
 
@@ -5213,7 +5213,7 @@
             color: var(--color-text-secondary);
             cursor: pointer;
             margin: 2px;
-            transition: all 0.15s;
+            transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
         }
         .theme-preset-pill:hover {
             border-color: var(--color-accent-blue);
@@ -5243,7 +5243,7 @@
             padding: 6px 10px;
             font-size: 12px;
             cursor: pointer;
-            transition: all 0.15s;
+            transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
         }
         .theme-saved-slot:hover { border-color: var(--color-accent-blue); }
         .theme-saved-slot.empty {
@@ -5316,7 +5316,7 @@
             font-size: 12px;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.2s;
+            transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s, width 0.2s, height 0.2s, border-radius 0.2s;
             white-space: nowrap;
         }
 
@@ -5353,7 +5353,7 @@
             border: 1px solid var(--color-border);
             background: var(--color-bg-secondary);
             cursor: pointer;
-            transition: all 0.2s;
+            transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s, width 0.2s, height 0.2s, border-radius 0.2s;
             text-align: left;
         }
 
@@ -5922,7 +5922,7 @@
             border: 1.5px solid var(--color-border); background: var(--color-bg-secondary);
             color: var(--color-text-secondary); font-size: 14px; font-weight: 500;
             cursor: pointer; text-align: left; display: flex; align-items: center; gap: 10px;
-            transition: all 0.18s; margin-bottom: 2px;
+            transition: background-color 0.18s, border-color 0.18s, color 0.18s, box-shadow 0.18s, transform 0.18s, opacity 0.18s, width 0.18s, height 0.18s, border-radius 0.18s; margin-bottom: 2px;
         }
         .metric-toggle-btn.active { border-color: var(--color-accent-blue); background: rgba(74,124,158,0.1); color: var(--color-text-primary); }
         .metric-toggle-btn .mtb-icon { font-size: 16px; }
@@ -5931,7 +5931,7 @@
             width: 18px; height: 18px; border-radius: 50%;
             border: 2px solid var(--color-border);
             display: flex; align-items: center; justify-content: center;
-            font-size: 10px; transition: all 0.18s; flex-shrink: 0;
+            font-size: 10px; transition: background-color 0.18s, border-color 0.18s, color 0.18s, box-shadow 0.18s, transform 0.18s, opacity 0.18s, width 0.18s, height 0.18s, border-radius 0.18s; flex-shrink: 0;
         }
         .metric-toggle-btn.active .mtb-check { background: var(--color-accent-blue); border-color: var(--color-accent-blue); color: #fff; }
         .ch-metric-panel {
@@ -5946,7 +5946,7 @@
             border: 1.5px dashed var(--color-border); background: transparent;
             color: var(--color-text-secondary); font-size: 13px; font-weight: 500;
             cursor: pointer; text-align: left; display: flex; align-items: center; gap: 8px;
-            transition: all 0.18s;
+            transition: background-color 0.18s, border-color 0.18s, color 0.18s, box-shadow 0.18s, transform 0.18s, opacity 0.18s, width 0.18s, height 0.18s, border-radius 0.18s;
         }
         .ch-picker-toggle:hover { border-color: var(--color-accent-blue); color: var(--color-text-primary); }
         .ch-picker-toggle.open { border-style: solid; border-color: var(--color-accent-blue); color: var(--color-text-primary); border-radius: 10px 10px 0 0; }
@@ -6004,7 +6004,7 @@
             border: 1px solid rgba(255,255,255,0.08);
             background: var(--recessed-bg-2);
             cursor: pointer;
-            transition: all 0.15s;
+            transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
         }
 
         .radio-option:hover {
@@ -6148,7 +6148,7 @@
             align-items: center;
             justify-content: center;
             cursor: pointer;
-            transition: all 0.15s;
+            transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
             flex-shrink: 0;
         }
         .btn-view-toggle:hover {
@@ -6634,7 +6634,7 @@
             color: var(--color-text-primary);
             font-size: 13px; font-weight: 600;
             cursor: pointer; font-family: inherit;
-            transition: all 0.15s;
+            transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
         }
         .grid-overlay-btn:hover { background: rgba(74,124,158,0.15); border-color: var(--color-accent-blue); }
         .grid-overlay-btn.complete {
@@ -7061,7 +7061,7 @@
             border: 2px solid rgba(255,255,255,0.18);
             background: rgba(255,255,255,0.02);
             flex-shrink: 0;
-            transition: all 0.18s;
+            transition: background-color 0.18s, border-color 0.18s, color 0.18s, box-shadow 0.18s, transform 0.18s, opacity 0.18s, width 0.18s, height 0.18s, border-radius 0.18s;
         }
         [data-theme-mode="light"] .planner-check-empty {
             border-color: rgba(0,0,0,0.18);
@@ -7167,7 +7167,7 @@
             font-size: 14px;
             padding: 4px 6px;
             border-radius: 5px;
-            transition: all 0.15s;
+            transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
             font-family: inherit;
         }
         .planner-del-btn:hover {
@@ -8009,7 +8009,7 @@
             font-size: 11px;
             font-weight: 700;
             cursor: pointer;
-            transition: all 0.15s;
+            transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
             font-family: inherit;
             line-height: 1;
         }
@@ -8115,7 +8115,7 @@
             font-weight: 700;
             cursor: pointer;
             border: 1.5px solid transparent;
-            transition: all 0.15s;
+            transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
             white-space: nowrap;
             font-family: inherit;
         }
@@ -8729,7 +8729,7 @@
             background: rgba(255,255,255,0.18);
             border: none;
             cursor: pointer;
-            transition: all 0.3s cubic-bezier(0.2,0.8,0.2,1);
+            transition: background-color 0.3s cubic-bezier(0.2,0.8,0.2,1), border-color 0.3s cubic-bezier(0.2,0.8,0.2,1), color 0.3s cubic-bezier(0.2,0.8,0.2,1), box-shadow 0.3s cubic-bezier(0.2,0.8,0.2,1), transform 0.3s cubic-bezier(0.2,0.8,0.2,1), opacity 0.3s cubic-bezier(0.2,0.8,0.2,1), width 0.3s cubic-bezier(0.2,0.8,0.2,1), height 0.3s cubic-bezier(0.2,0.8,0.2,1), border-radius 0.3s cubic-bezier(0.2,0.8,0.2,1);
             padding: 0;
         }
         [data-theme-mode="light"] .ob-dot { background: rgba(0,0,0,0.18); }
@@ -9467,7 +9467,7 @@
             width: 5px; height: 5px;
             border-radius: 50%;
             background: rgba(255,255,255,0.18);
-            transition: all 0.2s;
+            transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s, width 0.2s, height 0.2s, border-radius 0.2s;
         }
         [data-theme-mode="light"] .spotlight-step-dot { background: rgba(0,0,0,0.18); }
         .spotlight-step-dot-active {
@@ -11105,7 +11105,7 @@
     font-size: 11px;
     font-weight: 700;
     flex-shrink: 0;
-    transition: all 0.18s;
+    transition: background-color 0.18s, border-color 0.18s, color 0.18s, box-shadow 0.18s, transform 0.18s, opacity 0.18s, width 0.18s, height 0.18s, border-radius 0.18s;
     opacity: 0.65;
 }
 .cat-act-card:hover .cat-act-check {
@@ -11723,7 +11723,7 @@
     font-weight: 600;
     letter-spacing: -0.005em;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
     -webkit-tap-highlight-color: transparent;
     padding: 0;
     min-width: 0;
@@ -13876,7 +13876,7 @@
     font-weight: 600;
     cursor: pointer;
     font-family: inherit;
-    transition: all 0.15s;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
     background: transparent;
     border: 1px solid var(--color-border);
     color: var(--color-text-secondary);
@@ -14075,7 +14075,7 @@
     font-weight: 700;
     cursor: pointer;
     border: 1.5px solid transparent;
-    transition: all 0.15s;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
     white-space: nowrap;
     font-family: inherit;
 }
@@ -15106,7 +15106,7 @@
 .pr-help-body.open { max-height: 220px; opacity: 1; margin: 8px 2px 14px; }
 
 .pr-seg { display: flex; gap: 4px; background: var(--recessed-bg); border: 1px solid var(--recessed-ring); border-radius: 10px; padding: 4px; }
-.pr-seg-btn { flex: 1; background: none; border: none; border-radius: 7px; padding: 9px 6px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--color-text-secondary); cursor: pointer; transition: all 0.15s; letter-spacing: -0.01em; }
+.pr-seg-btn { flex: 1; background: none; border: none; border-radius: 7px; padding: 9px 6px; font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--color-text-secondary); cursor: pointer; transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s; letter-spacing: -0.01em; }
 .pr-seg-btn.active { background: var(--color-progress); color: #fff; box-shadow: 0 1px 6px rgba(90,159,212,0.3); }
 .pr-cad-hint { font-size: 11.5px; font-weight: 500; color: var(--color-text-secondary); opacity: 0.75; margin: 8px 2px 0; line-height: 1.45; }
 

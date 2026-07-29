@@ -177,7 +177,13 @@
         // Write a lean public snapshot to publicProfiles/{uid} - called inside saveUserData.
         // Failures are swallowed so they never block a private save.
         async function syncPublicProfile() {
-            if (!window.currentUser || !window.userData) return;
+            if (!window.userData) return;
+            // Publishes level, XP, streaks and category breakdown to the
+            // friends leaderboard. It writes its own document rather than
+            // going through saveUserData, so it needs the same invariant:
+            // on a failed load this would replace a real public profile with
+            // "level 1, 0 XP" — visible to everyone who has added the user.
+            if (!canPersistUserData('syncPublicProfile')) return;
             try {
                 const catXP   = getProfileCategoryXP();
                 const level   = window.userData.level || 1;
@@ -997,7 +1003,13 @@
                     window.mkHandleReminderDeepLink();
                     // Init the restore backup button visibility (async — non-blocking)
                     updateRestoreBackupBtn().catch(e => {});
-                    if (!window.userData.onboardingComplete &&
+                    if (window._dataLoadFailed) {
+                        // The account looks empty only because we could not read
+                        // it. Showing the onboarding wizard here would tell the
+                        // user their data is gone and invite them to build a new
+                        // account on top of it. Say what actually happened.
+                        showDataLoadFailure();
+                    } else if (!window.userData.onboardingComplete &&
                         (window.userData.dimensions || []).length === 0 &&
                         (window.userData.totalXP || 0) === 0 &&
                         (window.userData.level || 1) === 1) {
@@ -1020,6 +1032,11 @@
                         }
                     }
                 } else {
+                    // Signed out. Drop the ownership stamp and any queued save
+                    // so nothing from this session can be flushed against the
+                    // next account to sign in on this device.
+                    cancelPendingUserDataSave();
+                    window._dataOwnerUid = null;
                     window.currentUser = null;
                     window.userData = null;
                     loading.style.display = 'none';
@@ -1034,6 +1051,12 @@
                     // User IS authenticated but data load hit a network error.
                     // Show the app with whatever data loadUserData managed to set.
                     if (!window.userData) {
+                        // Another placeholder that is not the user's account.
+                        // Mark the session read-only for the same reason as in
+                        // loadUserData — this must never reach Firestore.
+                        window._dataLoadFailed = true;
+                        window._dataLoadError = (error && (error.code || error.message)) || 'load error';
+                        window._dataOwnerUid = null;
                         window.userData = {
                             level: 1, currentXP: 0, totalXP: 0,
                             dimensions: [], activities: [], challenges: []
@@ -1056,15 +1079,134 @@
             }
         });
 
+        // ══════════════════════════════════════════════════════════════════
+        // ── The write invariant ───────────────────────────────────────────
+        // ══════════════════════════════════════════════════════════════════
+        // saveUserData does a full setDoc of window.userData: it REPLACES the
+        // stored document rather than merging into it. So a write is only ever
+        // safe when what is in memory really is the signed-in user's account.
+        // Three ways that can be false, all of which have to be caught here
+        // rather than at the ~90 individual call sites:
+        //
+        //   1. The load failed. loadUserData substitutes an empty placeholder
+        //      when it cannot read the document, and that placeholder is
+        //      indistinguishable from a new account. Writing it destroys the
+        //      real one. This is not hypothetical: syncUserTimezone() (called
+        //      from loadUserData itself) and processStreakPauses() (called
+        //      from the auth handler) both fired within a second of load,
+        //      before the user could touch anything.
+        //
+        //   2. A load is in flight. _dataOwnerUid is cleared for the duration
+        //      of loadUserData, so a save queued by the previous session
+        //      cannot land while the next account is still being fetched.
+        //
+        //   3. The signed-in user changed. Saves are debounced, so a write
+        //      scheduled while user A was active could otherwise be delivered
+        //      after user B signed in — writing A's account into B's document.
+        //      Stamping the data with its owner makes that impossible.
+        //
+        // `reason` is only used to make the console message say who was
+        // blocked, which matters when diagnosing this from a user's report.
+        function canPersistUserData(reason) {
+            if (!window.currentUser) return false;   // signed out — silent, normal
+
+            if (window._dataLoadFailed) {
+                console.warn('[' + (reason || 'write') + '] Blocked: the last load of this account ' +
+                    'failed (' + (window._dataLoadError || 'unknown') + '), so what is in memory is a ' +
+                    'placeholder, not your data. Refusing to overwrite the stored document.');
+                return false;
+            }
+            if (!window._dataOwnerUid) {
+                console.warn('[' + (reason || 'write') + '] Blocked: no account is loaded yet.');
+                return false;
+            }
+            if (window._dataOwnerUid !== window.currentUser.uid) {
+                console.warn('[' + (reason || 'write') + '] Blocked: the data in memory belongs to a ' +
+                    'different account than the one signed in. Refusing to write it.');
+                return false;
+            }
+            return true;
+        }
+        window.canPersistUserData = canPersistUserData;
+
+        // Pending-save handle. Declared here rather than next to
+        // debouncedSaveUserData so cancelPendingUserDataSave — which runs
+        // during the auth flow, early — can reach it without a dead zone.
+        var _saveDebounceTimer = null;
+
+        // Drops any save that has been scheduled but not yet delivered. Called
+        // when the signed-in user changes, so a pending write from the old
+        // session can never be flushed against the new one.
+        function cancelPendingUserDataSave() {
+            if (_saveDebounceTimer) {
+                clearTimeout(_saveDebounceTimer);
+                _saveDebounceTimer = null;
+            }
+        }
+
+        // ── Failed-load banner ────────────────────────────────────────────
+        // Shown instead of the onboarding wizard when the account could not be
+        // read. The distinction matters to the user: "we couldn't load your
+        // data" is recoverable and their account is untouched, whereas the
+        // onboarding wizard reads as "your data is gone, start again".
+        //
+        // Writes are already blocked by saveUserData's guard, so nothing the
+        // user does from here can make the situation worse.
+        function showDataLoadFailure() {
+            const reason = window._dataLoadError || 'unknown error';
+            const denied = String(reason).indexOf('permission') !== -1;
+
+            let el = document.getElementById('dataLoadFailOverlay');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'dataLoadFailOverlay';
+                el.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.86);' +
+                    'display:flex;align-items:center;justify-content:center;padding:24px;';
+                document.body.appendChild(el);
+            }
+            el.innerHTML =
+                '<div class="tutorial-card" style="max-width:420px;">' +
+                  '<div class="tutorial-emoji">⚠️</div>' +
+                  '<h2 class="tutorial-title">Couldn\'t load your data</h2>' +
+                  '<p class="tutorial-body">' +
+                    'Your account is still there — this device just couldn\'t read it, so the app ' +
+                    'is running read-only and will not save anything until it can.' +
+                    (denied
+                      ? '<br><br>The server refused the request, which usually means the database ' +
+                        'security rules changed. Your activities and XP are untouched.'
+                      : '<br><br>This is usually a connection problem. Check your network and try again.') +
+                    '<br><br><span style="opacity:0.6;font-size:12px;">Reason: ' + escapeHtml(reason) + '</span>' +
+                  '</p>' +
+                  '<button class="tutorial-cta" onclick="window.location.reload()">Try again</button>' +
+                  '<button class="tutorial-skip" onclick="document.getElementById(\'dataLoadFailOverlay\').remove()">' +
+                    'Continue without saving</button>' +
+                '</div>';
+            el.style.display = 'flex';
+        }
+        window.showDataLoadFailure = showDataLoadFailure;
+
         // Load User Data
         async function loadUserData(uid) {
             const userDocRef = doc(db, 'users', uid);
             let userDoc = null;
+            // Distinguishes "Firestore told us there is no document" from
+            // "we never got an answer". Both used to end up in the same blank
+            // fallback below, which is how a failed read could be mistaken for
+            // a brand-new account. See _dataLoadFailed / saveUserData.
+            let readFailed = false;
+            let readError = null;
+
+            // Nothing in memory belongs to anyone until this read resolves.
+            // Blocks any save queued by a previous session from landing while
+            // we are mid-fetch. Also drop anything already scheduled.
+            window._dataOwnerUid = null;
+            cancelPendingUserDataSave();
 
             // Try network first, fall back to Firestore local cache on offline errors
             try {
                 userDoc = await getDoc(userDocRef);
             } catch (netErr) {
+                readError = netErr;
                 const isOffline = netErr.code === 'unavailable' ||
                     (netErr.message && (netErr.message.includes('offline') ||
                      netErr.message.includes('network') || netErr.message.includes('fetch')));
@@ -1075,15 +1217,21 @@
                         console.log('Loaded user data from local Firestore cache');
                         showToast('⚠️ Offline — showing saved data', 'olive');
                     } catch (cacheErr) {
-                        // Cache also empty (first install, cleared storage, etc.)
+                        // Neither the network nor the local cache could answer.
+                        // We do NOT know whether this account has data.
                         console.warn('No local cache available:', cacheErr.message);
                         userDoc = null;
+                        readFailed = true;
                     }
                 }
             }
 
             if (userDoc && userDoc.exists()) {
                 window.userData = userDoc.data();
+                window._dataLoadFailed = false;
+                window._dataLoadError = null;
+                window._dataOwnerUid = uid;      // this data is now writable, for this uid only
+                mkTouchActivityIndex();
                 // Backfill friendCode for existing users who don't have one yet
                 if (!window.userData.friendCode) {
                     window.userData.friendCode = generateFriendCode();
@@ -1098,11 +1246,28 @@
                     window._gridCardTypes = _settings.gridCardTypes;
                 }
             } else {
-                // New user or no cache at all — do NOT write to Firestore yet.
-                // The onboarding flow (obQuickStart / obBuildOwn) calls saveUserData()
-                // once the user has actually made a choice. Writing a blank doc here
-                // risks overwriting a real user's data if Firestore returned a false
-                // "not found" due to a network blip or a new-device first login.
+                // Either a genuinely new user (Firestore answered: no such
+                // document) or a read we could not complete. The placeholder
+                // below looks the same in both cases, so _dataLoadFailed is
+                // what tells them apart everywhere downstream.
+                //
+                // This distinction is load-bearing. When the read fails, this
+                // blank object is NOT the user's account — it is a stand-in
+                // for data we could not see. Persisting it would destroy the
+                // real document, and showing onboarding on top of it invites
+                // the user to do exactly that.
+                window._dataLoadFailed = readFailed;
+                window._dataLoadError = readFailed ? (readError && (readError.code || readError.message)) : null;
+                // A confirmed-missing document really is a new account, so it
+                // stays writable and signup works as before. A failed read
+                // does not — the placeholder is never claimed by anyone, so
+                // canPersistUserData refuses every write against it.
+                window._dataOwnerUid = readFailed ? null : uid;
+                if (readFailed) {
+                    console.error('[loadUserData] Could not read users/' + uid +
+                        ' (' + window._dataLoadError + '). Treating this session as READ-ONLY — ' +
+                        'no writes will be sent until a load succeeds.');
+                }
                 window.userData = {
                     level: 1, currentXP: 0, totalXP: 0,
                     dimensions: [], activities: [], challenges: [],
@@ -1136,13 +1301,22 @@
         // Called every dashboard refresh so the displayed (and awarded) bonus stays live
         // without requiring users to manually re-edit the challenge after changing base XP.
         function refreshChallengeBonusXP() {
+            // Bail before walking the activity tree when there is nothing to
+            // recompute. Most users have no active challenge with per-activity
+            // targets, and this runs on every single dashboard tick.
+            const _challenges = window.userData.challenges || [];
+            const _needsRefresh = _challenges.some(ch =>
+                ch.status === 'active' && ch.activityTargets &&
+                ((ch.activityIds && ch.activityIds.length) || ch.activityId));
+            if (!_needsRefresh) return;
+
             const baseXPMap = {};
             (window.userData.dimensions || []).forEach(dim =>
                 (dim.paths || []).forEach(path =>
                     (path.activities || []).forEach(act => { baseXPMap[act.id] = act.baseXP || 1; })
                 )
             );
-            (window.userData.challenges || []).forEach(ch => {
+            _challenges.forEach(ch => {
                 if (ch.status !== 'active') return;
                 const ids = ch.activityIds || (ch.activityId ? [ch.activityId] : []);
                 if (!ids.length || !ch.activityTargets) return;
@@ -1183,17 +1357,31 @@
             // it AFTER the width has been measured and committed, so the
             // gold stroke never animates while the SVG is being resized
             // (which previously caused a visible jitter on first load).
+            //
+            // The measurement is skipped when the level has not changed since
+            // it last succeeded. getComputedTextLength() forces a synchronous
+            // style-and-layout flush of the SVG, and it was running on every
+            // dashboard tick — i.e. after every single activity completion —
+            // to re-derive a width that only ever changes when the digits do.
             (function syncLevelSvgWidth() {
                 var traceEl = document.getElementById('currentLevelTrace');
                 if (traceEl) traceEl.textContent = level;
                 var fillEl = document.getElementById('currentLevel');
                 var svgEl = document.getElementById('levelSvg');
                 if (!fillEl || !svgEl) return;
+                var needsMeasure = (window._levelSvgSizedFor !== level);
+                if (!needsMeasure && traceEl && traceEl.classList.contains('trace-ready')) return;
                 requestAnimationFrame(function() {
                     try {
-                        var len = fillEl.getComputedTextLength();
-                        if (len > 0) {
-                            svgEl.setAttribute('width', Math.ceil(len) + 4);
+                        if (needsMeasure) {
+                            var len = fillEl.getComputedTextLength();
+                            if (len > 0) {
+                                svgEl.setAttribute('width', Math.ceil(len) + 4);
+                                // Only remember the level once a real
+                                // measurement landed, so a pre-layout run
+                                // (len === 0) is retried on the next tick.
+                                window._levelSvgSizedFor = level;
+                            }
                         }
                     } catch (e) { /* pre-layout — retried on next dashboard tick */ }
                     // After width is set, arm the trace animation. The 80ms
@@ -1230,8 +1418,8 @@
                 }
             }
 
-            const today = new Date().toDateString();
-            const todayKey = localToday();
+            const todayDayKey = mkTodayKey();   // integer local-day key, see mkDayKey
+            const todayKey = localToday();      // 'YYYY-MM-DD' string
             let completedToday = 0;
             let xpToday = 0;
             let longestStreak = 0;
@@ -1253,8 +1441,7 @@
                             for (let i = hist.length - 1; i >= 0; i--) {
                                 const e = hist[i];
                                 if (!e.date) continue;
-                                const d = new Date(e.date);
-                                if (d.toDateString() !== today) break;
+                                if (mkDayKey(new Date(e.date)) !== todayDayKey) break;
                                 if (!e.isPenalty) completedToday++;
                                 xpToday += (e.xp || 0);
                             }
@@ -1280,9 +1467,17 @@
             if (_longestEl)   _longestEl.textContent   = longestStreak;
 
             const activeTab = window.currentTab || 'activities';
-            renderActivitiesList();
-            // Re-render dimensions if the Categories sub-tab is visible
+            // Only re-render the panels the user can actually see. Previously
+            // renderActivitiesList() ran on EVERY dashboard tick regardless of
+            // tab — rebuilding the full activity list (and re-running the
+            // per-activity streak/cycle computations behind it) while the user
+            // was looking at Analytics, Challenges or Settings.
+            //
+            // switchTab() renders whichever tab becomes visible, so a tab that
+            // was skipped here is always brought up to date before it is shown.
             if (activeTab === 'activities') {
+                var myActsPanel = document.getElementById('activitiesSubMyActivities');
+                if (!myActsPanel || myActsPanel.style.display !== 'none') renderActivitiesList();
                 var catPanel = document.getElementById('activitiesSubCategories');
                 if (catPanel && catPanel.style.display !== 'none') renderDimensions();
                 var planPanel = document.getElementById('activitiesInlinePlanner');
@@ -1580,8 +1775,8 @@
                         + '<span class="act-group-label">' + g.label + '</span>'
                         + '<span class="act-group-count">' + g.activities.length + '</span>'
                         + '</div>'
-                        + '<div class="act-group-body ' + (isExpanded ? 'expanded' : '') + '">'
-                        + renderActivityContent(g.activities)
+                        + '<div class="act-group-body ' + (isExpanded ? 'expanded' : '') + '"' + groupBodyAttrs(isExpanded) + '>'
+                        + groupBodyHtml(g.key, g.activities, isExpanded)
                         + '</div></div>';
                 }).join('');
 
@@ -1605,8 +1800,8 @@
                             <span class="act-group-label">${g.label}</span>
                             <span class="act-group-count">${g.activities.length}</span>
                         </div>
-                        <div class="act-group-body ${isExpanded ? 'expanded' : ''}">
-                            ${renderActivityContent(g.activities)}
+                        <div class="act-group-body ${isExpanded ? 'expanded' : ''}"${groupBodyAttrs(isExpanded)}>
+                            ${groupBodyHtml(g.key, g.activities, isExpanded)}
                         </div>
                     </div>`;
                 }).join('');
@@ -1716,9 +1911,10 @@
                         + '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>'
                         + '</button>'
                         + '</div>'
-                        + '<div class="act-group-body ' + (isExpanded ? 'expanded' : '') + '">'
+                        + '<div class="act-group-body ' + (isExpanded ? 'expanded' : '') + '"'
+                        + (acts.length ? groupBodyAttrs(isExpanded) : '') + '>'
                         + (acts.length
-                            ? renderActivityContent(acts)
+                            ? groupBodyHtml(key, acts, isExpanded)
                             : '<div class="routine-empty-inline">No activities in this group yet. <a href="#" onclick="event.preventDefault();openGroupModal(\'' + g.id + '\')">Add some →</a></div>')
                         + '</div></div>';
                 });
@@ -1737,8 +1933,8 @@
                         + '<span class="act-group-label">Other</span>'
                         + '<span class="act-group-count">' + ungrouped.length + '</span>'
                         + '</div>'
-                        + '<div class="act-group-body ' + (uExpanded ? 'expanded' : '') + '">'
-                        + renderActivityContent(ungrouped)
+                        + '<div class="act-group-body ' + (uExpanded ? 'expanded' : '') + '"' + groupBodyAttrs(uExpanded) + '>'
+                        + groupBodyHtml(ukey, ungrouped, uExpanded)
                         + '</div></div>';
                 }
 
@@ -1772,10 +1968,41 @@
             window._justToggledActivityId = null;
         }
 
+        // Opening or closing a group ("Done", "Not Now", a routine…) used to
+        // re-render every card in the list. Now it fills the body on first
+        // open (see groupBodyHtml) and is a plain class flip after that.
         window.toggleActivityGroup = function(key) {
             if (!window.activityGroupExpanded) window.activityGroupExpanded = {};
-            window.activityGroupExpanded[key] = window.activityGroupExpanded[key] === false ? true : false;
-            renderActivitiesList();
+
+            const groupEl = document.querySelector('.act-group[data-group="' + key + '"]');
+            const body = groupEl && groupEl.querySelector('.act-group-body');
+            const cached = _groupActivityCache[key];
+            // Without the cache we cannot fill a lazy body — fall back to a
+            // full render, which is what this always used to do anyway.
+            if (!body || (body.hasAttribute('data-lazy') && !cached)) {
+                window.activityGroupExpanded[key] = window.activityGroupExpanded[key] === false;
+                renderActivitiesList();
+                return;
+            }
+
+            // Derive the next state from what is actually on screen rather
+            // than from the stored flag. The stored flag is `undefined` until
+            // the group is first toggled, and groups do not share a default:
+            // "To Do" and the frequency buckets open by default, while "Done",
+            // "Not Now", inactive routines and "Other" start closed. The old
+            // `=== false ? true : false` test read `undefined` as "currently
+            // open", so the first tap on a collapsed-by-default group wrote
+            // `false` and left it shut — the tap did nothing.
+            const next = !body.classList.contains('expanded');
+            window.activityGroupExpanded[key] = next;
+
+            if (next && body.hasAttribute('data-lazy')) {
+                body.innerHTML = cached.render(cached.activities);
+                body.removeAttribute('data-lazy');
+            }
+            body.classList.toggle('expanded', next);
+            const icon = groupEl.querySelector('.collapse-icon');
+            if (icon) icon.classList.toggle('expanded', next);
         };
 
         // Update challenges on activity completion
@@ -2097,11 +2324,25 @@
         }
 
 
-        // Toggle card expand/collapse
+        // Toggle card expand/collapse.
+        // Expanding one card used to re-render the whole activity list — every
+        // card's markup plus the per-activity streak/cycle recomputation behind
+        // it. The expanded body is already in the DOM (it is just collapsed),
+        // so this only needs to flip two classes.
         window.toggleCardExpand = function(activityId) {
             if (!window._expandedCards) window._expandedCards = {};
-            window._expandedCards[activityId] = !window._expandedCards[activityId];
-            renderActivitiesList();
+            const next = !window._expandedCards[activityId];
+            window._expandedCards[activityId] = next;
+
+            const safe = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(activityId) : activityId;
+            const card = document.querySelector('.activity-item[data-aid="' + safe + '"]');
+            if (!card) { renderActivitiesList(); return; }
+
+            const body = card.querySelector('.activity-expand-body');
+            const chev = card.querySelector('.act-expand-chevron');
+            if (!body) { renderActivitiesList(); return; }
+            body.classList.toggle('expanded', next);
+            if (chev) chev.classList.toggle('expanded', next);
         };
 
         // Toggle pin/favorite on an activity (persisted to userData)
@@ -2149,6 +2390,41 @@
                 return renderActivityGridCards(activities);
             }
             return renderActivityCards(activities);
+        }
+
+        // ── Lazy group bodies ─────────────────────────────────────────────
+        // Collapsed groups ("Done", "Not Now", inactive routines, every
+        // frequency bucket the user has closed) are display:none, yet their
+        // cards were being built and handed to the HTML parser on every
+        // render. On a large account that is the single most expensive thing
+        // the app does: profiling showed ~80% of renderActivitiesList's time
+        // inside the innerHTML assignment, parsing markup for cards nobody
+        // could see.
+        //
+        // Collapsed bodies now render empty and carry data-lazy;
+        // toggleActivityGroup fills one the first time it is opened. The
+        // activity arrays are stashed here (already carrying the precomputed
+        // _completedToday / _streak / _cycleCompletions fields) so filling a
+        // body needs no recomputation.
+        var _groupActivityCache = Object.create(null);
+
+        // Returns the body markup for a group, or '' when collapsed. Always
+        // records how to build that markup later, so a first expand can fill
+        // the body without re-running the whole list render.
+        //
+        // `renderer` lets the grid view supply its own card builder — in grid
+        // mode a group body is a bare .activity-grid, not the group-aware
+        // markup renderActivityContent would produce.
+        function groupBodyHtml(key, activities, isExpanded, renderer) {
+            var render = renderer || renderActivityContent;
+            _groupActivityCache[key] = { activities: activities, render: render };
+            return isExpanded ? render(activities) : '';
+        }
+
+        // Extra attributes for a group body element: marks collapsed bodies
+        // so toggleActivityGroup knows they still need filling.
+        function groupBodyAttrs(isExpanded) {
+            return isExpanded ? '' : ' data-lazy="1"';
         }
 
         // ── Grid/Card view — state ─────────────────────────────────────────
@@ -2565,6 +2841,13 @@
                     + '</div>';
             }
 
+            // One group's worth of cards. Named so it can be handed to
+            // groupBodyHtml as the lazy-fill renderer for collapsed groups —
+            // renderActivityContent would re-enter the group-aware path here.
+            function renderGridSection(acts) {
+                return '<div class="activity-grid">' + acts.map(renderCard).join('') + '</div>';
+            }
+
             // ── Render ─────────────────────────────────────────────────────
             // Outside the by-routine sort, render a single flat grid — groups
             // belong to that sort exclusively. Inside by-routine, each group
@@ -2611,9 +2894,10 @@
                     + '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>'
                     + '</button>'
                     + '</div>'
-                    + '<div class="act-group-body ' + (isExpanded ? 'expanded' : '') + '">'
+                    + '<div class="act-group-body ' + (isExpanded ? 'expanded' : '') + '"'
+                    + (acts.length ? groupBodyAttrs(isExpanded) : '') + '>'
                     + (acts.length
-                        ? '<div class="activity-grid">' + acts.map(renderCard).join('') + '</div>'
+                        ? groupBodyHtml(key, acts, isExpanded, renderGridSection)
                         : '<div class="routine-empty-inline">No activities in this group yet. <a href="#" onclick="event.preventDefault();openGroupModal(\'' + gid + '\')">Add some →</a></div>')
                     + '</div></div>';
             });
@@ -2632,8 +2916,8 @@
                     + '<span class="act-group-label">Other</span>'
                     + '<span class="act-group-count">' + ungrouped.length + '</span>'
                     + '</div>'
-                    + '<div class="act-group-body ' + (uExpanded ? 'expanded' : '') + '">'
-                    + '<div class="activity-grid">' + ungrouped.map(renderCard).join('') + '</div>'
+                    + '<div class="act-group-body ' + (uExpanded ? 'expanded' : '') + '"' + groupBodyAttrs(uExpanded) + '>'
+                    + groupBodyHtml(ukey, ungrouped, uExpanded, renderGridSection)
                     + '</div></div>';
             }
 
@@ -2927,8 +3211,8 @@
                             <button class="cat-kebab" onclick="openCatActionMenu('dim',${dimIndex})" aria-label="More options">${kebabSvg}</button>
                         </div>
                     </div>
-                    <div class="cat-dim-body${dim.expanded ? ' expanded' : ''}">
-                        ${renderPaths(dim.paths || [], dimIndex, dimHex)}
+                    <div class="cat-dim-body${dim.expanded ? ' expanded' : ''}" data-dim-body="${dimIndex}"${dim.expanded ? '' : ' data-lazy="1"'}>
+                        ${dim.expanded ? renderPaths(dim.paths || [], dimIndex, dimHex) : ''}
                     </div>
                 </div>`;
             }).join('');
@@ -2992,11 +3276,41 @@
                             <button class="cat-kebab" onclick="openCatActionMenu('path',${dimIndex},${pathIndex})" aria-label="More options">${kebabSvg}</button>
                         </div>
                     </div>
-                    <div class="cat-path-body${path.expanded ? ' expanded' : ''}">
-                        ${renderCategoriesActivities(path.activities || [], dimIndex, pathIndex, dimHex)}
+                    <div class="cat-path-body${path.expanded ? ' expanded' : ''}" data-path-body="${pathIndex}"${path.expanded ? '' : ' data-lazy="1"'}>
+                        ${path.expanded ? renderCategoriesActivities(path.activities || [], dimIndex, pathIndex, dimHex) : ''}
                     </div>
                 </div>`;
             }).join('');
+        }
+
+        // ── Lazy body fill ────────────────────────────────────────────────
+        // Collapsed dimension and path bodies are display:none, so building
+        // their markup was pure waste: renderDimensions() serialised a card
+        // for every activity in the account on every render, and the browser
+        // then parsed and laid out thousands of nodes nobody could see.
+        //
+        // Collapsed bodies now render empty and carry data-lazy. The toggles
+        // below fill a body the first time it is opened; every later open is
+        // a plain class flip. `expanded` in userData remains the source of
+        // truth, so a full renderDimensions() still restores exactly what the
+        // user had open.
+        function _fillDimBody(bodyEl, dimIndex) {
+            if (!bodyEl || !bodyEl.hasAttribute('data-lazy')) return;
+            const dim = window.userData.dimensions[dimIndex];
+            if (!dim) return;
+            const dimHex = (typeof DIM_HEX_MAP !== 'undefined' && DIM_HEX_MAP[dim.color]) || '#5a9fd4';
+            bodyEl.innerHTML = renderPaths(dim.paths || [], dimIndex, dimHex);
+            bodyEl.removeAttribute('data-lazy');
+        }
+
+        function _fillPathBody(bodyEl, dimIndex, pathIndex) {
+            if (!bodyEl || !bodyEl.hasAttribute('data-lazy')) return;
+            const dim = window.userData.dimensions[dimIndex];
+            const path = dim && (dim.paths || [])[pathIndex];
+            if (!path) return;
+            const dimHex = (typeof DIM_HEX_MAP !== 'undefined' && DIM_HEX_MAP[dim.color]) || '#5a9fd4';
+            bodyEl.innerHTML = renderCategoriesActivities(path.activities || [], dimIndex, pathIndex, dimHex);
+            bodyEl.removeAttribute('data-lazy');
         }
 
         // Challenge Modal Functions
@@ -3974,22 +4288,80 @@
             return renderCategoriesActivities(activities, dimIndex, pathIndex, '#5a9fd4');
         }
 
+        // ── escapeHtml ────────────────────────────────────────────────────
+        // Called 200+ times per list render (once per activity name, path
+        // name, description…). The old implementation created a throwaway
+        // <div>, wrote textContent and read innerHTML back — three DOM
+        // round-trips per call, which dominated the render cost of any
+        // screen showing more than a handful of activities.
+        //
+        // A single regex pass over the string is far cheaper and produces the
+        // same output for the characters that matter in our markup. We
+        // interpolate into both text nodes and double-quoted attributes, so
+        // " and ' are escaped too — the old version did not escape those,
+        // making this strictly safer as well.
+        //
+        // No module-level constants: escapeHtml is called from hoisted render
+        // functions, so it must be safe at any point during module evaluation.
+        function _escReplacer(c) {
+            switch (c) {
+                case '&': return '&amp;';
+                case '<': return '&lt;';
+                case '>': return '&gt;';
+                case '"': return '&quot;';
+                default:  return '&#39;';
+            }
+        }
         function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
+            if (text === null || text === undefined) return '';
+            var s = typeof text === 'string' ? text : String(text);
+            // Fast path — most names contain nothing that needs escaping, and
+            // a non-global .test() is stateless (unlike a /g regex).
+            return /[&<>"']/.test(s) ? s.replace(/[&<>"']/g, _escReplacer) : s;
         }
 
-        // Toggle Functions
+        // ── Toggle Functions ──────────────────────────────────────────────
+        // Both of these used to call renderDimensions(), which rebuilt the
+        // entire Categories tree — every dimension, every path, every activity
+        // card — just to show or hide one section. Opening a dimension on an
+        // account with a few hundred activities meant re-serialising and
+        // re-parsing the whole tab, which is exactly the stutter users feel
+        // when tapping around Categories.
+        //
+        // Now each toggle touches only the section it owns: flip the model
+        // flag, flip two classes, and fill the body if it has never been
+        // opened. Falls back to a full render if the expected node is missing
+        // (e.g. the tab was re-rendered underneath us).
         window.toggleDimension = function(dimIndex) {
-            window.userData.dimensions[dimIndex].expanded = !window.userData.dimensions[dimIndex].expanded;
-            renderDimensions();
+            const dim = window.userData.dimensions[dimIndex];
+            if (!dim) return;
+            dim.expanded = !dim.expanded;
+
+            const card = document.querySelector('.cat-dim-card[data-dim-index="' + dimIndex + '"]');
+            const body = card && card.querySelector('.cat-dim-body');
+            if (!body) { renderDimensions(); return; }
+
+            if (dim.expanded) _fillDimBody(body, dimIndex);
+            body.classList.toggle('expanded', dim.expanded);
+            const chev = card.querySelector('.cat-dim-head .cat-chevron');
+            if (chev) chev.classList.toggle('expanded', dim.expanded);
         };
 
         window.togglePath = function(dimIndex, pathIndex) {
-            window.userData.dimensions[dimIndex].paths[pathIndex].expanded =
-                !window.userData.dimensions[dimIndex].paths[pathIndex].expanded;
-            renderDimensions();
+            const dim = window.userData.dimensions[dimIndex];
+            const path = dim && (dim.paths || [])[pathIndex];
+            if (!path) return;
+            path.expanded = !path.expanded;
+
+            const card = document.querySelector('.cat-dim-card[data-dim-index="' + dimIndex + '"]');
+            const pathCard = card && card.querySelector('.cat-path-card[data-path-index="' + pathIndex + '"]');
+            const body = pathCard && pathCard.querySelector('.cat-path-body');
+            if (!body) { renderDimensions(); return; }
+
+            if (path.expanded) _fillPathBody(body, dimIndex, pathIndex);
+            body.classList.toggle('expanded', path.expanded);
+            const chev = pathCard.querySelector('.cat-path-head .cat-chevron');
+            if (chev) chev.classList.toggle('expanded', path.expanded);
         };
 
         // Dimension Modal Functions
@@ -4280,7 +4652,13 @@
                 // 3. Expand the dim + path; persist so a refresh keeps the state.
                 dim.expanded = true;
                 path.expanded = true;
-                try { await saveUserData(); } catch(e) { /* offline ok */ }
+                // Fire-and-forget. This used to `await saveUserData()` — a full
+                // rewrite of the entire user document — BEFORE re-rendering, so
+                // every "go to activity" tap froze the UI for a whole Firestore
+                // round-trip (and much longer on a flaky connection). Expanded
+                // state is a cosmetic preference; it does not need to be durable
+                // before we can paint.
+                debouncedSaveUserData();
 
                 // 4. Re-render (writes the new expanded markup to the DOM).
                 renderDimensions();
@@ -4898,6 +5276,11 @@
                 }
             }
 
+            // An in-place edit (rename, XP change) leaves every structural
+            // count untouched, so the activity index cannot detect it on its
+            // own — tell it explicitly. See mkActivityIndex().
+            mkTouchActivityIndex();
+
             await saveUserData();
             closeActivityModal();
             updateDashboard();
@@ -5007,6 +5390,23 @@
             return ids;
         }
 
+        // ── Fast local-day comparison ─────────────────────────────────────
+        // Date.prototype.toDateString() runs the full locale date formatter
+        // and allocates a string on every call. It was being invoked once per
+        // completion-history entry, per activity, per render — easily tens of
+        // thousands of formatter calls on a busy account.
+        //
+        // mkDayKey packs a Date's LOCAL year/month/day into a single integer
+        // (y*10000 + m*100 + d), so a "same local day?" test becomes one
+        // integer compare with no allocation. Local-time semantics are
+        // identical to toDateString()'s.
+        function mkDayKey(d) {
+            return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+        }
+        function mkTodayKey() {
+            return mkDayKey(new Date());
+        }
+
         // Activity Completion Functions
 
         // Count how many times a user has completed an activity today.
@@ -5014,14 +5414,13 @@
         function countCompletionsToday(activity) {
             const history = activity.completionHistory;
             if (!history || history.length === 0) return 0;
-            const todayStr = new Date().toDateString();
+            const todayKey = mkTodayKey();
             // History is chronological (newest last) — scan backwards and
             // stop as soon as we pass today. Turns O(365) into O(today's entries).
             let count = 0;
             for (let i = history.length - 1; i >= 0; i--) {
                 const e = history[i];
-                const d = new Date(e.date);
-                if (d.toDateString() !== todayStr) break;
+                if (mkDayKey(new Date(e.date)) !== todayKey) break;
                 if (!e.isPenalty) count++;
             }
             return count;
@@ -5067,7 +5466,19 @@
                 const cycleNum = Math.floor(daysSinceOrigin / cycleDays);
                 windowStart = new Date(origin.getTime() + cycleNum * cycleDays * 86400000);
             }
-            return activity.cycleHistory.filter(e => new Date(e.date) >= windowStart).length;
+            // cycleHistory is chronological (newest last). The old code ran a
+            // .filter() over the WHOLE array — parsing every date ever recorded
+            // and allocating a result array — to count entries that are, by
+            // definition, all at the tail. Scan backwards and stop at the first
+            // entry outside the window instead.
+            const hist = activity.cycleHistory;
+            const startMs = windowStart.getTime();
+            let n = 0;
+            for (let i = hist.length - 1; i >= 0; i--) {
+                if (new Date(hist[i].date).getTime() < startMs) break;
+                n++;
+            }
+            return n;
         }
 
         function isCompletedToday(activity) {
@@ -5127,11 +5538,15 @@
             // only allow one completion per calendar day.
             // For backward compat: activities without allowMultiplePerDay field (old data) treat as true.
             if (activity.allowMultiplePerDay === false) {
-                const today = new Date().toDateString();
-                const doneToday = (activity.cycleHistory || []).filter(
-                    e => new Date(e.date).toDateString() === today
-                ).length;
-                if (doneToday >= 1) return false;
+                // Backwards scan with an early break — cycleHistory is
+                // chronological, so today's entries (if any) are at the tail
+                // and we only need to know whether at least one exists.
+                const todayKey = mkTodayKey();
+                const hist = activity.cycleHistory || [];
+                for (let i = hist.length - 1; i >= 0; i--) {
+                    if (mkDayKey(new Date(hist[i].date)) !== todayKey) break;
+                    return false; // already completed once today
+                }
             }
             return true;
         }
@@ -8100,7 +8515,8 @@
         let _backupSavedDate = null;
 
         async function saveUserData() {
-            if (!window.currentUser) return;
+            if (!canPersistUserData('saveUserData')) return;
+
             try {
                 const userDocRef = doc(db, 'users', window.currentUser.uid);
                 const today = localToday();
@@ -8141,10 +8557,11 @@
         // Coalesces rapid saves (e.g. quick complete → undo → re-complete)
         // into a single Firestore write. Since saveUserData always writes
         // window.userData (latest in-memory state), only the last save matters.
-        let _saveDebounceTimer = null;
+        // _saveDebounceTimer is declared up with cancelPendingUserDataSave,
+        // which clears it when the signed-in user changes.
         function debouncedSaveUserData() {
             clearTimeout(_saveDebounceTimer);
-            _saveDebounceTimer = setTimeout(() => { saveUserData(); }, 200);
+            _saveDebounceTimer = setTimeout(() => { _saveDebounceTimer = null; saveUserData(); }, 200);
         }
 
         // calculateXPForLevel(L) = XP needed to advance FROM level L to level L+1.
@@ -8415,7 +8832,10 @@
                 if (window.userData) {
                     if (!window.userData.settings) window.userData.settings = {};
                     window.userData.settings.activitiesLastSubTab = subTab;
-                    if (typeof saveUserData === 'function') saveUserData().catch(function(){});
+                    // Debounced: this fired a full user-document write on every
+                    // single sub-tab tap, competing with the render for the
+                    // main thread and the network.
+                    if (typeof debouncedSaveUserData === 'function') debouncedSaveUserData();
                 }
             }
         };
@@ -8655,19 +9075,22 @@
         }
 
         function renderPlannerCard(item, isToday, isPast) {
-            var act = item.activityId ? findActivityById(item.activityId) : null;
+            // Both the activity and its dimension colour come out of the shared
+            // activity index in one O(1) hit.
+            //
+            // This used to be two full tree walks per card: findActivityById(),
+            // then a nested dimension × path × activity scan for the colour
+            // that did not even break once it found a match. With a planned day
+            // of ~20 slots and a few hundred activities that was ~10k array
+            // probes and hundreds of closure allocations for one repaint,
+            // repeated every time a slot was ticked or the date was changed.
+            var hit = item.activityId ? mkActivityIndex().get(item.activityId) : null;
+            var act = hit ? hit.activity : null;
             var displayName = act ? act.name : (item.title || 'Untitled');
-            var isActivity = !!item.activityId && !!act;
+            var isActivity = !!act;
             var dimColor = '';
             if (isActivity) {
-                for (var di = 0; di < (window.userData.dimensions || []).length; di++) {
-                    var dim = window.userData.dimensions[di];
-                    for (var pi = 0; pi < (dim.paths || []).length; pi++) {
-                        if ((dim.paths[pi].activities || []).some(function(a) { return a.id === item.activityId; })) {
-                            dimColor = DIM_COLOR_MAP[dim.color || 'blue'] || DIM_COLOR_MAP.blue;
-                        }
-                    }
-                }
+                dimColor = DIM_COLOR_MAP[hit.dim.color || 'blue'] || DIM_COLOR_MAP.blue;
             }
 
             var cardClass = 'planner-card';
@@ -8717,44 +9140,81 @@
                 + '</div>';
         }
 
-        // Auto-update now marker every 60 seconds by re-rendering
+        // Auto-update now marker every 60 seconds by re-rendering.
+        // Only when the planner is actually on screen — the old version kept
+        // firing a full planner render every minute for the whole session once
+        // the timeline had been rendered even once, because it tested
+        // `container.innerHTML` (which stays truthy while the panel is hidden)
+        // rather than whether anything was visible.
         setInterval(function() {
-            var todayStr = localDateStr();
-            if (window._plannerDate === todayStr) {
-                var container = document.getElementById('plannerTimeline');
-                if (container && container.innerHTML) renderPlanner();
-            }
+            if (window._plannerDate !== localDateStr()) return;
+            var container = document.getElementById('plannerTimeline');
+            // offsetParent is null for a node inside a display:none subtree.
+            if (container && container.offsetParent !== null) renderPlanner();
         }, 60000);
+
+        // ── Cached date formatters ────────────────────────────────────────
+        // new Intl.DateTimeFormat (which is what toLocaleDateString(opts)
+        // constructs internally) is one of the most expensive calls in the
+        // platform — locale data lookup and pattern compilation on every
+        // invocation. The calendar strip alone called it 29 times per planner
+        // render, on every date change and every slot tick.
+        //
+        // Formatters are immutable and reusable, so build each one once.
+        var _mkFmtCache = {};
+        function mkDateFmt(key, opts) {
+            var f = _mkFmtCache[key];
+            if (!f) {
+                try {
+                    f = new Intl.DateTimeFormat(undefined, opts);
+                } catch (e) {
+                    // No Intl (very old browser) — fall back to per-call formatting.
+                    f = { format: function(d) { return d.toLocaleDateString(undefined, opts); } };
+                }
+                _mkFmtCache[key] = f;
+            }
+            return f;
+        }
 
         function formatPlannerDate(dateStr) {
             var d = new Date(dateStr + 'T12:00:00');
-            var opts = { weekday: 'short', month: 'short', day: 'numeric' };
-            return d.toLocaleDateString(undefined, opts);
+            return mkDateFmt('short', { weekday: 'short', month: 'short', day: 'numeric' }).format(d);
         }
 
         // Long-form: "Friday, May 20, 2026" — shown when the user has navigated
         // away from today (year is meaningful then).
         function formatPlannerDateFull(dateStr) {
             var d = new Date(dateStr + 'T12:00:00');
-            var todayStr = localDateStr();
-            var todayYear = new Date(todayStr + 'T12:00:00').getFullYear();
-            var sameYear = d.getFullYear() === todayYear;
-            var opts = sameYear
-                ? { weekday: 'long', month: 'short', day: 'numeric' }
-                : { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' };
-            return d.toLocaleDateString(undefined, opts);
+            var sameYear = d.getFullYear() === new Date().getFullYear();
+            return sameYear
+                ? mkDateFmt('longNoYear', { weekday: 'long', month: 'short', day: 'numeric' }).format(d)
+                : mkDateFmt('longYear', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' }).format(d);
         }
 
         // ── Calendar strip ─────────────────────────────────────────────────
-        // Builds 21 days centered on the selected date (10 back, 10 forward),
-        // plus extension on either side if the user has scrolled far. Auto-
-        // centers the selected day on render.
+        // Builds 29 days centered on the selected date (14 back, 14 forward)
+        // and auto-centers the selected day on render.
+        var _calStripKey = null;   // last-rendered "<selected>|<today>" pair
+
         function renderPlannerCalStrip(selectedDateStr, todayStr) {
             var container = document.getElementById('plannerCalStrip');
             if (!container) return;
 
+            // The strip depends only on the selected day and today's date.
+            // renderPlanner() runs on every slot tick, undo and minute marker
+            // update, and each run was rebuilding all 29 chips (with 29 locale
+            // formatter calls), re-parsing them, and forcing a synchronous
+            // layout read to re-centre the scroll. Skip all of it when nothing
+            // the strip shows has actually changed.
+            var key = selectedDateStr + '|' + todayStr;
+            if (key === _calStripKey && container.firstChild) return;
+            _calStripKey = key;
+
             var WD = ['SUN','MON','TUE','WED','THU','FRI','SAT'];
             var MO = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+
+            // One shared formatter for all 29 aria-labels below (see mkDateFmt).
+            var _calAriaFmt = mkDateFmt('calAria', { weekday: 'long', month: 'long', day: 'numeric' });
 
             // Window: 14 days back, 14 forward → 29 chips visible in the strip.
             var DAYS_BACK = 14;
@@ -8787,7 +9247,7 @@
                 html += '<button class="' + cls + '"'
                      + ' data-iso="' + iso + '"'
                      + ' onclick="setPlannerDate(\'' + iso + '\')"'
-                     + ' aria-label="' + d.toLocaleDateString(undefined, {weekday:'long', month:'long', day:'numeric'}) + '"'
+                     + ' aria-label="' + _calAriaFmt.format(d) + '"'
                      + (isSelected ? ' aria-current="date"' : '')
                      + '>'
                      + '<span class="planner-cal-wd">' + WD[wd] + '</span>'
@@ -8828,18 +9288,84 @@
             return h + ':' + m + ' ' + ampm;
         }
 
-        function findActivityById(activityId) {
-            var dims = (window.userData.dimensions || []);
+        // ══════════════════════════════════════════════════════════════════
+        // ── Activity index ────────────────────────────────────────────────
+        // ══════════════════════════════════════════════════════════════════
+        // Activities live three levels deep (dimensions → paths → activities),
+        // so "find the activity with this id" was a full tree walk. That walk
+        // was happening inside render loops — once per planner card, once per
+        // group member, once per quest leaf — making those renders O(items ×
+        // activities). On an account with a few hundred activities and a
+        // full day planned, that is tens of thousands of comparisons for a
+        // single repaint, and it is the main reason the planner felt sluggish.
+        //
+        // The index below collapses those to O(1) map hits. Correctness rests
+        // on two independent mechanisms, so a missed invalidation cannot
+        // serve stale data:
+        //
+        //   1. A structural fingerprint (dimension / path / activity counts)
+        //      is recomputed on every access. Walking dimensions and paths is
+        //      cheap — dozens of entries — while walking activities is not,
+        //      and any add or delete changes a count.
+        //   2. mkTouchActivityIndex() is called explicitly wherever an
+        //      activity is edited in place (a rename changes no count), and
+        //      whenever userData is replaced wholesale.
+        var _actIdx = null;         // Map: activityId → { activity, dim, path, dimIndex, pathIndex }
+        var _actIdxFingerprint = '';
+
+        function _actTreeFingerprint() {
+            var dims = (window.userData && window.userData.dimensions) || [];
+            // Encodes dimension count, per-dimension path count and
+            // per-path activity count — any structural change moves it.
+            var fp = dims.length + ':';
             for (var di = 0; di < dims.length; di++) {
                 var paths = dims[di].paths || [];
+                fp += paths.length + '(';
                 for (var pi = 0; pi < paths.length; pi++) {
-                    var acts = paths[pi].activities || [];
+                    fp += (paths[pi].activities || []).length + ',';
+                }
+                fp += ')';
+            }
+            return fp;
+        }
+
+        // Force a rebuild on next access. Call after editing an activity in
+        // place (rename, XP change, move) or after replacing window.userData.
+        function mkTouchActivityIndex() {
+            _actIdx = null;
+            _actIdxFingerprint = '';
+        }
+        window.mkTouchActivityIndex = mkTouchActivityIndex;
+
+        function mkActivityIndex() {
+            var fp = _actTreeFingerprint();
+            if (_actIdx && fp === _actIdxFingerprint) return _actIdx;
+            var map = new Map();
+            var dims = (window.userData && window.userData.dimensions) || [];
+            for (var di = 0; di < dims.length; di++) {
+                var dim = dims[di];
+                var paths = dim.paths || [];
+                for (var pi = 0; pi < paths.length; pi++) {
+                    var path = paths[pi];
+                    var acts = path.activities || [];
                     for (var ai = 0; ai < acts.length; ai++) {
-                        if (acts[ai].id === activityId) return acts[ai];
+                        var a = acts[ai];
+                        if (a && a.id) {
+                            map.set(a.id, { activity: a, dim: dim, path: path, dimIndex: di, pathIndex: pi, actIndex: ai });
+                        }
                     }
                 }
             }
-            return null;
+            _actIdx = map;
+            _actIdxFingerprint = fp;
+            return map;
+        }
+        window.mkActivityIndex = mkActivityIndex;
+
+        function findActivityById(activityId) {
+            if (!activityId) return null;
+            var hit = mkActivityIndex().get(activityId);
+            return hit ? hit.activity : null;
         }
 
         // ══════════════════════════════════════════════════════════════════
@@ -8866,8 +9392,20 @@
         //      first occurrence and drop the rest. Keeps the user's data
         //      stable across reads — the merge mutates window.userData so
         //      the next save persists the clean state.
+        //
+        // The pass is idempotent: an array that has been through it and come
+        // out unchanged cannot be changed by running it again. getGroups() is
+        // called from inside render loops though, and each call allocated a
+        // Set, two arrays and a signature string per group. So remember the
+        // exact array instance that last came out clean and short-circuit on
+        // it — any write to userData.groups replaces the instance (or changes
+        // its length) and falls through to a fresh pass.
+        var _dedupedGroupsRef = null;
+        var _dedupedGroupsLen = -1;
+
         function _dedupeGroupsArr(arr) {
             if (!Array.isArray(arr) || arr.length === 0) return arr || [];
+            if (arr === _dedupedGroupsRef && arr.length === _dedupedGroupsLen) return arr;
             // Pass 1: dedupe by id
             var seenIds = new Set();
             var byId = [];
@@ -8898,12 +9436,21 @@
                     out.push(grp);
                 }
             }
-            // Persist the clean array back in place so the next saveUserData
-            // writes deduped data to Firestore. Only mutate if we actually
-            // collapsed something — avoid needless cache invalidation.
-            if (window.userData && out.length !== arr.length) {
-                window.userData.groups = out;
+            // Nothing was dropped or merged — `out` holds exactly the same
+            // groups in the same order as `arr`, so hand back `arr` itself.
+            // That leaves userData.groups and the returned array as one
+            // instance, which is what lets the memo above hit on the next read.
+            if (out.length === arr.length) {
+                _dedupedGroupsRef = arr;
+                _dedupedGroupsLen = arr.length;
+                return arr;
             }
+            // Something was collapsed: persist the clean array back in place so
+            // the next saveUserData writes deduped data to Firestore, and
+            // memoize that same instance.
+            if (window.userData) window.userData.groups = out;
+            _dedupedGroupsRef = out;
+            _dedupedGroupsLen = out.length;
             return out;
         }
 
@@ -11047,6 +11594,7 @@
                 const when = backup.savedAt ? new Date(backup.savedAt).toLocaleString() : savedDate;
                 if (!confirm('Restore backup from ' + when + '?\n\nThis replaces ALL current data.\nYour current state will be lost.\n\nContinue?')) return;
                 window.userData = backup.data;
+                mkTouchActivityIndex();
                 if (!window.userData.settings) window.userData.settings = {};
                 processStreakPauses();
                 _backupSavedDate = null;
@@ -11103,6 +11651,7 @@
                     return;
                 }
                 window.userData = parsed;
+                mkTouchActivityIndex();
                 processStreakPauses();
                 _backupSavedDate = null; // force fresh backup snapshot on this save
                 await saveUserData();
