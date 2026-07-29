@@ -177,7 +177,13 @@
         // Write a lean public snapshot to publicProfiles/{uid} - called inside saveUserData.
         // Failures are swallowed so they never block a private save.
         async function syncPublicProfile() {
-            if (!window.currentUser || !window.userData) return;
+            if (!window.userData) return;
+            // Publishes level, XP, streaks and category breakdown to the
+            // friends leaderboard. It writes its own document rather than
+            // going through saveUserData, so it needs the same invariant:
+            // on a failed load this would replace a real public profile with
+            // "level 1, 0 XP" — visible to everyone who has added the user.
+            if (!canPersistUserData('syncPublicProfile')) return;
             try {
                 const catXP   = getProfileCategoryXP();
                 const level   = window.userData.level || 1;
@@ -1026,6 +1032,11 @@
                         }
                     }
                 } else {
+                    // Signed out. Drop the ownership stamp and any queued save
+                    // so nothing from this session can be flushed against the
+                    // next account to sign in on this device.
+                    cancelPendingUserDataSave();
+                    window._dataOwnerUid = null;
                     window.currentUser = null;
                     window.userData = null;
                     loading.style.display = 'none';
@@ -1040,6 +1051,12 @@
                     // User IS authenticated but data load hit a network error.
                     // Show the app with whatever data loadUserData managed to set.
                     if (!window.userData) {
+                        // Another placeholder that is not the user's account.
+                        // Mark the session read-only for the same reason as in
+                        // loadUserData — this must never reach Firestore.
+                        window._dataLoadFailed = true;
+                        window._dataLoadError = (error && (error.code || error.message)) || 'load error';
+                        window._dataOwnerUid = null;
                         window.userData = {
                             level: 1, currentXP: 0, totalXP: 0,
                             dimensions: [], activities: [], challenges: []
@@ -1061,6 +1078,71 @@
                 }
             }
         });
+
+        // ══════════════════════════════════════════════════════════════════
+        // ── The write invariant ───────────────────────────────────────────
+        // ══════════════════════════════════════════════════════════════════
+        // saveUserData does a full setDoc of window.userData: it REPLACES the
+        // stored document rather than merging into it. So a write is only ever
+        // safe when what is in memory really is the signed-in user's account.
+        // Three ways that can be false, all of which have to be caught here
+        // rather than at the ~90 individual call sites:
+        //
+        //   1. The load failed. loadUserData substitutes an empty placeholder
+        //      when it cannot read the document, and that placeholder is
+        //      indistinguishable from a new account. Writing it destroys the
+        //      real one. This is not hypothetical: syncUserTimezone() (called
+        //      from loadUserData itself) and processStreakPauses() (called
+        //      from the auth handler) both fired within a second of load,
+        //      before the user could touch anything.
+        //
+        //   2. A load is in flight. _dataOwnerUid is cleared for the duration
+        //      of loadUserData, so a save queued by the previous session
+        //      cannot land while the next account is still being fetched.
+        //
+        //   3. The signed-in user changed. Saves are debounced, so a write
+        //      scheduled while user A was active could otherwise be delivered
+        //      after user B signed in — writing A's account into B's document.
+        //      Stamping the data with its owner makes that impossible.
+        //
+        // `reason` is only used to make the console message say who was
+        // blocked, which matters when diagnosing this from a user's report.
+        function canPersistUserData(reason) {
+            if (!window.currentUser) return false;   // signed out — silent, normal
+
+            if (window._dataLoadFailed) {
+                console.warn('[' + (reason || 'write') + '] Blocked: the last load of this account ' +
+                    'failed (' + (window._dataLoadError || 'unknown') + '), so what is in memory is a ' +
+                    'placeholder, not your data. Refusing to overwrite the stored document.');
+                return false;
+            }
+            if (!window._dataOwnerUid) {
+                console.warn('[' + (reason || 'write') + '] Blocked: no account is loaded yet.');
+                return false;
+            }
+            if (window._dataOwnerUid !== window.currentUser.uid) {
+                console.warn('[' + (reason || 'write') + '] Blocked: the data in memory belongs to a ' +
+                    'different account than the one signed in. Refusing to write it.');
+                return false;
+            }
+            return true;
+        }
+        window.canPersistUserData = canPersistUserData;
+
+        // Pending-save handle. Declared here rather than next to
+        // debouncedSaveUserData so cancelPendingUserDataSave — which runs
+        // during the auth flow, early — can reach it without a dead zone.
+        var _saveDebounceTimer = null;
+
+        // Drops any save that has been scheduled but not yet delivered. Called
+        // when the signed-in user changes, so a pending write from the old
+        // session can never be flushed against the new one.
+        function cancelPendingUserDataSave() {
+            if (_saveDebounceTimer) {
+                clearTimeout(_saveDebounceTimer);
+                _saveDebounceTimer = null;
+            }
+        }
 
         // ── Failed-load banner ────────────────────────────────────────────
         // Shown instead of the onboarding wizard when the account could not be
@@ -1114,6 +1196,12 @@
             let readFailed = false;
             let readError = null;
 
+            // Nothing in memory belongs to anyone until this read resolves.
+            // Blocks any save queued by a previous session from landing while
+            // we are mid-fetch. Also drop anything already scheduled.
+            window._dataOwnerUid = null;
+            cancelPendingUserDataSave();
+
             // Try network first, fall back to Firestore local cache on offline errors
             try {
                 userDoc = await getDoc(userDocRef);
@@ -1142,6 +1230,7 @@
                 window.userData = userDoc.data();
                 window._dataLoadFailed = false;
                 window._dataLoadError = null;
+                window._dataOwnerUid = uid;      // this data is now writable, for this uid only
                 mkTouchActivityIndex();
                 // Backfill friendCode for existing users who don't have one yet
                 if (!window.userData.friendCode) {
@@ -1169,6 +1258,11 @@
                 // the user to do exactly that.
                 window._dataLoadFailed = readFailed;
                 window._dataLoadError = readFailed ? (readError && (readError.code || readError.message)) : null;
+                // A confirmed-missing document really is a new account, so it
+                // stays writable and signup works as before. A failed read
+                // does not — the placeholder is never claimed by anyone, so
+                // canPersistUserData refuses every write against it.
+                window._dataOwnerUid = readFailed ? null : uid;
                 if (readFailed) {
                     console.error('[loadUserData] Could not read users/' + uid +
                         ' (' + window._dataLoadError + '). Treating this session as READ-ONLY — ' +
@@ -8421,31 +8515,7 @@
         let _backupSavedDate = null;
 
         async function saveUserData() {
-            if (!window.currentUser) return;
-
-            // ── Never overwrite data we failed to read ────────────────────
-            // saveUserData does a full setDoc of window.userData — it replaces
-            // the document rather than merging into it. If the initial read
-            // failed, window.userData is the empty placeholder loadUserData
-            // substitutes, and writing it destroys the real account.
-            //
-            // That was not hypothetical. Two callers fired within a second of
-            // load, before the user could touch anything: syncUserTimezone()
-            // (from loadUserData itself) and processStreakPauses() (from the
-            // auth handler). Both call saveUserData, so both were writing an
-            // empty account over a real one whenever a read failed — exactly
-            // the case loadUserData's "do NOT write to Firestore yet" comment
-            // was trying to prevent.
-            //
-            // The guard lives here, at the single chokepoint every write goes
-            // through, rather than at ~90 call sites that would each have to
-            // remember. It clears as soon as a load succeeds.
-            if (window._dataLoadFailed) {
-                console.warn('[saveUserData] Blocked: the last load of this account failed (' +
-                    (window._dataLoadError || 'unknown') + '), so what is in memory is a ' +
-                    'placeholder, not your data. Refusing to overwrite the stored document.');
-                return;
-            }
+            if (!canPersistUserData('saveUserData')) return;
 
             try {
                 const userDocRef = doc(db, 'users', window.currentUser.uid);
@@ -8487,10 +8557,11 @@
         // Coalesces rapid saves (e.g. quick complete → undo → re-complete)
         // into a single Firestore write. Since saveUserData always writes
         // window.userData (latest in-memory state), only the last save matters.
-        let _saveDebounceTimer = null;
+        // _saveDebounceTimer is declared up with cancelPendingUserDataSave,
+        // which clears it when the signed-in user changes.
         function debouncedSaveUserData() {
             clearTimeout(_saveDebounceTimer);
-            _saveDebounceTimer = setTimeout(() => { saveUserData(); }, 200);
+            _saveDebounceTimer = setTimeout(() => { _saveDebounceTimer = null; saveUserData(); }, 200);
         }
 
         // calculateXPForLevel(L) = XP needed to advance FROM level L to level L+1.
