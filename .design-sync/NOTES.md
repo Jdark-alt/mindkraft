@@ -34,6 +34,22 @@ DS inherits it. On each re-sync, spot-check the components whose app-side
 markup changed (`git log -p -- app.js index.html` since the last sync) against
 the shim source.
 
+## First run on a fresh clone
+
+`shim/node_modules` and `shim/dist` are gitignored, and the repo root has no
+`package.json`, so the base skill's "install with the repo's package manager"
+step finds nothing to do. **Install the shim's deps first or `cfg.buildCmd`
+fails:**
+
+```sh
+npm --prefix .design-sync/shim ci      # or `install` if the lockfile drifted
+npm --prefix .design-sync/shim run build
+node .design-sync/verify-classes.mjs
+```
+
+Only then run the converter / driver. The render check additionally needs
+playwright — see the Re-sync risks section for the version pinning.
+
 ## Config decisions
 
 - `componentSrcMap` pins all 48 components. The shim groups components by domain
