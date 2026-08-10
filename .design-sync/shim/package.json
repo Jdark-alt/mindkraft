@@ -1,0 +1,27 @@
+{
+  "name": "mindkraft-ds",
+  "version": "0.1.0",
+  "private": true,
+  "description": "React binding for the Mindkraft design system. Every component emits the exact class names and DOM structure the Mindkraft PWA already ships; all styling comes from the repo's own style.css.",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node copy-assets.mjs"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.6.3"
+  }
+}

@@ -1,2 +1,15 @@
 scripts/node_modules/
 scripts/package-lock.json
+
+# ── design-sync (claude.ai/design) ────────────────────────────────────────
+# Staged converter scripts + their deps, regenerated build output, and machine
+# state. The durable sync inputs under .design-sync/ (config.json, NOTES.md,
+# conventions.md, conventions files, previews/, shim/src, shim/fonts) ARE
+# committed — everything listed here is not.
+.ds-sync/
+ds-bundle/
+.design-sync/.cache/
+.design-sync/learnings/
+.design-sync/node_modules
+.design-sync/shim/node_modules/
+.design-sync/shim/dist/

@@ -1,0 +1,110 @@
+{
+  "pkg": "mindkraft-ds",
+  "globalName": "MindkraftDS",
+  "shape": "package",
+  "buildCmd": "npm --prefix .design-sync/shim run build",
+  "cssEntry": "dist/mindkraft.css",
+  "guidelinesGlob": "dist/guidelines/*.md",
+  "extraFonts": [
+    "fonts/inter.css"
+  ],
+  "readmeHeader": ".design-sync/conventions.md",
+  "componentSrcMap": {
+    "ActionToolbar": "src/toolbar.tsx",
+    "ActivityBadge": "src/chips.tsx",
+    "ActivityGrid": "src/activity-grid.tsx",
+    "ActivityGridCard": "src/activity-grid.tsx",
+    "ActivityListItem": "src/activity-list.tsx",
+    "ActivityRing": "src/ring.tsx",
+    "AnalyticsCard": "src/analytics.tsx",
+    "AppHeader": "src/header.tsx",
+    "AtRiskChip": "src/chips.tsx",
+    "Button": "src/forms.tsx",
+    "ChallengeCard": "src/challenge.tsx",
+    "ChallengeMeta": "src/challenge.tsx",
+    "ChallengeProgress": "src/challenge.tsx",
+    "EmptyPlaceholder": "src/nav.tsx",
+    "FilterPill": "src/analytics.tsx",
+    "FilterPills": "src/analytics.tsx",
+    "FormGroup": "src/forms.tsx",
+    "GridBadge": "src/chips.tsx",
+    "LevelBadge": "src/header.tsx",
+    "MindkraftRoot": "src/root.tsx",
+    "Modal": "src/modal.tsx",
+    "ModeTab": "src/analytics.tsx",
+    "ModeTabs": "src/analytics.tsx",
+    "MultiCountChip": "src/chips.tsx",
+    "NavTab": "src/nav.tsx",
+    "NavTabs": "src/nav.tsx",
+    "RangeButton": "src/analytics.tsx",
+    "RangeSelector": "src/analytics.tsx",
+    "Select": "src/forms.tsx",
+    "StatCard": "src/analytics.tsx",
+    "StatGrid": "src/analytics.tsx",
+    "StatRow": "src/analytics.tsx",
+    "StreakChip": "src/chips.tsx",
+    "SubTab": "src/nav.tsx",
+    "SubTabContent": "src/nav.tsx",
+    "SubTabs": "src/nav.tsx",
+    "TabContent": "src/root.tsx",
+    "TextArea": "src/forms.tsx",
+    "TextInput": "src/forms.tsx",
+    "Toast": "src/toast.tsx",
+    "ToastStack": "src/toast.tsx",
+    "ToolCluster": "src/toolbar.tsx",
+    "ToolDivider": "src/toolbar.tsx",
+    "ToolbarAddButton": "src/toolbar.tsx",
+    "ToolbarButton": "src/toolbar.tsx",
+    "ToolbarCount": "src/toolbar.tsx",
+    "XPChip": "src/chips.tsx",
+    "XPProgressBar": "src/header.tsx"
+  },
+  "overrides": {
+    "Modal": {
+      "cardMode": "single",
+      "primaryStory": "AddToSchedule",
+      "viewport": "520x620"
+    },
+    "ToastStack": {
+      "cardMode": "single",
+      "viewport": "420x420"
+    },
+    "MindkraftRoot": {
+      "cardMode": "column"
+    },
+    "StatGrid": {
+      "cardMode": "column"
+    },
+    "ActivityGrid": {
+      "cardMode": "column"
+    },
+    "ActivityGridCard": {
+      "cardMode": "column"
+    },
+    "ActivityListItem": {
+      "cardMode": "column"
+    },
+    "AppHeader": {
+      "cardMode": "column"
+    },
+    "ChallengeCard": {
+      "cardMode": "column"
+    },
+    "AnalyticsCard": {
+      "cardMode": "column"
+    },
+    "NavTab": {
+      "cardMode": "single",
+      "primaryStory": "EveryIcon",
+      "viewport": "390x300"
+    },
+    "NavTabs": {
+      "cardMode": "single",
+      "primaryStory": "Default",
+      "viewport": "390x300"
+    },
+    "ActionToolbar": {
+      "cardMode": "column"
+    }
+  }
+}
