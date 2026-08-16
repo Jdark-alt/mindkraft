@@ -3291,7 +3291,7 @@
         // Challenge Modal Functions
         let editingChallengeIndex = null;
 
-        // ── v122 toggle proxies — drive the new ay-toggle-row switches ─────
+        // ── Toggle proxies — drive the ay-toggle-row switches ─────────────
         // The underlying hidden checkbox / hidden input is what saveChallenge
         // reads, so we keep them as the source of truth and just keep the
         // visible switch in sync.
@@ -3361,7 +3361,7 @@
                     document.getElementById('challengeMetricQty').value = challenge.metricQty;
                     document.getElementById('challengeMetricUnit').value = challenge.metricUnit;
                 }
-                // v122: sync new proxy switches
+                // Sync proxy switches
                 const _pE = document.getElementById('challengeEnforceActivitiesProxy');
                 const _pD = document.getElementById('challengeEnforceDateRangeProxy');
                 const _pM = document.getElementById('challengeMetricEnabledProxy');
@@ -3390,7 +3390,7 @@
                 const _edc = document.getElementById('enforceDateRangeCheck');
                 if (_edc) _edc.textContent = '';
                 document.getElementById('challengeMetricGroup').style.display = 'none';
-                // v122: sync new proxy switches to OFF
+                // Sync proxy switches to OFF
                 const _pE2 = document.getElementById('challengeEnforceActivitiesProxy');
                 const _pD2 = document.getElementById('challengeEnforceDateRangeProxy');
                 const _pM2 = document.getElementById('challengeMetricEnabledProxy');
@@ -4945,7 +4945,7 @@
             modal.classList.add('active');
         };
 
-        // ── Advanced Setup accordion — v120 ────────────────────────────
+        // ── Advanced Setup accordion ───────────────────────────────────
         // The accordion is in-flow: when open, its body expands below the
         // header and pushes the modal-body height naturally. Both the
         // wrapper `.ay-accordion` and the body `.ay-accordion-body` carry
@@ -5039,7 +5039,7 @@
             btn.classList.toggle('selected');
         };
 
-        // Wire up day picker buttons (new ay-day-btn class as of v120;
+        // Wire up day picker buttons (ay-day-btn class;
         // legacy .day-btn selector retained for any other surfaces that
         // still use the old shape).
         document.querySelectorAll('.ay-day-btn, .day-btn').forEach(btn => {
@@ -5924,7 +5924,7 @@
             showUndoToast(toastXP);
             debouncedSaveUserData(); // fire-and-forget
 
-            // v122 bug fix: if the undone activity is part of an active
+            // If the undone activity is part of an active
             // challenge that the user has nominated to the active group, the
             // group's view of their progress goes stale until the next save.
             // Mirror the completeActivity path: re-sync whenever the activity
@@ -5969,7 +5969,7 @@
             await saveUserData();
             updateDashboard();
 
-            // v122: if this retroactive change affected a nominated challenge,
+            // If this retroactive change affected a nominated challenge,
             // push the new progress to the active group so members see it.
             if (window.userData.activeGroupChallengeId) {
                 const isInActiveChallenge = (window.userData.challenges || []).some(ch =>

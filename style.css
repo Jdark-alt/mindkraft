@@ -27,7 +27,7 @@
                Was #3a3a3a (solid grey, too heavy on #1a1a1a bg). */
             --color-border: rgba(255,255,255,0.08);
 
-            /* ── Theme-aware semantic surface tokens (v109) ─────────────────── */
+            /* ── Theme-aware semantic surface tokens ─────────────────── */
             /* These have dark defaults — overridden in [data-theme-mode="light"] */
             --color-modal-bg: #262626;
             --color-modal-border: rgba(255,255,255,0.07);
@@ -44,7 +44,7 @@
             --color-select-arrow-img: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
             --color-calendar-icon-invert: 0.5;
 
-            /* Elevation system (v109) — drives card depth, modals, popovers
+            /* Elevation system — drives card depth, modals, popovers
                across both themes. Dark mode uses subtle dark washes; light
                mode (in [data-theme-mode="light"]) uses soft warm shadows.
                Both modes use the same TOKEN — only the values differ. This
@@ -69,7 +69,7 @@
                accent for the "XP earned this level" indicator in the header. */
             --color-accent-xp-positive: #6dbf7e;
 
-            /* ── Activity-card chip palette (v110) ──────────────────────────
+            /* ── Activity-card chip palette ──────────────────────────
                One job per color. These are dedicated to the activity-card
                chips on My Activities so we can run a strict color-job rule
                there without affecting the rest of the app:
@@ -86,11 +86,11 @@
             /* Card hairline highlight — inset top edge that creates the
                "lifted" cue on dark cards without a visible border. */
 
-            /* ── Card-material surface family (v139) ─────────────────────
+            /* ── Card-material surface family ─────────────────────
                Every card/tile surface in the app resolves through these
                tokens instead of hardcoded hexes so the whole material
                system flips with [data-theme-mode]. Dark values match the
-               v110 card recipe exactly. */
+               the dark card recipe exactly. */
             --surface-card: #22242a;            /* card material at rest */
             --surface-card-hover: #272a31;      /* card hover lift */
             --surface-card-deep: #24262c;       /* slightly raised variant */
@@ -871,7 +871,7 @@
         }
 
         /* ──────────────────────────────────────────────────────────────────
-           SUB-TABS — "Glowing Underline" (v110.3)
+           SUB-TABS — "Glowing Underline"
            Two labels at LARGE display size — the dominant text on the page.
            No container, no border, no recessed bg. A hairline divider
            separates them vertically. Active state = a single horizontal
@@ -983,10 +983,10 @@
 
         /* Sticky Header */
         /* ──────────────────────────────────────────────────────────────────
-           STICKY HEADER (v110.4)
+           STICKY HEADER
            Same surface color as activity cards (#22242a) so the header,
            cards, and bottom nav all read as one material system.
-           Slightly tighter than v110.3 to give the progress bar more room.
+           Tight enough to give the progress bar room.
            ────────────────────────────────────────────────────────────── */
         .sticky-header {
             position: sticky;
@@ -1038,7 +1038,7 @@
         }
 
         /* Level display — SVG-rendered, sized dynamically by JS to the
-           actual digit width. ~10% smaller than v110.3 (56→50). */
+           actual digit width. */
         .level-display {
             position: relative;
             display: inline-flex;
@@ -1474,7 +1474,7 @@
             font-weight: 600;
         }
 
-        /* ── Activities Action Toolbar (v110.3) ────────────────────────────
+        /* ── Activities Action Toolbar ────────────────────────────
            Bare style — no cluster pill, no surface. Icons sit directly on
            the page bg, separated by hairline dividers. Active state is
            the same single primitive as the sub-tabs: a glowing underline.
@@ -1663,7 +1663,7 @@
         }
         .btn-search:hover { border-color: var(--color-accent-blue); color: var(--color-accent-blue); }
         /* ──────────────────────────────────────────────────────────────────
-           SEARCH MODAL (v110.5)
+           SEARCH MODAL
            Built from the same material as activity cards: #22242a surface,
            inset top highlight, drop shadow, hairline border. Result rows
            use the same hierarchy and chip system as the main list — name
@@ -2294,7 +2294,7 @@
 
         /* Activity Item */
         /* ──────────────────────────────────────────────────────────────────
-           ACTIVITY CARD (v110.2)
+           ACTIVITY CARD
            Tightened by ~10% on the vertical axis; surface darkened and
            cooled so the card no longer reads as "warm brown" against the
            bg. A stronger inset top highlight gives a glossy edge that
@@ -2338,8 +2338,8 @@
 
         /* Pending — same default state */
 
-        /* Old left accent bar — removed in v110 redesign (chevron at edge
-           and shadow elevation now carry the "tappable" cue). */
+        /* Left accent bar is retired — the edge chevron and shadow elevation
+           now carry the "tappable" cue. */
         .activity-item::before { display: none; }
 
         /* Completed — slightly more muted surface */
@@ -2942,7 +2942,7 @@
         }
 
         /* ──────────────────────────────────────────────────────────────────
-           Toast pill (v110.6)
+           Toast pill
            Shown below the header on XP gain, undo, streak milestone, dim
            level-up, etc. Same material as activity cards (#22242a surface,
            inset top highlight, drop shadow, hairline border). The TONE
@@ -4807,7 +4807,7 @@
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
         .fr-lb-meta { font-size: 11px; color: var(--color-text-secondary); margin-top: 1px; }
-        /* Value column — number + unit on one baseline (v120 fix).
+        /* Value column — number + unit on one baseline .
            Was previously stacked because .fr-lb-num was display:block. */
         .fr-lb-val {
             text-align: right;
@@ -5622,7 +5622,7 @@
         /* ══════════════════════════════════════════════════════════════ */
 
         /* ══════════════════════════════════════════════════════════════
-           Daily Planner — Calendar strip (v110.x)
+           Daily Planner — Calendar strip
 
            Replaces the old ‹ Today ›-arrow date picker with a horizontally
            scrollable day strip. Selected day uses the indicator primitive
@@ -7138,7 +7138,7 @@
         .gc-friend-invite-btn.sent { background:rgba(255,255,255,0.08);color:var(--color-text-secondary);pointer-events:none; }
 
         /* ══════════════════════════════════════════════════════════════
-           ONBOARDING OVERLAY — v121 redesign
+           ONBOARDING OVERLAY
            ──────────────────────────────────────────────────────────────
            Every surface here defers to the brief: card material recipe
            (#22242a + hairline + inset top highlight + drop shadows), no
@@ -8608,7 +8608,7 @@
                 0 0 22px rgba(245,197,99,0.35);
         }
 
-        /* Close X — top-right corner, brief-aligned ghost icon button.
+        /* Close X — top-right corner, ghost icon button.
            Matches the .pl-modal-close pattern used across the app. */
         .level-up-close {
             position: absolute;
@@ -9402,7 +9402,7 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   CATEGORIES TAB — DESIGN SYSTEM (v119)
+   CATEGORIES TAB
    ─────────────────────────────────────────────────────────────────────────
    Job of this page (brief §3): Mode B "what does my life look like" —
    inventory, user-controlled, structural. The hero is the hierarchy itself.
@@ -9713,7 +9713,7 @@
 }
 
 /* ── Activity card (within Categories context) ─────────────────────────
-   Same brief-aligned material as My Activities, slightly slimmer to fit
+   Same material as My Activities, slightly slimmer to fit
    the nested context. Tappable to complete. Status communicated via the
    ring/check on the right; undo lives next to it. Edit/Delete behind kebab. */
 .cat-act-card {
@@ -9857,7 +9857,7 @@
 }
 
 /* Reuse the canonical activity-badge / badge-xp / badge-frequency / badge-streak
-   styles — they're already brief-aligned. We just need a slightly tighter
+   styles — they already match. We just need a slightly tighter
    variant for the nested context. */
 .cat-act-meta .activity-badge {
     padding: 2px 7px;
@@ -10182,7 +10182,7 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   ACTIVITY MODAL — DESIGN SYSTEM (v120)
+   ACTIVITY MODAL
    ─────────────────────────────────────────────────────────────────────────
    Job (brief §3): create/edit an activity. This is the most-used modal in
    the app, so it earns the most care. Hierarchy: Name → XP → Frequency are
@@ -10250,7 +10250,7 @@
     margin: 0;
 }
 
-/* ── Slot-limit notice — replaces level-lock-notice with brief-aligned shape ── */
+/* ── Slot-limit notice ─────────────────────────────────────────────── */
 .ay-limit-notice {
     display: flex;
     align-items: flex-start;
@@ -10674,7 +10674,7 @@
     flex-shrink: 0;
 }
 
-/* ── Radio group — custom-styled, no native dot, brief-aligned ── */
+/* ── Radio group — custom-styled, no native dot ── */
 .ay-radio-group {
     display: flex;
     flex-direction: column;
@@ -10836,9 +10836,9 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   CHALLENGES TAB — DESIGN SYSTEM (v122)
+   CHALLENGES TAB
    ─────────────────────────────────────────────────────────────────────────
-   Refined layout, v122: title is the page anchor; progress (count + bar +
+   Title is the page anchor; progress (count + bar +
    percent) is the visual hero band; Complete and Breakdown sit on one row
    below it. The challenge name lives in a sub-tab nav above — no on-page
    "Your Challenges" title.
@@ -10943,7 +10943,7 @@
 .ch-section-head:hover .ch-section-chev { opacity: 1; }
 [data-theme-mode="light"] .ch-section-count { background: rgba(15,17,21,0.05); }
 
-/* ── Card shell — same as v121 ───────────────────────────────────────── */
+/* ── Card shell ─────────────────────────────────────────────────────── */
 .ch-card {
     position: relative;
     background: var(--surface-card);
@@ -10999,7 +10999,7 @@
     gap: 5px;
 }
 .ch-card-title {
-    /* v122: enlarged. Title >> subtitle in weight AND size. */
+    /* Title >> subtitle in weight AND size. */
     font-size: 18px;
     font-weight: 700;
     color: var(--color-text-primary);
@@ -11065,7 +11065,7 @@
 .ch-icon-btn:active { transform: scale(0.92); }
 .ch-icon-btn svg { width: 14px; height: 14px; display: block; }
 
-/* ── Progress band — count + bar + percent (v122 hero) ──────────────── */
+/* ── Progress band — count + bar + percent, the hero ───────────────── */
 /* This replaces the .ch-hero block. The row above the bar shows the
    completion count (the user's main focus) and the percentage right-aligned.
    The bar runs full-width below. Generous empty space above and below. */
@@ -11141,7 +11141,7 @@
 .ch-card[data-state="completed"] .ch-pct { color: #8db866; }
 .ch-card[data-state="failed"] .ch-pct { color: #e07070; }
 
-/* The bar — slightly slimmer than v121 to support the new visual hierarchy */
+/* The bar — slim, so it sits under the count in the hierarchy */
 .ch-bar {
     width: 100%;
     height: 7px;
@@ -11372,7 +11372,7 @@
 }
 .ch-act-bar-v2-fill.done { background: linear-gradient(90deg, #6b7c3f, #8db866); }
 
-/* Metric update — lives INSIDE the breakdown now (v122) */
+/* Metric update — lives INSIDE the breakdown now */
 .ch-metric-update {
     display: flex;
     gap: 8px;
@@ -11585,7 +11585,7 @@
    Keeping them as accessible-only text would clutter the UI. */
 .ch-info-arrows { display: none; }
 
-/* ── Group Challenge — polish (same as v121) ─────────────────────────── */
+/* ── Group Challenge — polish ───────────────────────────────────────── */
 .gc-dashboard { gap: 12px; }
 .gc-header,
 .gc-progress-section,
@@ -11670,7 +11670,7 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   LIGHT MODE — DESIGN SYSTEM (v109)
+   LIGHT MODE
    ─────────────────────────────────────────────────────────────────────────
    Philosophy:
    • Cards float on the bg via SOFT SHADOWS, not visible borders. Lines feel
@@ -11711,7 +11711,7 @@
 
 /* ── Top header (sticky) ───────────────────────────────────────────────── */
 /* The header reads as a calm, elevated card-like plane above the page —
-   shadow-driven elevation, no visible border (v110). */
+   shadow-driven elevation, no visible border. */
 [data-theme-mode="light"] .sticky-header {
     background: var(--color-bg-card);
     border-bottom: none;
