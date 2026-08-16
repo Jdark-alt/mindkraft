@@ -37,7 +37,7 @@ match /users/{uid}/reminders/{reminderId} {
   allow read, update, delete: if request.auth != null
                               && request.auth.uid == uid;
 
-  // Creation is split (spec §8):
+  // Creation is split:
   //
   //  - The general reminder is a singleton with a fixed doc id, so there is
   //    no cap to enforce and the client may create it directly.
