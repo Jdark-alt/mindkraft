@@ -199,7 +199,7 @@ self.addEventListener('push', function(event) {
 });
 
 // Tapping the notification opens / focuses the app, and jumps to the activity
-// when the reminder was for a specific one (spec §6).
+// when the reminder was for a specific one.
 self.addEventListener('notificationclick', function(event) {
     event.notification.close();
 

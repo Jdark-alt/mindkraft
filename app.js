@@ -1271,7 +1271,7 @@
                 document.documentElement.setAttribute('data-theme-mode', _mode === 'light' ? 'light' : 'dark');
             } catch (e) { /* non-fatal, loadTheme will set it later */ }
 
-            // Opportunistic timezone backfill (spec §4.1). Non-blocking and
+            // Opportunistic timezone backfill. Non-blocking and
             // non-fatal — reminders fall back to a default until this lands.
             try { syncUserTimezone(); } catch (e) { console.warn('Timezone sync skipped:', e); }
         }
@@ -11201,7 +11201,7 @@
                         if (processStreakSystem(act, today)) anyChanged = true;
                         if (processSkipPenalty(act, today))  anyChanged = true;
                     })));
-            // Tech Tree mastery rides the same recompute pass (spec §3/§14).
+            // Tech Tree mastery rides the same recompute pass.
             if (typeof evaluateTechTreeMastery === 'function' && evaluateTechTreeMastery()) anyChanged = true;
             if (anyChanged) {
                 try { await saveUserData(); } catch(e) { console.warn('processStreakPauses save failed', e); }
@@ -13563,7 +13563,7 @@
             } catch (e) { return null; }
         }
 
-        // Opportunistic backfill on load (spec §4.1). Cheap, non-blocking, and
+        // Opportunistic backfill on load. Cheap, non-blocking, and
         // self-healing: a user who travels picks up the new zone on next open.
         async function syncUserTimezone() {
             var tz = mkDetectTimezone();
@@ -13888,7 +13888,7 @@
                     if (!permitted) return;
 
                     // Creation goes through the callable so the 5-reminder cap
-                    // and the activityId check happen server-side (spec §5.4).
+                    // and the activityId check happen server-side.
                     var create = httpsCallable(functions, 'createActivityReminder');
                     await create({
                         activityId: String(_arSelectedActivityId),
@@ -14002,7 +14002,7 @@
                 }
             }
             // Activity deleted, or the tree isn't loaded yet — fall back to the
-            // Activities tab rather than doing nothing (spec §6).
+            // Activities tab rather than doing nothing.
             if (window.switchTab) switchTab('activities');
         };
 
@@ -15649,7 +15649,7 @@
             tt.status = 'ready';
         }
 
-        // v2 → v3 (spec §2.4). Idempotent, non-destructive: goal colours come
+        // v2 → v3. Idempotent, non-destructive: goal colours come
         // from their lines, nodes gain role/goalIds, station machinery dies.
         // Activities/quests/streaks/XP are never touched.
         function migrateTechTreeV3(tt) {
