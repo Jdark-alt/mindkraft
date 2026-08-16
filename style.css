@@ -1743,7 +1743,7 @@
         /* Result cards — same material as activity cards but slightly
            taller for legibility. The grid layout keeps a fixed-width
            action column so completion buttons never resize the row. */
-        /* ── Search result card — design-brief card material ─────────────
+        /* ── Search result card — card material ─────────────
            Layout: 60% text block / 40% action column. The text block is
            three lines: name → XP+streak → frequency·path. Action column
            accommodates Do AND Undo side-by-side (for multi-per-day acts). */
@@ -2126,7 +2126,7 @@
             color: var(--color-accent-blue);
         }
 
-        /* ── Filter / Sort panel — design-brief card material ─────────── */
+        /* ── Filter / Sort panel — card material ─────────── */
         .filter-panel {
             position: fixed;
             top: auto;
@@ -5174,7 +5174,7 @@
         /* Grid groups */
 
         /* The card itself — shared base.
-           Material recipe matches .activity-item (design brief §2 "Card material"):
+           Material recipe matches .activity-item:
            #22242a surface, hairline border, inset-top highlight, drop shadow. */
         .grid-card {
             background: var(--surface-card);
@@ -5926,7 +5926,7 @@
             opacity: 0.6;
         }
 
-        /* ── Planner timeline card — design-brief card material ──────────
+        /* ── Planner timeline card — card material ──────────
            Material recipe matches .activity-item / .grid-card:
            #22242a surface, hairline border, inset-top highlight, drop shadow.
            Dimension color appears as a thin LEFT-edge accent only ("tint, not fill"). */
@@ -6289,7 +6289,7 @@
         }
 
         /* Reusable form field wrapper — replaces ad-hoc .form-group inline styles
-           inside design-brief-aligned modals. */
+           inside modals. */
         .pl-field {
             margin-bottom: 18px;
         }
@@ -6417,7 +6417,7 @@
             font-weight: 600;
         }
 
-        /* Destructive secondary button — for Delete inside design-brief modals */
+        /* Destructive secondary button — for Delete inside modals */
         .pl-btn-danger {
             color: var(--color-accent-red);
             border-color: rgba(142,59,95,0.32);
@@ -6431,7 +6431,7 @@
         /* ──────────────────────────────────────────────────────────────── */
 
         /* ══════════════════════════════════════════════════════════════
-           Add-to-Planner modal — design-brief aligned
+           Add-to-Planner modal
            Modal surface uses the same #22242a card material as activity
            cards / grid cards / planner timeline cards — single canonical
            card color across the app.
@@ -11889,7 +11889,7 @@
 }
 
 /* ════════════════════════════════════════════════════════════════════
-   PROFILE OVERLAY v2 — design-brief aligned
+   PROFILE OVERLAY v2
    ────────────────────────────────────────────────────────────────────
    • Cards share the activity-card / settings-card material (#22242a +
      inset top highlight + drop shadows). No visible 1px outlines.
@@ -12879,7 +12879,7 @@
     padding: 20px 20px 0;
 }
 
-/* ─── Reward modal — design-brief refinement ───────────────────────── */
+/* ─── Reward modal ───────────────────────── */
 #rewardModal .modal {
     max-width: 460px;
 }
@@ -12922,7 +12922,7 @@
 
         /* ════════════════════════════════════════════════════════════════
            CHARACTER TECH TREE
-           Styled per the Mindkraft design brief: card material recipe,
+           Card material recipe,
            recessed sub-surfaces, hairlines not boxes, one color one job,
            SVG glyphs (no emoji primitives), tabular numerals.
            ════════════════════════════════════════════════════════════════ */
@@ -13149,7 +13149,7 @@
 
 /* ═══════════════════════════════════════════════════════════════════════
    QUESTS (Projects) — v5 redesign: recursive groups.
-   Card material, recessed surface, and chip recipes per the Design Brief;
+   Card material, recessed surface, and chip recipes;
    gold (#f5c563) stays reserved for quest milestones (rep banked, sealed),
    matching the app's existing quest-only gold precedent. Dimension colors
    come from DIM_HEX_MAP via inline style — this stylesheet never hardcodes

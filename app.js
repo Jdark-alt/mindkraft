@@ -10314,7 +10314,7 @@
 
         const THEMES = [
             // Two shipped presets. Dark stays first as the safe default for
-            // new accounts. Light is the design-brief "parallel light" mode:
+            // new accounts. Light is the "parallel light" mode:
             // cool paper background, white cards lifted by shadow (not
             // borders), and a deeper-saturated blue so the interactive
             // primary keeps AA contrast on pale surfaces.
@@ -12004,7 +12004,7 @@
         // ── Generic Toast ─────────────────────────────────────────────────
 
         // ── Toast notifications ───────────────────────────────────────────
-        // Visual recipe matches the design brief: card material (#22242a +
+        // Visual recipe: card material (#22242a +
         // hairline + inset top highlight + drop shadow stack). The color
         // tag is conveyed by a 3px left-edge stripe (same family as
         // dimension cards) — NOT by a flooded background. Each toast also
@@ -13533,7 +13533,7 @@
         //   <auto-id>  — one per activity reminder, max 5 active
         //
         // A Cloud Function queries them by nextSendAt every minute and sends
-        // the Web Push. See functions/index.js and REMINDERS.md.
+        // the Web Push. See functions/index.js.
         //
         // Note the two documents never live in the same place: reminders are a
         // SUBCOLLECTION, not fields on the user doc. That's deliberate —
@@ -17502,8 +17502,7 @@
            one. Completing a linked activity anywhere (main tracker, another
            quest, this quest) pays the real 20% bonus XP through the same
            completeActivity/undoActivity path — one ledger, not two — and
-           every quest that references it advances together. Follows the
-           Design Brief.
+           every quest that references it advances together.
            ═══════════════════════════════════════════════════════════════════ */
 
         var QUEST_XP_FRACTION = 0.2;   // real bonus XP paid per linked completion

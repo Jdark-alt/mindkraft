@@ -3,7 +3,7 @@
 // Unit tests for the reminder scheduling maths.
 // Run with:  cd functions && npm install && npm test
 //
-// These cover the cases spec §9.3 calls out explicitly — DST transitions in a
+// These cover the cases that matter — DST transitions in a
 // zone that actually has them, and a mid-day timezone change — plus the
 // idempotency date key. Everything here is pure computation, no emulator needed.
 
@@ -146,7 +146,7 @@ test('fall back: an ambiguous time picks one occurrence and stays consistent', (
     assert.strictEqual(wallClock(following, zone), '2026-11-02 01:30');
 });
 
-// ── Travel: the user's timezone changes mid-day (spec §9.3) ───────────────
+// ── Travel: the user's timezone changes mid-day ──────────────────────────
 
 test('changing timezone recomputes to the new zone, not the old offset', () => {
     // 08:00 reminder, recomputed at the same instant under two zones.
@@ -180,7 +180,7 @@ test('rejects a malformed localTime instead of scheduling something arbitrary', 
 
 test('getLocalDateString uses the local calendar day, not the UTC one', () => {
     // 20:00Z on Mar 9 is already Mar 10 in India (01:30 IST) — the exact class
-    // of UTC/local mismatch that caused the streak bugs the spec cites.
+    // of UTC/local mismatch that causes streak bugs.
     const instant = at('2026-03-09T20:00:00Z');
     assert.strictEqual(getLocalDateString('Asia/Kolkata', instant), '2026-03-10');
     assert.strictEqual(getLocalDateString('America/New_York', instant), '2026-03-09');
