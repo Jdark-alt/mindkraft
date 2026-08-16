@@ -15509,7 +15509,6 @@
         var TT_MAX_GOALS = 5;               // the web can't carry more legibly
         var TT_REGEN_COOLDOWN_DAYS = 30;    // per-goal regenerate
         var TT_REVISION_LIMIT = 3;          // keep a rate limit, kill the clock
-        var TT_NEW_ACT_CAP = 3;             // new activities per quest
 
         // Resolution is the biggest moment in the feature; a deep node is
         // worth more than a near one so going deep pays.
