@@ -5940,7 +5940,7 @@
             }
         };
 
-        // ── Retroactive Write Functions (Phase 2) ────────────────────────
+        // ── Retroactive Write Functions ──────────────────────────────────
 
         async function applyRetroactiveRecalculation(activity, dimIndex, xpDelta) {
             // 1. Per-activity counters
@@ -7012,7 +7012,7 @@
 
         // ── Main Render ──────────────────────────────────────────────────
 
-        // ── History Edit UI (Phase 3) ─────────────────────────────────────
+        // ── History Edit UI ───────────────────────────────────────────────
 
         function renderHistoryEdit() {
             const container = document.getElementById('historyEditList');
@@ -8186,7 +8186,7 @@
 
         // ── End Analytics System ─────────────────────────────────────────
 
-        // ── Retroactive Recalculation Engine (Phase 1) ───────────────────
+        // ── Retroactive Recalculation Engine ─────────────────────────────
 
         function recomputeActivityCounters(activity) {
             const userEntries = (activity.completionHistory || []).filter(e => !e.isPenalty);
