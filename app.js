@@ -262,14 +262,6 @@
             return actXP.sort((a, b) => b.xp - a.xp).slice(0, 3);
         }
 
-        function getDaysSinceLastLevel() {
-            if (!window.userData.levelStartedAt) return null;
-            const diff = Date.now() - new Date(window.userData.levelStartedAt).getTime();
-            const days = diff / (1000 * 60 * 60 * 24);
-            if (days < 1) return `${Math.round(days * 24)}h`;
-            return `${days.toFixed(1)}d`;
-        }
-
         function getTop2Categories(categoryXP) {
             return Object.entries(categoryXP)
                 .filter(([, xp]) => xp > 0)
@@ -298,18 +290,6 @@
                 });
             });
             return map;
-        }
-
-        function getBestActiveStreak() {
-            let best = null;
-            (window.userData.dimensions || []).forEach(dim => {
-                (dim.paths || []).forEach(path => {
-                    (path.activities || []).forEach(act => {
-                        if ((act.streak || 0) > (best ? best.streak : 0)) best = { name: act.name, streak: act.streak };
-                    });
-                });
-            });
-            return best;
         }
 
         // Hex → "r,g,b" string for canvas rgba()
@@ -1291,7 +1271,7 @@
                 document.documentElement.setAttribute('data-theme-mode', _mode === 'light' ? 'light' : 'dark');
             } catch (e) { /* non-fatal, loadTheme will set it later */ }
 
-            // Opportunistic timezone backfill (spec §4.1). Non-blocking and
+            // Opportunistic timezone backfill. Non-blocking and
             // non-fatal — reminders fall back to a default until this lands.
             try { syncUserTimezone(); } catch (e) { console.warn('Timezone sync skipped:', e); }
         }
@@ -2527,11 +2507,6 @@
             _gcActionActivityId = null;
         };
 
-        window.cycleGridCardType = function(activityId) {
-            // Deprecated — now opens the picker popup instead
-            openCardTypePicker(activityId);
-        };
-
         // ── Card type picker popup ────────────────────────────────────────
         var _pickerActivityId = null;
         var _pickerOpenedAt   = 0;
@@ -3316,24 +3291,7 @@
         // Challenge Modal Functions
         let editingChallengeIndex = null;
 
-        window.toggleMetricSection = function() {
-            const hiddenInput = document.getElementById('challengeMetricEnabled');
-            const grp = document.getElementById('challengeMetricGroup');
-            const btn = document.getElementById('metricToggleBtn');
-            const check = document.getElementById('metricToggleCheck');
-            if (!hiddenInput || !grp) return;
-            const isActive = hiddenInput.value === '1';
-            const newActive = !isActive;
-            hiddenInput.value = newActive ? '1' : '0';
-            grp.style.display = newActive ? 'flex' : 'none';
-            if (btn) btn.classList.toggle('active', newActive);
-            if (check) check.textContent = newActive ? '✓' : '';
-            // Keep the new switch UI in sync
-            const proxy = document.getElementById('challengeMetricEnabledProxy');
-            if (proxy) proxy.checked = newActive;
-        };
-
-        // ── v122 toggle proxies — drive the new ay-toggle-row switches ─────
+        // ── Toggle proxies — drive the ay-toggle-row switches ─────────────
         // The underlying hidden checkbox / hidden input is what saveChallenge
         // reads, so we keep them as the source of truth and just keep the
         // visible switch in sync.
@@ -3403,7 +3361,7 @@
                     document.getElementById('challengeMetricQty').value = challenge.metricQty;
                     document.getElementById('challengeMetricUnit').value = challenge.metricUnit;
                 }
-                // v122: sync new proxy switches
+                // Sync proxy switches
                 const _pE = document.getElementById('challengeEnforceActivitiesProxy');
                 const _pD = document.getElementById('challengeEnforceDateRangeProxy');
                 const _pM = document.getElementById('challengeMetricEnabledProxy');
@@ -3432,7 +3390,7 @@
                 const _edc = document.getElementById('enforceDateRangeCheck');
                 if (_edc) _edc.textContent = '';
                 document.getElementById('challengeMetricGroup').style.display = 'none';
-                // v122: sync new proxy switches to OFF
+                // Sync proxy switches to OFF
                 const _pE2 = document.getElementById('challengeEnforceActivitiesProxy');
                 const _pD2 = document.getElementById('challengeEnforceDateRangeProxy');
                 const _pM2 = document.getElementById('challengeMetricEnabledProxy');
@@ -3579,30 +3537,6 @@
 
         window.filterChallengeActivities = function(value) {
             _renderChallengeChecklist(value);
-        };
-
-        window.toggleChallengeEnforceActivities = function() {
-            const cb = document.getElementById('challengeEnforceActivities');
-            const btn = document.getElementById('enforceActivitiesBtn');
-            const check = document.getElementById('enforceActivitiesCheck');
-            if (!cb) return;
-            cb.checked = !cb.checked;
-            btn?.classList.toggle('active', cb.checked);
-            if (check) check.textContent = cb.checked ? '✓' : '';
-            const proxy = document.getElementById('challengeEnforceActivitiesProxy');
-            if (proxy) proxy.checked = cb.checked;
-        };
-
-        window.toggleChallengeEnforceDateRange = function() {
-            const cb = document.getElementById('challengeEnforceDateRange');
-            const btn = document.getElementById('enforceDateRangeBtn');
-            const check = document.getElementById('enforceDateRangeCheck');
-            if (!cb) return;
-            cb.checked = !cb.checked;
-            btn?.classList.toggle('active', cb.checked);
-            if (check) check.textContent = cb.checked ? '✓' : '';
-            const proxy = document.getElementById('challengeEnforceDateRangeProxy');
-            if (proxy) proxy.checked = cb.checked;
         };
 
         // Calculate and display auto-XP for specific-activity challenges
@@ -5011,7 +4945,7 @@
             modal.classList.add('active');
         };
 
-        // ── Advanced Setup accordion — v120 ────────────────────────────
+        // ── Advanced Setup accordion ───────────────────────────────────
         // The accordion is in-flow: when open, its body expands below the
         // header and pushes the modal-body height naturally. Both the
         // wrapper `.ay-accordion` and the body `.ay-accordion-body` carry
@@ -5105,7 +5039,7 @@
             btn.classList.toggle('selected');
         };
 
-        // Wire up day picker buttons (new ay-day-btn class as of v120;
+        // Wire up day picker buttons (ay-day-btn class;
         // legacy .day-btn selector retained for any other surfaces that
         // still use the old shape).
         document.querySelectorAll('.ay-day-btn, .day-btn').forEach(btn => {
@@ -5990,7 +5924,7 @@
             showUndoToast(toastXP);
             debouncedSaveUserData(); // fire-and-forget
 
-            // v122 bug fix: if the undone activity is part of an active
+            // If the undone activity is part of an active
             // challenge that the user has nominated to the active group, the
             // group's view of their progress goes stale until the next save.
             // Mirror the completeActivity path: re-sync whenever the activity
@@ -6006,7 +5940,7 @@
             }
         };
 
-        // ── Retroactive Write Functions (Phase 2) ────────────────────────
+        // ── Retroactive Write Functions ──────────────────────────────────
 
         async function applyRetroactiveRecalculation(activity, dimIndex, xpDelta) {
             // 1. Per-activity counters
@@ -6035,7 +5969,7 @@
             await saveUserData();
             updateDashboard();
 
-            // v122: if this retroactive change affected a nominated challenge,
+            // If this retroactive change affected a nominated challenge,
             // push the new progress to the active group so members see it.
             if (window.userData.activeGroupChallengeId) {
                 const isInActiveChallenge = (window.userData.challenges || []).some(ch =>
@@ -6967,15 +6901,6 @@
             return result;
         }
 
-        function parseCompletionDates(activity) {
-            // We store lastCompleted; we also need the full history.
-            // Since full history isn't stored, we derive a synthetic list from completionCount + lastCompleted
-            // for the calendar. Full history would require a separate log — we'll use what we have.
-            const dates = [];
-            if (activity.lastCompleted) dates.push(new Date(activity.lastCompleted));
-            return dates;
-        }
-
         // Build a proper completion event log from stored history arrays (if present) or fallback
         function getCompletionLog(activities) {
             const log = []; // { date, activityId, activityName, xp, dimName, pathName }
@@ -7087,7 +7012,7 @@
 
         // ── Main Render ──────────────────────────────────────────────────
 
-        // ── History Edit UI (Phase 3) ─────────────────────────────────────
+        // ── History Edit UI ───────────────────────────────────────────────
 
         function renderHistoryEdit() {
             const container = document.getElementById('historyEditList');
@@ -8261,28 +8186,12 @@
 
         // ── End Analytics System ─────────────────────────────────────────
 
-        // ── Retroactive Recalculation Engine (Phase 1) ───────────────────
+        // ── Retroactive Recalculation Engine ─────────────────────────────
 
         function recomputeActivityCounters(activity) {
             const userEntries = (activity.completionHistory || []).filter(e => !e.isPenalty);
             activity.completionCount = userEntries.length;
             activity.totalXP = userEntries.reduce((sum, e) => sum + Math.abs(e.xp || 0), 0);
-        }
-
-        function recomputeTotalXPFromHistory() {
-            let total = 0;
-            (window.userData.dimensions || []).forEach(dim =>
-                (dim.paths || []).forEach(path =>
-                    (path.activities || []).forEach(act => {
-                        (act.completionHistory || []).forEach(e => {
-                            if (!e.isPenalty) total += Math.abs(e.xp || 0);
-                            else total += (e.xp || 0); // penalties are negative — permanently deduct
-                        });
-                    })
-                )
-            );
-            total += (window.userData.xpDeletedGhost || 0);
-            return total;
         }
 
         function recomputeLevelFromTotalXP(totalXP) {
@@ -8892,14 +8801,6 @@
             }
             return window.userData.planner.days[dateStr];
         }
-
-        // ── Date navigation ──
-        window.plannerDateNav = function(delta) {
-            var d = new Date(window._plannerDate + 'T12:00:00');
-            d.setDate(d.getDate() + delta);
-            window._plannerDate = localDateStr(d);
-            renderPlanner();
-        };
 
         window.setPlannerDate = function(val) {
             if (!val) {
@@ -9999,16 +9900,6 @@
             if (typeof showToast === 'function') showToast('✓ Group deleted', 'olive');
         };
 
-        // ── Complete / Undo from planner ──
-        window.plannerCompleteActivity = function(activityId) {
-            completeActivityById(activityId);
-            // renderPlanner called via updateDashboard -> renderActivitiesList chain
-        };
-
-        window.plannerUndoActivity = function(activityId) {
-            undoActivityById(activityId);
-        };
-
         // ── Slot-aware completion (per-slot, not per-activity) ────────────
         // Each planner slot tracks its own completion state. Completing a slot
         // also completes the activity once (so XP/streak fire), but slots for
@@ -10423,7 +10314,7 @@
 
         const THEMES = [
             // Two shipped presets. Dark stays first as the safe default for
-            // new accounts. Light is the design-brief "parallel light" mode:
+            // new accounts. Light is the "parallel light" mode:
             // cool paper background, white cards lifted by shadow (not
             // borders), and a deeper-saturated blue so the interactive
             // primary keeps AA contrast on pale surfaces.
@@ -11310,7 +11201,7 @@
                         if (processStreakSystem(act, today)) anyChanged = true;
                         if (processSkipPenalty(act, today))  anyChanged = true;
                     })));
-            // Tech Tree mastery rides the same recompute pass (spec §3/§14).
+            // Tech Tree mastery rides the same recompute pass.
             if (typeof evaluateTechTreeMastery === 'function' && evaluateTechTreeMastery()) anyChanged = true;
             if (anyChanged) {
                 try { await saveUserData(); } catch(e) { console.warn('processStreakPauses save failed', e); }
@@ -12113,7 +12004,7 @@
         // ── Generic Toast ─────────────────────────────────────────────────
 
         // ── Toast notifications ───────────────────────────────────────────
-        // Visual recipe matches the design brief: card material (#22242a +
+        // Visual recipe: card material (#22242a +
         // hairline + inset top highlight + drop shadow stack). The color
         // tag is conveyed by a 3px left-edge stripe (same family as
         // dimension cards) — NOT by a flooded background. Each toast also
@@ -13416,64 +13307,6 @@
             document.body.style.overflow = '';
         };
 
-        window.advanceTutorial = async function() {
-            // Only one step now — mark complete on advance.
-            window.userData.tutorialStep = 99;
-            await saveUserData().catch(() => {});
-            hideTutorialOverlay();
-            // Check whether any tab unlocks should fire next.
-            if (typeof checkPendingTabUnlocks === 'function') {
-                setTimeout(checkPendingTabUnlocks, 350);
-            }
-        };
-
-        // ── Categorization Prompt ─────────────────────────────────────────────
-
-        window.checkCategorizationPrompt = function() {
-            const ud = window.userData;
-            if (!ud || !ud.onboardingComplete) return;
-            // Already dismissed this session
-            if (window._catPromptDismissed) return;
-            // Tutorial not yet complete
-            const ts = ud.tutorialStep ?? -1;
-            if (ts >= 0 && ts < 4) return;
-
-            // Count uncategorized activities
-            const dims = ud.dimensions || [];
-            const uncDim = dims.find(d => d.id === 'uncategorized');
-            const uncCount = uncDim
-                ? (uncDim.paths || []).flatMap(p => p.activities || []).length
-                : 0;
-            if (uncCount === 0) return;
-
-            // Fire if level >= 5 OR account is 7+ days old
-            const level = ud.level || 1;
-            const createdAt = ud.createdAt ? new Date(ud.createdAt) : null;
-            const daysSince = createdAt
-                ? Math.floor((Date.now() - createdAt) / 86400000)
-                : 0;
-            if (level < 5 && daysSince < 7) return;
-
-            // Show the prompt
-            document.getElementById('uncatCount').textContent = uncCount;
-            document.getElementById('categorizationPrompt').style.display = 'flex';
-            document.body.style.overflow = 'hidden';
-        };
-
-        window.goToCategories = function() {
-            document.getElementById('categorizationPrompt').style.display = 'none';
-            document.body.style.overflow = '';
-            window._catPromptDismissed = true;
-            switchTab('activities');
-            setTimeout(() => switchSubTab('activities', 'categories'), 200);
-        };
-
-        window.dismissCategorizationPrompt = function() {
-            document.getElementById('categorizationPrompt').style.display = 'none';
-            document.body.style.overflow = '';
-            window._catPromptDismissed = true;
-        };
-
         // ── Daily Reminder Notifications ──────────────────────────────────────
         // VAPID public key. Safe to expose — it's the public half of the pair,
         // and it's what the browser uses to build a push subscription.
@@ -13700,7 +13533,7 @@
         //   <auto-id>  — one per activity reminder, max 5 active
         //
         // A Cloud Function queries them by nextSendAt every minute and sends
-        // the Web Push. See functions/index.js and REMINDERS.md.
+        // the Web Push. See functions/index.js.
         //
         // Note the two documents never live in the same place: reminders are a
         // SUBCOLLECTION, not fields on the user doc. That's deliberate —
@@ -13730,7 +13563,7 @@
             } catch (e) { return null; }
         }
 
-        // Opportunistic backfill on load (spec §4.1). Cheap, non-blocking, and
+        // Opportunistic backfill on load. Cheap, non-blocking, and
         // self-healing: a user who travels picks up the new zone on next open.
         async function syncUserTimezone() {
             var tz = mkDetectTimezone();
@@ -14055,7 +13888,7 @@
                     if (!permitted) return;
 
                     // Creation goes through the callable so the 5-reminder cap
-                    // and the activityId check happen server-side (spec §5.4).
+                    // and the activityId check happen server-side.
                     var create = httpsCallable(functions, 'createActivityReminder');
                     await create({
                         activityId: String(_arSelectedActivityId),
@@ -14169,7 +14002,7 @@
                 }
             }
             // Activity deleted, or the tree isn't loaded yet — fall back to the
-            // Activities tab rather than doing nothing (spec §6).
+            // Activities tab rather than doing nothing.
             if (window.switchTab) switchTab('activities');
         };
 
@@ -15676,7 +15509,6 @@
         var TT_MAX_GOALS = 5;               // the web can't carry more legibly
         var TT_REGEN_COOLDOWN_DAYS = 30;    // per-goal regenerate
         var TT_REVISION_LIMIT = 3;          // keep a rate limit, kill the clock
-        var TT_NEW_ACT_CAP = 3;             // new activities per quest
 
         // Resolution is the biggest moment in the feature; a deep node is
         // worth more than a near one so going deep pays.
@@ -15817,7 +15649,7 @@
             tt.status = 'ready';
         }
 
-        // v2 → v3 (spec §2.4). Idempotent, non-destructive: goal colours come
+        // v2 → v3. Idempotent, non-destructive: goal colours come
         // from their lines, nodes gain role/goalIds, station machinery dies.
         // Activities/quests/streaks/XP are never touched.
         function migrateTechTreeV3(tt) {
@@ -15946,10 +15778,6 @@
             var tt = ensureTechTree();
             return (tt.goals || []).find(function(g) { return g.id === goalId; }) || null;
         }
-        function ttGoalColor(goalId) {
-            var g = ttGoalById(goalId);
-            return (g && g.color) || TT_LINE_PALETTE[0];
-        }
         function ttNodeGoals(node) {
             var tt = ensureTechTree();
             return (node.goalIds || []).map(function(id) {
@@ -15964,13 +15792,6 @@
             if (goals.length && goals[0].color) return goals[0].color;
             return ttDimHexRaw(node.dimensionId);
         }
-        function ttAnchorNodeForActivity(activityId, tt) {
-            tt = tt || ensureTechTree();
-            return (tt.nodes || []).find(function(n) {
-                return n.lifecycle !== 'archived' && n.payload && n.payload.activityId === activityId;
-            }) || null;
-        }
-
         // ── Load budget ──────────────────────────────────────────────────
         function ttFreqWeight(freq, act) {
             if (freq === 'custom') {
@@ -17680,8 +17501,7 @@
            one. Completing a linked activity anywhere (main tracker, another
            quest, this quest) pays the real 20% bonus XP through the same
            completeActivity/undoActivity path — one ledger, not two — and
-           every quest that references it advances together. Follows the
-           Design Brief.
+           every quest that references it advances together.
            ═══════════════════════════════════════════════════════════════════ */
 
         var QUEST_XP_FRACTION = 0.2;   // real bonus XP paid per linked completion

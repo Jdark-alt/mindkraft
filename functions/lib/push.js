@@ -8,7 +8,7 @@
 //   users/{uid}.pushSubscription = { endpoint, keys }
 //
 // One subscription per user — the field is a single map, not an array, so
-// there is no multi-device support today (spec §11 leaves that out of scope).
+// there is no multi-device support today (out of scope today).
 // The tech tree worker (scripts/generate-tech-tree.js) sends its "your map
 // is ready" push over this same field and the same VAPID keys.
 
@@ -43,7 +43,7 @@ function isUsableSubscription(sub) {
  * Notification content for a reminder.
  *
  * General copy is carried over verbatim from sw.js so the wording users
- * already know is unchanged (spec §6).
+ * already know is unchanged.
  *
  * `tag` is what stops notifications stacking. The general reminder keeps its
  * existing tag; activity reminders get a per-activity tag so two different
@@ -75,7 +75,7 @@ function buildPayload(reminder, activityName) {
  * Send one notification.
  * @returns {Promise<{ok: true} | {ok: false, dead: boolean, statusCode: number|null, message: string}>}
  * Never throws for delivery failures — the caller decides what to do, and one
- * dead endpoint must not abort the rest of the batch (spec §5.3).
+ * dead endpoint must not abort the rest of the batch.
  */
 async function sendPush(subscription, payload) {
     try {

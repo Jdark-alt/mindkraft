@@ -258,7 +258,7 @@
     </div>
 
     <!-- ══════════════════════════════════════════════════════════════
-         Onboarding Overlay — v121 redesign
+         Onboarding Overlay
          Surface, type, motion and color all defer to the Mindkraft
          design brief: card material recipe (#22242a + hairline + inset
          highlight + drop shadow), the indicator primitive for selection
@@ -1473,7 +1473,7 @@
         </div>
     </div>
 
-    <!-- Quest (Project) Create / Edit Modal — pl-modal pattern (brief-aligned) -->
+    <!-- Quest (Project) Create / Edit Modal — pl-modal pattern -->
     <div id="projectModal" class="modal-overlay">
         <div class="modal pl-modal pr-modal">
             <div class="modal-header pl-modal-header">
@@ -1631,7 +1631,7 @@
     </div>
 
     <!-- Dimension Modal -->
-    <!-- Dimension Modal — pl-modal pattern (brief-aligned) -->
+    <!-- Dimension Modal — pl-modal pattern -->
     <div id="dimensionModal" class="modal-overlay">
         <div class="modal pl-modal">
             <div class="modal-header pl-modal-header">
@@ -1663,7 +1663,7 @@
         </div>
     </div>
 
-    <!-- Path Modal — pl-modal pattern (brief-aligned) -->
+    <!-- Path Modal — pl-modal pattern -->
     <div id="pathModal" class="modal-overlay">
         <div class="modal pl-modal">
             <div class="modal-header pl-modal-header">
@@ -1906,7 +1906,7 @@
     </div>
 
     <!-- Challenge Modal -->
-    <!-- Challenge Modal — pl-modal pattern (brief-aligned, v122) -->
+    <!-- Challenge Modal — pl-modal pattern -->
     <div id="challengeModal" class="modal-overlay">
         <div class="modal pl-modal ch-modal">
             <div class="modal-header pl-modal-header">
@@ -2040,7 +2040,7 @@
         </div>
     </div>
 
-    <!-- Activity Modal — pl-modal shell, brief-aligned, v120 -->
+    <!-- Activity Modal — pl-modal shell -->
     <div id="activityModal" class="modal-overlay">
         <div class="modal pl-modal ay-modal">
             <div class="modal-header pl-modal-header">
@@ -2121,7 +2121,7 @@
 
                     <!-- Tech Tree mastery threshold — hidden unless creating from a
                          tree node ("Accept as new") or editing an activity that
-                         already carries a threshold. One field, per spec. -->
+                         already carries a threshold. One field. -->
                     <div id="ttMasteryGroup" class="ay-field" style="display:none;">
                         <label class="pl-field-label">Tech Tree Mastery Goal</label>
                         <div class="tt-mastery-row">
@@ -2756,16 +2756,6 @@
         </div>
     </div>
 
-    <!-- ── Categorization Prompt ────────────────────────────────────── -->
-    <div id="categorizationPrompt" style="display:none;position:fixed;inset:0;z-index:8500;background:rgba(0,0,0,0.78);align-items:center;justify-content:center;padding:24px;">
-        <div class="tutorial-card">
-            <div class="tutorial-emoji">📥</div>
-            <h2 class="tutorial-title">Time to organise!</h2>
-            <p class="tutorial-body">You have <strong id="uncatCount">0</strong> uncategorised activities. Grouping them into Dimensions and Paths unlocks the full power of Analytics and the spider chart.</p>
-            <button class="tutorial-cta" onclick="goToCategories()">Take me there</button>
-            <button class="tutorial-skip" onclick="dismissCategorizationPrompt()">Maybe later</button>
-        </div>
-    </div>
     <!-- Retroactive Activity Picker Modal -->
     <div id="retroPickerModal" class="modal-overlay" onclick="if(event.target===this)closeRetroPicker()">
         <div class="modal retro-picker-modal">

@@ -7,7 +7,7 @@
 // Bump CACHE_VERSION whenever you deploy a meaningful update.
 // This causes the old cache to be deleted and the new one installed.
 
-const CACHE_VERSION = 'v158';
+const CACHE_VERSION = 'v159';
 const CACHE_NAME = 'mindkraft-shell-' + CACHE_VERSION;
 
 // Files that make up the app shell — must all load for the app to work
@@ -18,7 +18,6 @@ const APP_SHELL = [
     './app.js',
     './manifest.json',
     './icon-192.svg',
-    './icon-512.svg',
     './privacy.html',
     './terms.html'
 ];
@@ -200,7 +199,7 @@ self.addEventListener('push', function(event) {
 });
 
 // Tapping the notification opens / focuses the app, and jumps to the activity
-// when the reminder was for a specific one (spec §6).
+// when the reminder was for a specific one.
 self.addEventListener('notificationclick', function(event) {
     event.notification.close();
 

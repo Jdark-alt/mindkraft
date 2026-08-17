@@ -27,7 +27,7 @@
                Was #3a3a3a (solid grey, too heavy on #1a1a1a bg). */
             --color-border: rgba(255,255,255,0.08);
 
-            /* ── Theme-aware semantic surface tokens (v109) ─────────────────── */
+            /* ── Theme-aware semantic surface tokens ─────────────────── */
             /* These have dark defaults — overridden in [data-theme-mode="light"] */
             --color-modal-bg: #262626;
             --color-modal-border: rgba(255,255,255,0.07);
@@ -41,11 +41,10 @@
             --color-select-option-active-bg: #3a3a4a;
             --color-select-option-text: #ffffff;
             --color-placeholder: rgba(176,176,176,0.5);
-            --color-text-on-accent: #ffffff;
             --color-select-arrow-img: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
             --color-calendar-icon-invert: 0.5;
 
-            /* Elevation system (v109) — drives card depth, modals, popovers
+            /* Elevation system — drives card depth, modals, popovers
                across both themes. Dark mode uses subtle dark washes; light
                mode (in [data-theme-mode="light"]) uses soft warm shadows.
                Both modes use the same TOKEN — only the values differ. This
@@ -70,7 +69,7 @@
                accent for the "XP earned this level" indicator in the header. */
             --color-accent-xp-positive: #6dbf7e;
 
-            /* ── Activity-card chip palette (v110) ──────────────────────────
+            /* ── Activity-card chip palette ──────────────────────────
                One job per color. These are dedicated to the activity-card
                chips on My Activities so we can run a strict color-job rule
                there without affecting the rest of the app:
@@ -86,13 +85,12 @@
 
             /* Card hairline highlight — inset top edge that creates the
                "lifted" cue on dark cards without a visible border. */
-            --hairline-top: rgba(255,255,255,0.06);
 
-            /* ── Card-material surface family (v139) ─────────────────────
+            /* ── Card-material surface family ─────────────────────
                Every card/tile surface in the app resolves through these
                tokens instead of hardcoded hexes so the whole material
                system flips with [data-theme-mode]. Dark values match the
-               v110 card recipe exactly. */
+               the dark card recipe exactly. */
             --surface-card: #22242a;            /* card material at rest */
             --surface-card-hover: #272a31;      /* card hover lift */
             --surface-card-deep: #24262c;       /* slightly raised variant */
@@ -102,7 +100,6 @@
             --surface-card-multi-hover: #232936;
             --surface-recessed: #2a2d33;        /* tiles inside cards */
             --surface-recessed-hover: #34373e;
-            --surface-skip: #221c20;            /* skipped-state rose cast */
             /* Card hairline border — edge of light in dark mode, a soft
                ink line in light mode where the white card needs a rim. */
             --card-hairline: rgba(255,255,255,0.045);
@@ -156,7 +153,6 @@
             --color-select-option-active-bg: #eef0f4;
             --color-select-option-text: #0f1115;
             --color-placeholder: rgba(60,60,60,0.5);
-            --color-text-on-accent: #ffffff;
             --color-select-arrow-img: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
             --color-calendar-icon-invert: 0;
 
@@ -196,7 +192,6 @@
             --chip-warn-bg:    rgba(251,191,36,0.20);
 
             /* Card hairline — invisible on light; light cards lift via shadow */
-            --hairline-top: rgba(255,255,255,0);
 
             /* ── Card-material surface family — light values ─────────────
                Near-white cards (not pure #fff — full white glares) float
@@ -212,7 +207,6 @@
             --surface-card-multi-hover: #dceaf6;
             --surface-recessed: #eff1f5;
             --surface-recessed-hover: #e7eaef;
-            --surface-skip: #f6edf0;
             --card-hairline: rgba(28,36,48,0.08);
 
             --recessed-bg:   rgba(15,17,21,0.03);
@@ -877,7 +871,7 @@
         }
 
         /* ──────────────────────────────────────────────────────────────────
-           SUB-TABS — "Glowing Underline" (v110.3)
+           SUB-TABS — "Glowing Underline"
            Two labels at LARGE display size — the dominant text on the page.
            No container, no border, no recessed bg. A hairline divider
            separates them vertically. Active state = a single horizontal
@@ -987,21 +981,12 @@
             /* shown by default unless style="display:none" is set */
         }
 
-        .empty-placeholder {
-            text-align: center;
-            padding: 48px 24px;
-            background: var(--color-bg-card);
-            border-radius: 14px;
-            border: 1px dashed var(--color-border);
-            margin-top: 4px;
-        }
-
         /* Sticky Header */
         /* ──────────────────────────────────────────────────────────────────
-           STICKY HEADER (v110.4)
+           STICKY HEADER
            Same surface color as activity cards (#22242a) so the header,
            cards, and bottom nav all read as one material system.
-           Slightly tighter than v110.3 to give the progress bar more room.
+           Tight enough to give the progress bar room.
            ────────────────────────────────────────────────────────────── */
         .sticky-header {
             position: sticky;
@@ -1053,7 +1038,7 @@
         }
 
         /* Level display — SVG-rendered, sized dynamically by JS to the
-           actual digit width. ~10% smaller than v110.3 (56→50). */
+           actual digit width. */
         .level-display {
             position: relative;
             display: inline-flex;
@@ -1220,11 +1205,6 @@
             .progress-alt-item { transition: opacity 0.2s; transform: none; }
             .progress-alt-item[data-state="leaving"] { transform: none; }
         }
-
-        .header-xp-current,
-        .header-xp-label,
-        .header-meta-pct,
-        .header-meta-sep { display: none; }
 
         .header-meta-right {
             display: flex;
@@ -1489,39 +1469,12 @@
             }
         }
 
-        .section-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-        }
-
         .section-title {
             font-size: 24px;
             font-weight: 600;
         }
 
-        .btn-add {
-            padding: 10px 20px;
-            background: var(--color-accent-blue);
-            color: var(--color-text-primary);
-            border: none;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s, width 0.2s, height 0.2s, border-radius 0.2s;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .btn-add:hover {
-            opacity: 0.9;
-            transform: translateY(-1px);
-        }
-
-        /* ── Activities Action Toolbar (v110.3) ────────────────────────────
+        /* ── Activities Action Toolbar ────────────────────────────
            Bare style — no cluster pill, no surface. Icons sit directly on
            the page bg, separated by hairline dividers. Active state is
            the same single primitive as the sub-tabs: a glowing underline.
@@ -1641,8 +1594,6 @@
             pointer-events: none;
         }
 
-        .act-tb-sep { flex: 1; }
-
         /* Count — bare inline text, no pill, no border. Just lives between
            the icon row and the Add button. */
         .act-count-pill {
@@ -1712,7 +1663,7 @@
         }
         .btn-search:hover { border-color: var(--color-accent-blue); color: var(--color-accent-blue); }
         /* ──────────────────────────────────────────────────────────────────
-           SEARCH MODAL (v110.5)
+           SEARCH MODAL
            Built from the same material as activity cards: #22242a surface,
            inset top highlight, drop shadow, hairline border. Result rows
            use the same hierarchy and chip system as the main list — name
@@ -1792,7 +1743,7 @@
         /* Result cards — same material as activity cards but slightly
            taller for legibility. The grid layout keeps a fixed-width
            action column so completion buttons never resize the row. */
-        /* ── Search result card — design-brief card material ─────────────
+        /* ── Search result card — card material ─────────────
            Layout: 60% text block / 40% action column. The text block is
            three lines: name → XP+streak → frequency·path. Action column
            accommodates Do AND Undo side-by-side (for multi-per-day acts). */
@@ -2057,40 +2008,6 @@
         }
 
         /* Rewards toggle pills */
-        .rewards-mode-toggle {
-            display: flex;
-            gap: 4px;
-            background: rgba(0,0,0,0.25);
-            padding: 4px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-        }
-        .rewards-mode-pill {
-            flex: 1;
-            padding: 9px 12px;
-            background: transparent;
-            border: none;
-            color: var(--color-text-secondary);
-            border-radius: 7px;
-            cursor: pointer;
-            font-size: 13px;
-            font-weight: 600;
-            transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s, width 0.2s, height 0.2s, border-radius 0.2s;
-            font-family: inherit;
-            letter-spacing: 0.01em;
-            text-align: center;
-        }
-        .rewards-mode-pill.active {
-            background: var(--color-accent-blue);
-            color: #fff;
-            box-shadow: 0 2px 8px rgba(74,124,158,0.4);
-        }
-        .dim-rewards-selector {
-            margin-bottom: 16px;
-        }
-        .dim-level-up-toast {
-            background: linear-gradient(135deg, var(--color-accent-olive), #8a8c55);
-        }
 
         /* ── Activity History ────────────────────────────────────────────── */
 
@@ -2162,22 +2079,6 @@
         }
 
         /* ── Chart time-range row ────────────────────────────────────────── */
-        .chart-controls-row {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            flex-wrap: wrap;
-            margin-bottom: 10px;
-        }
-        .chart-controls-label {
-            font-size: 10px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.07em;
-            color: var(--color-text-secondary);
-            flex-shrink: 0;
-            min-width: 52px;
-        }
 
         /* ── Streak Shield inline badges ─────────────────────────────────── */
         .badge-shield {
@@ -2196,17 +2097,6 @@
             50%       { box-shadow: 0 0 0 4px rgba(142,59,95,0); }
         }
         /* Streak milestone badges — shown in expanded card only */
-        .badge-streak-maxed {
-            background: rgba(180, 140, 20, 0.15);
-            color: #d4a82a;
-            border: 1px solid rgba(180, 140, 20, 0.35);
-        }
-        .badge-streak-hint {
-            background: rgba(74, 124, 158, 0.1);
-            color: var(--color-progress);
-            border: 1px solid rgba(74, 124, 158, 0.25);
-            opacity: 0.8;
-        }
         .badge-penalty { background: rgba(142,59,95,0.18); color: #e07070; border: 1px solid rgba(142,59,95,0.4); font-size: 10px; font-weight: 700; letter-spacing: 0.02em; padding: 2px 7px; border-radius: 20px; white-space: nowrap; }
         /* ── Level-up animation ───────────────────────────────────────────── */
         @keyframes levelPop {
@@ -2236,7 +2126,7 @@
             color: var(--color-accent-blue);
         }
 
-        /* ── Filter / Sort panel — design-brief card material ─────────── */
+        /* ── Filter / Sort panel — card material ─────────── */
         .filter-panel {
             position: fixed;
             top: auto;
@@ -2345,79 +2235,6 @@
         }
 
         /* Dimension Card */
-        .dimension-card {
-            background: var(--color-bg-card);
-            border: 1px solid var(--color-border);
-            border-radius: 12px;
-            margin-bottom: 14px;
-            box-shadow: var(--shadow-card);
-        }
-
-        .dimension-header {
-            padding: 14px 16px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 8px;
-            cursor: pointer;
-            transition: background 0.18s;
-            user-select: none;
-            -webkit-user-select: none;
-        }
-
-        .dimension-header:hover {
-            background: var(--color-hover-overlay);
-        }
-
-        .dimension-info {
-            flex: 1;
-            min-width: 0;
-        }
-
-        .dimension-name {
-            font-size: 16px;
-            font-weight: 600;
-            margin-bottom: 2px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .dimension-meta {
-            font-size: 12px;
-            color: var(--color-text-secondary);
-        }
-
-        .dimension-actions {
-            display: flex;
-            gap: 5px;
-            align-items: center;
-            flex-shrink: 0;
-        }
-
-        .btn-icon {
-            padding: 5px 9px;
-            background: transparent;
-            border: 1px solid var(--color-border);
-            border-radius: 6px;
-            color: var(--color-text-secondary);
-            cursor: pointer;
-            transition: background-color 0.18s, border-color 0.18s, color 0.18s, box-shadow 0.18s, transform 0.18s, opacity 0.18s, width 0.18s, height 0.18s, border-radius 0.18s;
-            font-size: 11px;
-            font-family: inherit;
-            white-space: nowrap;
-        }
-
-        .btn-icon:hover {
-            background: rgba(255,255,255,0.06);
-            color: var(--color-text-primary);
-        }
-
-        .btn-icon.delete:hover {
-            background: rgba(142,59,95,0.15);
-            border-color: var(--color-accent-red);
-            color: #e07070;
-        }
 
         .collapse-icon {
             font-size: 0;
@@ -2459,41 +2276,12 @@
         }
 
         /* Path Card */
-        .dimension-content {
-            padding: 0 12px 12px;
-            display: none;
-        }
-
-        .dimension-content.expanded {
-            display: block;
-        }
 
         .path-card {
             background: var(--color-bg-secondary);
             border: 1px solid var(--color-border);
             border-radius: 9px;
             margin-bottom: 9px;
-        }
-
-        .path-header {
-            padding: 12px 14px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 8px;
-            cursor: pointer;
-            user-select: none;
-            -webkit-user-select: none;
-            transition: background 0.18s;
-        }
-
-        .path-header:hover {
-            background: var(--color-hover-overlay);
-        }
-
-        .path-header > div:first-child {
-            flex: 1;
-            min-width: 0;
         }
 
         .path-name {
@@ -2504,18 +2292,9 @@
             text-overflow: ellipsis;
         }
 
-        .path-content {
-            padding: 0 10px 10px;
-            display: none;
-        }
-
-        .path-content.expanded {
-            display: block;
-        }
-
         /* Activity Item */
         /* ──────────────────────────────────────────────────────────────────
-           ACTIVITY CARD (v110.2)
+           ACTIVITY CARD
            Tightened by ~10% on the vertical axis; surface darkened and
            cooled so the card no longer reads as "warm brown" against the
            bg. A stronger inset top highlight gives a glossy edge that
@@ -2558,32 +2337,9 @@
         }
 
         /* Pending — same default state */
-        .activity-item:not(.completed):not(.disabled):not(.permanently-done) {
-            background: var(--surface-card);
-        }
 
-        .activity-item:not(.completed):not(.disabled):not(.permanently-done):hover {
-            background: var(--surface-card-hover);
-            box-shadow:
-                0 1px 0 rgba(255,255,255,0.085) inset,
-                0 -1px 0 rgba(0,0,0,0.35) inset,
-                0 2px 4px rgba(0,0,0,0.55),
-                0 10px 24px rgba(0,0,0,0.5);
-            transform: translateY(-1px);
-        }
-
-        [data-theme-mode="light"] .activity-item:not(.completed):not(.disabled):not(.permanently-done):hover {
-            background: var(--color-bg-secondary);
-            box-shadow: var(--shadow-md);
-            transform: translateY(-1px);
-        }
-
-        .activity-item:not(.completed):not(.disabled):not(.permanently-done):active {
-            transform: scale(0.995);
-        }
-
-        /* Old left accent bar — removed in v110 redesign (chevron at edge
-           and shadow elevation now carry the "tappable" cue). */
+        /* Left accent bar is retired — the edge chevron and shadow elevation
+           now carry the "tappable" cue. */
         .activity-item::before { display: none; }
 
         /* Completed — slightly more muted surface */
@@ -2632,16 +2388,6 @@
         }
 
         /* Permanently done one-time activity */
-        .activity-item.permanently-done {
-            background: rgba(107, 124, 63, 0.06);
-            border-color: rgba(107, 124, 63, 0.2);
-            cursor: default;
-            opacity: 0.7;
-        }
-        .activity-item.permanently-done .activity-name {
-            text-decoration: line-through;
-            color: var(--color-text-secondary);
-        }
 
         .activity-item.disabled {
             cursor: not-allowed;
@@ -2823,13 +2569,6 @@
         }
 
         /* ── Sub-tab count badge ─────────────────────────────── */
-        .sub-tab-count {
-            display: inline-block;
-            font-size: 10px;
-            font-weight: 400;
-            opacity: 0.65;
-            margin-left: 3px;
-        }
 
         .activity-badge {
             padding: 3px 9px;
@@ -2926,33 +2665,6 @@
             border-color: var(--color-accent-blue);
             color: #fff;
         }
-        .custom-subtype-row {
-            display: flex;
-            gap: 6px;
-        }
-        .custom-subtype-btn {
-            flex: 1;
-            padding: 10px 8px;
-            border-radius: 8px;
-            border: 1px solid rgba(255,255,255,0.1);
-            background: var(--recessed-bg-3);
-            color: var(--color-text-secondary);
-            font-size: 11px;
-            font-weight: 500;
-            cursor: pointer;
-            text-align: center;
-            transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
-            font-family: inherit;
-        }
-        .custom-subtype-btn:hover {
-            border-color: rgba(74,124,158,0.4);
-        }
-        .custom-subtype-btn.active {
-            border-color: var(--color-accent-blue);
-            background: var(--color-accent-blue);
-            color: #ffffff;
-            font-weight: 600;
-        }
 
         /* Check circle indicator for completed */
         .activity-check {
@@ -2973,43 +2685,16 @@
             font-weight: 700;
         }
 
-        .activity-item:not(.completed):not(.disabled):not(.permanently-done) .activity-check {
-            border-color: var(--color-border);
-        }
-
-        .activity-item:not(.completed):not(.disabled):not(.permanently-done):hover .activity-check {
-            border-color: var(--color-accent-blue);
-            background: rgba(68,114,160,0.1);
-            color: var(--color-accent-blue);
-        }
-
         .activity-item.completed .activity-check {
             background: var(--color-accent-blue);
             border-color: var(--color-accent-blue);
             color: #fff;
         }
 
-        .activity-item.permanently-done .activity-check {
-            background: var(--color-accent-green);
-            border-color: var(--color-accent-green);
-            color: #fff;
-        }
-
         /* ── Activity Ring (replaces .activity-check in My Activities) ─── */
-        .act-dim-gradient {
-            position: absolute;
-            right: 0; top: 0;
-            width: 52%;
-            height: 100%;
-            pointer-events: none;
-            border-radius: 0 10px 10px 0;
-            background: linear-gradient(to left, var(--dim-rgba, rgba(74,124,158,0.15)) 0%, transparent 100%);
-            z-index: 0;
-        }
         /* Light mode: the same dimension tint reads far heavier on white
            cards than on dark — scale the whole overlay down so it stays a
            pastel cast, not a colour slab. */
-        [data-theme-mode="light"] .act-dim-gradient { opacity: 0.4; }
 
         .act-ring-wrap {
             position: relative;
@@ -3089,8 +2774,6 @@
             justify-content: center;
             pointer-events: none;
         }
-
-        .act-ring-xp-text { display: none; }
 
         /* Completed checkmark — centered, dark on the green fill */
         .act-ring-label svg {
@@ -3259,7 +2942,7 @@
         }
 
         /* ──────────────────────────────────────────────────────────────────
-           Toast pill (v110.6)
+           Toast pill
            Shown below the header on XP gain, undo, streak milestone, dim
            level-up, etc. Same material as activity cards (#22242a surface,
            inset top highlight, drop shadow, hairline border). The TONE
@@ -3366,38 +3049,8 @@
         }
 
         /* Ring blink on completion */
-        .act-ring-fill.ring-pulse {
-            animation: ringArcPulse 0.55s ease forwards;
-        }
-        @keyframes ringArcPulse {
-            0%   { stroke-opacity: 0.4; }
-            50%  { stroke-opacity: 1; stroke-width: 5.5; }
-            100% { stroke-opacity: 1; stroke-width: 3.5; }
-        }
 
         /* Legacy .activity-status kept for dimensions tab */
-        .activity-status {
-            padding: 4px 10px;
-            background: rgba(107, 124, 63, 0.15);
-            color: var(--color-accent-green);
-            border: 1px solid rgba(107, 124, 63, 0.25);
-            border-radius: 6px;
-            font-size: 11px;
-            font-weight: 600;
-            pointer-events: none;
-            display: flex;
-            align-items: center;
-            gap: 4px;
-        }
-
-        .activity-item.completed .activity-status {
-            background: rgba(107, 124, 63, 0.2);
-        }
-
-        .activity-item.completed:hover .activity-status {
-            background: rgba(122, 123, 77, 0.3);
-            color: var(--color-accent-olive);
-        }
 
         /* Modal */
         .modal-overlay {
@@ -3605,34 +3258,6 @@
         }
 
         /* ── Section divider inside modal body ── */
-        .form-divider {
-            height: 1px;
-            background: rgba(255,255,255,0.06);
-            margin: 2px 0;
-        }
-
-        .checkbox-group {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-top: 8px;
-            margin-bottom: 16px;
-            padding: 10px 12px;
-            background: var(--recessed-bg-2);
-            border: 1px solid var(--color-border);
-            border-radius: 8px;
-        }
-
-        .checkbox-group input[type="checkbox"] {
-            width: 18px;
-            height: 18px;
-            cursor: pointer;
-        }
-
-        .checkbox-group label {
-            margin: 0;
-            cursor: pointer;
-        }
 
         /* Modern toggle switch */
         .toggle-row {
@@ -3717,61 +3342,12 @@
         }
 
         /* Form section inset — for nested options */
-        .form-section-inset {
-            background: var(--recessed-bg-2);
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 10px;
-            padding: 16px;
-            display: flex;
-            flex-direction: column;
-            gap: 14px;
-        }
 
         /* ── Advanced Setup collapse (activity modal) ───────────────────
            Header is a borderless button row with a chevron that rotates
            when the section is expanded. Content sits below as a flex
            column matching .form-section-inset spacing so toggles inside
            look identical to when they lived at the top level. */
-        .advanced-toggle-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            width: 100%;
-            padding: 14px 16px;
-            margin-top: 4px;
-            background: var(--recessed-bg-2);
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 10px;
-            color: var(--color-text-primary);
-            font-family: inherit;
-            font-size: 13px;
-            font-weight: 600;
-            letter-spacing: 0.02em;
-            cursor: pointer;
-            transition: background 0.15s, border-color 0.15s;
-        }
-        .advanced-toggle-header:hover {
-            background: var(--recessed-bg-4);
-            border-color: rgba(255,255,255,0.14);
-        }
-        .advanced-toggle-label {
-            text-align: left;
-        }
-        .advanced-toggle-chevron {
-            font-size: 14px;
-            color: var(--color-text-secondary);
-            transition: transform 0.18s ease;
-            line-height: 1;
-        }
-        .advanced-toggle-header[aria-expanded="true"] .advanced-toggle-chevron {
-            transform: rotate(180deg);
-        }
-        .advanced-section-content {
-            /* Display toggled via inline style by JS (none / flex). */
-            flex-direction: column;
-            gap: 14px;
-            margin-top: 14px;
-        }
 
         .activity-checklist-item {
             display: flex;
@@ -3885,17 +3461,6 @@
             margin-bottom: 12px;
         }
 
-        .level-lock-notice {
-            background: rgba(142, 59, 95, 0.1);
-            border: 1px solid rgba(142, 59, 95, 0.3);
-            color: var(--color-accent-red);
-            padding: 12px;
-            border-radius: 8px;
-            margin-bottom: 16px;
-            font-size: 14px;
-            text-align: center;
-        }
-
         /* Themed scrollbars — applied globally to every scrollable element */
         * {
             scrollbar-width: thin;
@@ -3925,165 +3490,7 @@
             background: var(--color-bg-secondary);
         }
 
-        .btn-complete-challenge {
-            padding: 6px 12px;
-            background: rgba(107, 124, 63, 0.15);
-            color: var(--color-accent-green);
-            border: 1px solid rgba(107, 124, 63, 0.4);
-            border-radius: 6px;
-            font-size: 12px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s, width 0.2s, height 0.2s, border-radius 0.2s;
-            white-space: nowrap;
-        }
-
-        .btn-complete-challenge:hover {
-            background: rgba(107, 124, 63, 0.35);
-            border-color: var(--color-accent-green);
-            color: #fff;
-        }
-
-        .btn-complete-ready {
-            background: rgba(107, 124, 63, 0.3);
-            border-color: var(--color-accent-green);
-            color: #fff;
-            animation: pulse-green 2s ease-in-out infinite;
-        }
-
-        @keyframes pulse-green {
-            0%, 100% { box-shadow: 0 0 0 0 rgba(107, 124, 63, 0.5); }
-            50% { box-shadow: 0 0 0 6px rgba(107, 124, 63, 0); }
-        }
-
-        .btn-take-again {
-            background: rgba(74, 124, 158, 0.15);
-            border: 1px solid rgba(74, 124, 158, 0.45);
-            color: var(--color-progress);
-            border-radius: 8px;
-            padding: 6px 12px;
-            font-size: 12px;
-            font-weight: 600;
-            cursor: pointer;
-            font-family: inherit;
-            white-space: nowrap;
-            transition: background 0.15s;
-        }
-        .btn-take-again:hover {
-            background: rgba(74, 124, 158, 0.28);
-        }
-
         /* ── Rewards Tab ───────────────────────────────────────────────── */
-
-        .rewards-intro {
-            text-align: center;
-            padding: 16px 0 28px;
-        }
-
-        .rewards-intro p {
-            color: var(--color-text-secondary);
-            font-size: 15px;
-            max-width: 520px;
-            margin: 0 auto;
-            line-height: 1.6;
-        }
-
-        .rewards-timeline {
-            position: relative;
-            padding-left: 48px;
-        }
-
-        .rewards-timeline::before {
-            content: '';
-            position: absolute;
-            left: 19px;
-            top: 0;
-            bottom: 0;
-            width: 2px;
-            background: linear-gradient(to bottom, var(--color-accent-blue), var(--color-accent-olive), var(--color-accent-green));
-            border-radius: 1px;
-            opacity: 0.5;
-        }
-
-        .reward-any-level-row {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 12px 16px;
-            background: rgba(74,124,158,0.06);
-            border: 1px dashed rgba(74,124,158,0.35);
-            border-radius: 10px;
-            margin-bottom: 20px;
-            flex-wrap: wrap;
-        }
-        .reward-any-level-row label {
-            font-size: 13px;
-            color: var(--color-text-secondary);
-            white-space: nowrap;
-        }
-        .reward-any-level-row input[type="number"] {
-            width: 90px;
-            padding: 6px 10px;
-            background: var(--color-bg-secondary);
-            border: 1px solid var(--color-border);
-            border-radius: 7px;
-            color: var(--color-text-primary);
-            font-size: 14px;
-            font-family: inherit;
-            outline: none;
-        }
-        .reward-any-level-row input[type="number"]:focus {
-            border-color: var(--color-accent-blue);
-        }
-        .reward-any-level-row .btn-reward-add {
-            padding: 6px 14px;
-            font-size: 13px;
-        }
-
-        .reward-node {
-            position: relative;
-            margin-bottom: 20px;
-        }
-
-        .reward-node-dot {
-            position: absolute;
-            left: -36px;
-            top: 18px;
-            width: 14px;
-            height: 14px;
-            border-radius: 50%;
-            border: 2px solid var(--color-border);
-            background: var(--color-bg-primary);
-            z-index: 1;
-            transition: background-color 0.3s, border-color 0.3s, color 0.3s, box-shadow 0.3s, transform 0.3s, opacity 0.3s, width 0.3s, height 0.3s, border-radius 0.3s;
-        }
-
-        .reward-node.unlocked .reward-node-dot {
-            background: var(--color-accent-green);
-            border-color: var(--color-accent-green);
-            box-shadow: 0 0 10px rgba(107, 124, 63, 0.6);
-        }
-
-        .reward-node.current .reward-node-dot {
-            background: var(--color-accent-blue);
-            border-color: var(--color-progress);
-            width: 18px;
-            height: 18px;
-            left: -38px;
-            top: 16px;
-            box-shadow: 0 0 14px rgba(90, 159, 212, 0.7);
-            animation: pulse-blue 2s ease-in-out infinite;
-        }
-
-        @keyframes pulse-blue {
-            0%, 100% { box-shadow: 0 0 0 0 rgba(90, 159, 212, 0.6); }
-            50% { box-shadow: 0 0 0 8px rgba(90, 159, 212, 0); }
-        }
-
-        .reward-node.future .reward-node-dot {
-            background: var(--color-bg-secondary);
-            border-color: var(--color-border);
-        }
 
         .reward-card {
             background: var(--color-bg-card);
@@ -4106,72 +3513,7 @@
             transition: background 0.3s;
         }
 
-        .reward-node.unlocked .reward-card {
-            border-color: rgba(107, 124, 63, 0.4);
-            background: linear-gradient(135deg, rgba(107,124,63,0.08) 0%, var(--color-bg-card) 100%);
-        }
-
-        .reward-node.unlocked .reward-card::before { background: var(--color-accent-green); }
-
-        .reward-node.current .reward-card {
-            border-color: rgba(74, 124, 158, 0.6);
-            background: linear-gradient(135deg, rgba(74,124,158,0.12) 0%, var(--color-bg-card) 100%);
-            box-shadow: 0 4px 20px rgba(74, 124, 158, 0.15);
-        }
-
-        .reward-node.current .reward-card::before { background: var(--color-accent-blue); }
-
-        .reward-node.future .reward-card {
-            opacity: 0.55;
-        }
-
-        .reward-node.future .reward-card::before { background: var(--color-border); }
-
         /* Cards that have a reward set — glowing border */
-        @keyframes rewardGlow {
-            0%, 100% { box-shadow: 0 0 8px rgba(90,159,212,0.25), 0 0 2px rgba(90,159,212,0.15), inset 0 0 0 1px rgba(90,159,212,0.3); }
-            50%       { box-shadow: 0 0 18px rgba(90,159,212,0.45), 0 0 6px rgba(90,159,212,0.25), inset 0 0 0 1px rgba(90,159,212,0.5); }
-        }
-        .reward-card.reward-set {
-            border-color: rgba(90,159,212,0.55) !important;
-            animation: rewardGlow 2.8s ease-in-out infinite;
-        }
-        .reward-node.unlocked .reward-card.reward-set {
-            border-color: rgba(107,180,90,0.55) !important;
-            animation: none;
-            box-shadow: 0 0 12px rgba(107,180,90,0.25), inset 0 0 0 1px rgba(107,180,90,0.3);
-        }
-
-        .reward-card-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            gap: 12px;
-        }
-
-        .reward-level-label {
-            font-size: 12px;
-            font-weight: 700;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-        }
-
-        .reward-node.unlocked .reward-level-label { color: var(--color-accent-green); }
-        .reward-node.current  .reward-level-label { color: var(--color-progress); }
-        .reward-node.future   .reward-level-label { color: var(--color-text-secondary); }
-
-        .reward-status-badge {
-            padding: 3px 10px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 600;
-            white-space: nowrap;
-            flex-shrink: 0;
-        }
-
-        .badge-unlocked  { background: rgba(107,124,63,0.25);  color: var(--color-accent-green); }
-        .badge-current   { background: rgba(74,124,158,0.25);  color: var(--color-progress); }
-        .badge-upcoming  { background: rgba(255,255,255,0.06); color: var(--color-text-secondary); }
 
         .reward-title {
             font-size: 17px;
@@ -4182,53 +3524,10 @@
             color: var(--color-text-primary);
         }
 
-        .reward-node.future .reward-title {
-            color: var(--color-text-secondary);
-        }
-
         .reward-desc {
             font-size: 13px;
             color: var(--color-text-secondary);
             line-height: 1.5;
-        }
-
-        .reward-card-actions {
-            display: flex;
-            gap: 8px;
-            margin-top: 14px;
-        }
-
-        .btn-reward-edit {
-            padding: 5px 12px;
-            background: transparent;
-            border: 1px solid var(--color-border);
-            border-radius: 6px;
-            color: var(--color-text-secondary);
-            font-size: 12px;
-            cursor: pointer;
-            transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s, width 0.2s, height 0.2s, border-radius 0.2s;
-        }
-
-        .btn-reward-edit:hover {
-            border-color: var(--color-accent-blue);
-            color: var(--color-text-primary);
-            background: rgba(74,124,158,0.1);
-        }
-
-        .btn-reward-add {
-            padding: 5px 12px;
-            background: rgba(74,124,158,0.1);
-            border: 1px dashed rgba(74,124,158,0.4);
-            border-radius: 6px;
-            color: var(--color-accent-blue);
-            font-size: 12px;
-            cursor: pointer;
-            transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s, width 0.2s, height 0.2s, border-radius 0.2s;
-        }
-
-        .btn-reward-add:hover {
-            background: rgba(74,124,158,0.2);
-            border-color: var(--color-accent-blue);
         }
 
         /* Reward unlock celebration overlay */
@@ -4432,7 +3731,6 @@
             box-shadow: 0 1px 0 rgba(255,255,255,0.075) inset, 0 -1px 0 rgba(0,0,0,0.35) inset, 0 1px 2px rgba(0,0,0,0.55), 0 4px 12px rgba(0,0,0,0.34);
         }
         [data-theme-mode="light"] .analytics-card { background: var(--color-bg-card); border-color: var(--color-border); box-shadow: var(--shadow-card); }
-        .analytics-card-title { font-size: 15px; font-weight: 600; letter-spacing: -0.015em; }
 
         /* ── XP chart header ─────────────────────────────────────────── */
         .an-chart-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
@@ -4499,8 +3797,6 @@
         .chart-container { position: relative; height: 220px; }
         .chart-container canvas { width: 100% !important; height: 100% !important; }
         .chart-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--color-text-secondary); font-size: 14px; }
-        .chart-controls-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
-        .chart-controls-label { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-text-secondary); }
 
         /* ── Rank rows (leaderboard / frequency) ─────────────────────── */
         .rank-row { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; }
@@ -4511,8 +3807,6 @@
         .rank-value { width: 56px; font-size: 11.5px; font-weight: 600; color: var(--color-text-secondary); text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
 
         /* Legacy two-col compat */
-        .analytics-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
-        .analytics-two-col .analytics-card { margin-bottom: 0; }
 
         /* Calendar */
         .calendar-month-grid {
@@ -4689,11 +3983,6 @@
             flex-shrink: 0;
         }
 
-        @media (max-width: 768px) {
-            .analytics-two-col { grid-template-columns: 1fr; }
-            .rank-label { width: 80px; }
-        }
-
         /* ── Settings Cards ──────────────────────────────────────────────── */
 
         /* ── Settings page title ─────────────────────────────────────── */
@@ -4788,16 +4077,6 @@
         .st-icon-purple { color: var(--color-accent-purple); background: rgba(122,93,158,0.1); }
 
         /* Legacy settings-icon kept for any leftover refs */
-        .settings-icon {
-            width: 34px; height: 34px;
-            background: var(--recessed-bg-4);
-            border-radius: 9px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-shrink: 0;
-        }
-        .settings-svg-icon { width: 17px; height: 17px; color: var(--color-text-secondary); }
 
         /* Settings collapse pattern (mirrors an-collapse-btn) */
         .st-collapse-btn {
@@ -4824,14 +4103,6 @@
             font-size: 14.5px;
             font-weight: 600;
             letter-spacing: -0.015em;
-            color: var(--color-text-primary);
-        }
-
-        .settings-card-title {
-            font-size: 14.5px;
-            font-weight: 600;
-            letter-spacing: -0.015em;
-            margin-bottom: 1px;
             color: var(--color-text-primary);
         }
 
@@ -4960,23 +4231,6 @@
            locked swatch should still read as active. */
         .theme-swatch.theme-swatch-locked.active {
             opacity: 1;
-        }
-
-        .color-picker {
-            width: 44px;
-            height: 34px;
-            border: 1px solid var(--color-border);
-            border-radius: 6px;
-            background: none;
-            cursor: pointer;
-            padding: 2px;
-            flex-shrink: 0;
-        }
-
-        .theme-custom-row {
-            display: flex;
-            gap: 16px;
-            flex-wrap: wrap;
         }
 
         /* ── Custom Theme Panel ──────────────────────────────────────────── */
@@ -5164,26 +4418,6 @@
             flex: 1;
             accent-color: var(--color-accent-blue);
         }
-
-        .theme-glow-color-row {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-bottom: 8px;
-        }
-        .theme-glow-color-row input[type="color"] {
-            width: 32px;
-            height: 28px;
-            border: 1px solid var(--color-border);
-            background: none;
-            padding: 2px;
-            cursor: pointer;
-            border-radius: 6px;
-        }
-        .theme-glow-color-row label {
-            font-size: 11px;
-            color: var(--color-text-secondary);
-        }
         .theme-opacity-row {
             display: flex;
             align-items: center;
@@ -5273,69 +4507,6 @@
 
         /* ── Streak Pause ─────────────────────────────────────────────────── */
 
-        .streak-pause-item {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 10px 0;
-            border-bottom: 1px solid var(--color-border);
-        }
-
-        .streak-pause-item:last-child { border-bottom: none; }
-
-        .streak-pause-info { flex: 1; }
-
-        .streak-pause-name { font-size: 14px; font-weight: 500; }
-
-        .streak-pause-meta {
-            font-size: 12px;
-            color: var(--color-text-secondary);
-            margin-top: 2px;
-        }
-
-        .streak-pause-uses {
-            display: flex;
-            gap: 4px;
-        }
-
-        .streak-use-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: var(--color-border);
-        }
-
-        .streak-use-dot.used { background: var(--color-accent-olive); }
-
-        .btn-pause-streak {
-            padding: 5px 14px;
-            background: rgba(122,123,77,0.15);
-            border: 1px solid rgba(122,123,77,0.4);
-            border-radius: 6px;
-            color: var(--color-accent-olive);
-            font-size: 12px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, transform 0.2s, opacity 0.2s, width 0.2s, height 0.2s, border-radius 0.2s;
-            white-space: nowrap;
-        }
-
-        .btn-pause-streak:hover { background: rgba(122,123,77,0.3); }
-
-        .btn-pause-streak:disabled {
-            opacity: 0.4;
-            cursor: not-allowed;
-        }
-
-        .streak-paused-badge {
-            padding: 3px 10px;
-            background: rgba(107,124,63,0.2);
-            border-radius: 20px;
-            font-size: 11px;
-            color: var(--color-accent-green);
-            font-weight: 600;
-        }
-
         /* ── Data Actions ─────────────────────────────────────────────────── */
 
         .data-actions {
@@ -5388,8 +4559,6 @@
                no responsive override needed. Kept the selector commented
                here for searchability if anyone wonders where the old rule
                went. */
-
-            .analytics-two-col { grid-template-columns: 1fr; }
             .rank-label { width: 80px; }
 
             .main-content {
@@ -5397,11 +4566,6 @@
             }
 
             /* Keep date form-rows as 2-col on tablets, single col on phones handled in 480px */
-            .section-header {
-                flex-direction: row;
-                align-items: center;
-                gap: 8px;
-            }
 
             .settings-card {
                 padding: 16px;
@@ -5434,11 +4598,6 @@
 
         @media (max-width: 480px) {
             /* Section header — prevent title wrapping */
-            .section-header {
-                gap: 6px;
-                align-items: center;
-                flex-wrap: nowrap;
-            }
             .section-title {
                 font-size: 15px;
                 white-space: nowrap;
@@ -5448,10 +4607,8 @@
                 min-width: 0;
             }
             /* Actions group stays tight */
-            .section-header > div { flex-shrink: 0; gap: 5px !important; }
             /* Slot count remains visible on all sizes */
             /* Compact buttons */
-            .btn-add { padding: 7px 10px; font-size: 12px; gap: 3px; }
             .btn-search, .btn-filter { padding: 7px 8px; }
             .stat-value { font-size: 20px; }
             .stat-label { font-size: 10px; }
@@ -5531,9 +4688,6 @@
 
         .guide-section-body { display: none; flex-direction: column; gap: 10px; margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.05); }
         .guide-section-body.open { display: flex; }
-        .guide-toggle-btn { display: flex; align-items: center; gap: 10px; cursor: pointer; width: 100%; background: none; border: none; color: var(--color-text-primary); font-family: inherit; text-align: left; }
-        .guide-toggle-btn .guide-chevron { font-size: 12px; color: var(--color-text-secondary); transition: transform 0.2s; }
-        .guide-toggle-btn.open .guide-chevron { transform: rotate(180deg); }
 
         .guide-inner-card {
             background: var(--recessed-bg-2);
@@ -5649,7 +4803,7 @@
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
         .fr-lb-meta { font-size: 11px; color: var(--color-text-secondary); margin-top: 1px; }
-        /* Value column — number + unit on one baseline (v120 fix).
+        /* Value column — number + unit on one baseline .
            Was previously stacked because .fr-lb-num was display:block. */
         .fr-lb-val {
             text-align: right;
@@ -5811,20 +4965,6 @@
             letter-spacing: -0.03em;
         }
 
-        .dimension-name {
-            letter-spacing: -0.02em;
-        }
-
-        .analytics-card-title {
-            font-weight: 700;
-            letter-spacing: -0.02em;
-            font-size: 15px;
-        }
-
-        .settings-card-title {
-            letter-spacing: -0.02em;
-        }
-
         /* Smoother buttons */
         .btn, .btn-primary, .btn-secondary, .btn-add, .btn-settings-save,
         .btn-complete-challenge, .btn-pause-streak, .btn-reward-claim {
@@ -5833,17 +4973,8 @@
         }
 
         /* Auth card polish */
-        .auth-brand-name {
-            font-weight: 800;
-            letter-spacing: -0.03em;
-        }
 
         /* Streak meta clean */
-        .streak-pause-meta {
-            font-size: 12px;
-            color: var(--color-text-secondary);
-            margin-top: 3px;
-        }
 
         /* Stat card grid for mobile - 3 columns */
         @media (max-width: 400px) {
@@ -5862,47 +4993,6 @@
         }
 
         /* ── Challenge Cards ──────────────────────────────────────────────── */
-        .challenge-card {
-            background: var(--color-bg-card);
-            border: 1px solid var(--color-border);
-            border-radius: 16px;
-            padding: 20px;
-            margin-bottom: 16px;
-            box-shadow: var(--shadow-card);
-            transition: box-shadow 0.2s;
-        }
-        .challenge-card.completed { border-color: var(--color-accent-green); opacity: 0.85; }
-        .challenge-card.failed { border-color: var(--color-accent-red); opacity: 0.6; }
-        .challenge-card.targets-met { border-color: var(--color-accent-green); box-shadow: 0 0 20px rgba(107,124,63,0.3); }
-        .ch-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
-        .ch-title { font-size: 17px; font-weight: 700; margin: 0 0 4px 0; line-height: 1.3; }
-        .ch-desc { font-size: 13px; color: var(--color-text-secondary); margin: 0; line-height: 1.5; }
-        .ch-actions { display: flex; gap: 6px; flex-shrink: 0; align-items: center; }
-        .ch-ready-banner {
-            display: flex; align-items: center; gap: 8px;
-            background: rgba(107,124,63,0.12); border: 1px solid rgba(107,124,63,0.35);
-            border-radius: 10px; padding: 10px 14px; margin-bottom: 14px;
-            font-size: 13px; color: var(--color-accent-green);
-        }
-        .ch-progress-block { margin-bottom: 14px; }
-        .ch-progress-label { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; margin-bottom: 6px; }
-        .ch-progress-label-name { font-weight: 600; color: var(--color-text-primary); }
-        .ch-progress-label-val { color: var(--color-text-secondary); font-size: 12px; }
-        .ch-bar-track { width: 100%; height: 8px; background: var(--color-bg-secondary); border-radius: 4px; overflow: hidden; }
-        .ch-bar-fill { height: 100%; border-radius: 4px; transition: width 0.4s ease; }
-        .ch-update-row { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
-        .ch-update-input {
-            flex: 1; padding: 9px 12px; background: var(--color-bg-secondary);
-            border: 1px solid var(--color-border); border-radius: 8px;
-            color: var(--color-text-primary); font-size: 14px; font-family: inherit; min-width: 0;
-        }
-        .ch-update-input:focus { outline: none; border-color: var(--color-accent-blue); }
-        .ch-update-btn {
-            padding: 9px 16px; border-radius: 8px; border: 1px solid var(--color-accent-blue);
-            background: rgba(74,124,158,0.15); color: var(--color-accent-blue);
-            font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; flex-shrink: 0;
-        }
-        .ch-update-btn:hover { background: rgba(74,124,158,0.3); }
         .ch-breakdown-toggle {
             display: flex; justify-content: space-between; align-items: center;
             cursor: pointer; padding: 8px 0 6px; font-size: 12px; color: var(--color-text-secondary);
@@ -5915,30 +5005,6 @@
         .ch-act-row-name { color: var(--color-text-secondary); }
         .ch-act-row-name.done { color: var(--color-accent-green); }
         .ch-act-row-count { color: var(--color-text-secondary); font-size: 11px; }
-        .ch-act-bar-track { width: 100%; height: 5px; background: var(--color-bg-primary); border-radius: 3px; overflow: hidden; margin-bottom: 8px; }
-        .ch-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--color-border); }
-        .metric-toggle-btn {
-            width: 100%; padding: 11px 14px; border-radius: 10px;
-            border: 1.5px solid var(--color-border); background: var(--color-bg-secondary);
-            color: var(--color-text-secondary); font-size: 14px; font-weight: 500;
-            cursor: pointer; text-align: left; display: flex; align-items: center; gap: 10px;
-            transition: background-color 0.18s, border-color 0.18s, color 0.18s, box-shadow 0.18s, transform 0.18s, opacity 0.18s, width 0.18s, height 0.18s, border-radius 0.18s; margin-bottom: 2px;
-        }
-        .metric-toggle-btn.active { border-color: var(--color-accent-blue); background: rgba(74,124,158,0.1); color: var(--color-text-primary); }
-        .metric-toggle-btn .mtb-icon { font-size: 16px; }
-        .metric-toggle-btn .mtb-label { flex: 1; }
-        .metric-toggle-btn .mtb-check {
-            width: 18px; height: 18px; border-radius: 50%;
-            border: 2px solid var(--color-border);
-            display: flex; align-items: center; justify-content: center;
-            font-size: 10px; transition: background-color 0.18s, border-color 0.18s, color 0.18s, box-shadow 0.18s, transform 0.18s, opacity 0.18s, width 0.18s, height 0.18s, border-radius 0.18s; flex-shrink: 0;
-        }
-        .metric-toggle-btn.active .mtb-check { background: var(--color-accent-blue); border-color: var(--color-accent-blue); color: #fff; }
-        .ch-metric-panel {
-            padding: 14px; background: rgba(74,124,158,0.05);
-            border: 1px solid rgba(74,124,158,0.2); border-top: none;
-            border-radius: 0 0 10px 10px; margin-bottom: 8px;
-        }
 
         /* Activity picker */
         .ch-picker-toggle {
@@ -5993,52 +5059,6 @@
             display: flex;
             flex-direction: column;
             gap: 6px;
-        }
-
-        .radio-option {
-            display: flex;
-            align-items: flex-start;
-            gap: 10px;
-            padding: 10px 12px;
-            border-radius: 8px;
-            border: 1px solid rgba(255,255,255,0.08);
-            background: var(--recessed-bg-2);
-            cursor: pointer;
-            transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
-        }
-
-        .radio-option:hover {
-            border-color: rgba(74,124,158,0.4);
-            background: rgba(74,124,158,0.06);
-        }
-
-        .radio-option:has(input:checked) {
-            border-color: rgba(74,124,158,0.6);
-            background: rgba(74,124,158,0.1);
-        }
-
-        .radio-option input[type="radio"] {
-            flex-shrink: 0;
-            margin-top: 3px;
-            accent-color: var(--color-accent-blue);
-        }
-
-        .radio-option-content {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-        }
-
-        .radio-option-title {
-            font-size: 12px;
-            font-weight: 600;
-            color: var(--color-text-primary);
-        }
-
-        .radio-option-desc {
-            font-size: 11px;
-            color: var(--color-text-secondary);
-            line-height: 1.4;
         }
 
         /* Explicit undo button on completed activities.
@@ -6137,25 +5157,6 @@
         }
 
         /* ── View toggle button ───────────────────────────────────────── */
-        .btn-view-toggle {
-            width: 32px;
-            height: 32px;
-            border-radius: 8px;
-            border: 1px solid var(--color-border);
-            background: transparent;
-            color: var(--color-text-secondary);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
-            flex-shrink: 0;
-        }
-        .btn-view-toggle:hover {
-            border-color: var(--color-accent-blue);
-            color: var(--color-text-primary);
-            background: rgba(74,124,158,0.08);
-        }
 
         /* ── Activity Grid v2 — 6 Card Types ─────────────────────────── */
         .activity-grid {
@@ -6167,38 +5168,9 @@
         }
 
         /* Grid groups */
-        .grid-group-section {
-            grid-column: 1 / -1;
-            border: 1.5px solid var(--group-color, var(--color-accent-blue));
-            border-radius: 14px;
-            padding: 10px 10px 8px;
-            position: relative;
-            background: rgba(0,0,0,0.08);
-        }
-        .grid-group-label {
-            position: absolute;
-            top: -10px;
-            left: 12px;
-            font-size: 10px;
-            font-weight: 700;
-            letter-spacing: 0.04em;
-            text-transform: uppercase;
-            padding: 2px 8px;
-            border-radius: 5px;
-            background: var(--color-bg-secondary);
-            color: var(--group-color, var(--color-accent-blue));
-            border: 1px solid var(--group-color, var(--color-accent-blue));
-        }
-        .grid-group-inner {
-            display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
-            gap: 8px;
-            grid-auto-rows: 80px;
-            grid-auto-flow: dense;
-        }
 
         /* The card itself — shared base.
-           Material recipe matches .activity-item (design brief §2 "Card material"):
+           Material recipe matches .activity-item:
            #22242a surface, hairline border, inset-top highlight, drop shadow. */
         .grid-card {
             background: var(--surface-card);
@@ -6555,7 +5527,6 @@
             background: var(--surface-card-multi);
         }
         .grid-card.gc-disabled { opacity: 0.42; cursor: not-allowed; }
-        .grid-card.gc-skip { background: var(--surface-skip); }
 
         /* ── Grid card expand overlay ─────────────────────────────────── */
         .grid-card-overlay {
@@ -6597,12 +5568,6 @@
             display: flex; align-items: center; justify-content: center;
         }
         .grid-overlay-close:hover { background: rgba(255,255,255,0.14); color: var(--color-text-primary); }
-        .grid-overlay-name {
-            font-size: 18px; font-weight: 700;
-            color: var(--color-text-primary);
-            margin: 0 32px 14px 0;
-            line-height: 1.3;
-        }
         .grid-overlay-ring-row {
             display: flex;
             align-items: center;
@@ -6653,7 +5618,7 @@
         /* ══════════════════════════════════════════════════════════════ */
 
         /* ══════════════════════════════════════════════════════════════
-           Daily Planner — Calendar strip (v110.x)
+           Daily Planner — Calendar strip
 
            Replaces the old ‹ Today ›-arrow date picker with a horizontally
            scrollable day strip. Selected day uses the indicator primitive
@@ -6859,21 +5824,8 @@
         }
 
         /* Add-to-schedule row — single primary action when viewing the planner */
-        .planner-add-row {
-            display: flex;
-            justify-content: flex-end;
-            align-items: center;
-            margin-bottom: 14px;
-        }
-        .planner-add-btn {
-            padding: 8px 14px;
-            font-size: 13px;
-            border-radius: 9px;
-        }
 
         /* ── Legacy date-bar selectors kept for safety; new HTML does not use them. */
-        .planner-date-bar { display: none; }
-        .planner-today-btn { display: none; }
 
         /* Timeline */
         .planner-timeline-wrap {
@@ -6970,7 +5922,7 @@
             opacity: 0.6;
         }
 
-        /* ── Planner timeline card — design-brief card material ──────────
+        /* ── Planner timeline card — card material ──────────
            Material recipe matches .activity-item / .grid-card:
            #22242a surface, hairline border, inset-top highlight, drop shadow.
            Dimension color appears as a thin LEFT-edge accent only ("tint, not fill"). */
@@ -7150,12 +6102,6 @@
             gap: 6px;
             padding-right: 10px;
             flex-shrink: 0;
-        }
-
-        .planner-recurring-badge {
-            font-size: 13px;
-            color: var(--color-text-secondary);
-            opacity: 0.55;
         }
 
         .planner-del-btn {
@@ -7339,7 +6285,7 @@
         }
 
         /* Reusable form field wrapper — replaces ad-hoc .form-group inline styles
-           inside design-brief-aligned modals. */
+           inside modals. */
         .pl-field {
             margin-bottom: 18px;
         }
@@ -7467,7 +6413,7 @@
             font-weight: 600;
         }
 
-        /* Destructive secondary button — for Delete inside design-brief modals */
+        /* Destructive secondary button — for Delete inside modals */
         .pl-btn-danger {
             color: var(--color-accent-red);
             border-color: rgba(142,59,95,0.32);
@@ -7481,7 +6427,7 @@
         /* ──────────────────────────────────────────────────────────────── */
 
         /* ══════════════════════════════════════════════════════════════
-           Add-to-Planner modal — design-brief aligned
+           Add-to-Planner modal
            Modal surface uses the same #22242a card material as activity
            cards / grid cards / planner timeline cards — single canonical
            card color across the app.
@@ -7876,18 +6822,6 @@
         }
 
         /* ── Settings card SVG icons ─────────────────────────────────────── */
-        .settings-svg-icon {
-            width: 22px;
-            height: 22px;
-            display: block;
-            stroke: var(--color-text-secondary);
-        }
-
-        .settings-icon {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
 
         /* ── PWA Install Banner ──────────────────────────────────────────── */
         #pwaInstallBanner {
@@ -8000,23 +6934,6 @@
         }
 
         /* ── Reward delete button ────────────────────────────────────────── */
-        .btn-reward-delete {
-            padding: 5px 10px;
-            background: rgba(142,59,95,0.12);
-            border: 1px solid rgba(142,59,95,0.3);
-            border-radius: 6px;
-            color: var(--color-accent-red);
-            font-size: 11px;
-            font-weight: 700;
-            cursor: pointer;
-            transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
-            font-family: inherit;
-            line-height: 1;
-        }
-        .btn-reward-delete:hover {
-            background: rgba(142,59,95,0.28);
-            border-color: var(--color-accent-red);
-        }
 
         /* ── Profile Overlay ──────────────────────────────────────────────── */
         #profileOverlay {
@@ -8049,85 +6966,7 @@
             transform: scale(1.08);
         }
 
-        .profile-stat-tile {
-            background: var(--color-bg-card);
-            border: 1px solid var(--color-border);
-            border-radius: 12px;
-            padding: 12px 8px;
-            text-align: center;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            gap: 4px;
-        }
-
-        .profile-stat-val {
-            font-size: 20px;
-            font-weight: 800;
-            color: var(--color-text-primary);
-            letter-spacing: -0.03em;
-            line-height: 1;
-            width: 100%;
-            text-align: center;
-        }
-
-        .profile-stat-lbl {
-            font-size: 9px;
-            font-weight: 700;
-            letter-spacing: 0.07em;
-            text-transform: uppercase;
-            color: var(--color-text-secondary);
-            width: 100%;
-            text-align: center;
-            line-height: 1.3;
-        }
-
         /* Spider config — stacked card per activity */
-        .spider-cfg-row {
-            background: var(--color-bg-card);
-            border: 1px solid var(--color-border);
-            border-radius: 10px;
-            padding: 10px 12px;
-            margin-bottom: 8px;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-
-        .spider-cfg-name {
-            font-size: 13px;
-            font-weight: 600;
-            color: var(--color-text-primary);
-            line-height: 1.3;
-        }
-
-        .spider-cfg-pills {
-            display: flex;
-            gap: 6px;
-            flex-wrap: wrap;
-        }
-
-        .spider-cfg-pill {
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 700;
-            cursor: pointer;
-            border: 1.5px solid transparent;
-            transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
-            white-space: nowrap;
-            font-family: inherit;
-        }
-
-        .spider-cfg-dim-header {
-            font-size: 10px;
-            font-weight: 700;
-            letter-spacing: 0.1em;
-            text-transform: uppercase;
-            color: var(--color-text-secondary);
-            padding: 10px 2px 5px;
-        }
 
         .spider-legend-item {
             font-size: 12px;
@@ -8295,7 +7134,7 @@
         .gc-friend-invite-btn.sent { background:rgba(255,255,255,0.08);color:var(--color-text-secondary);pointer-events:none; }
 
         /* ══════════════════════════════════════════════════════════════
-           ONBOARDING OVERLAY — v121 redesign
+           ONBOARDING OVERLAY
            ──────────────────────────────────────────────────────────────
            Every surface here defers to the brief: card material recipe
            (#22242a + hairline + inset top highlight + drop shadows), no
@@ -9765,7 +8604,7 @@
                 0 0 22px rgba(245,197,99,0.35);
         }
 
-        /* Close X — top-right corner, brief-aligned ghost icon button.
+        /* Close X — top-right corner, ghost icon button.
            Matches the .pl-modal-close pattern used across the app. */
         .level-up-close {
             position: absolute;
@@ -9829,13 +8668,6 @@
         /* .level-up-sub retained as an unused class — the subtitle was
            dropped at launch, but keeping the style here means future
            variants of the card can opt back in without re-deriving. */
-        .level-up-sub {
-            font-size: 13.5px;
-            color: var(--color-text-secondary);
-            line-height: 1.5;
-            margin-bottom: 12px;
-            max-width: 270px;
-        }
 
         /* Share button — canonical primary CTA. */
         .level-up-share-btn {
@@ -10052,16 +8884,6 @@
             -webkit-tap-highlight-color: transparent;
         }
         .tutorial-skip:hover { color: var(--color-text-primary); }
-        .uncategorized-section {
-            border-color: rgba(255,255,255,0.07);
-            opacity: 0.9;
-        }
-        .activity-description {
-            font-size: 12px;
-            color: var(--color-text-secondary);
-            margin-top: 3px;
-            line-height: 1.4;
-        }
 
 /* ── History Edit UI ──────────────────────────────────────────── */
 .history-day-row {
@@ -10131,20 +8953,6 @@
     padding: 2px 4px;
     font-style: italic;
 }
-.retro-picker-item {
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--color-border);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-}
-.retro-picker-item:last-child { border-bottom: none; }
-.retro-picker-item:hover { background: var(--recessed-bg-3); }
-.retro-picker-name { font-size: 14px; color: var(--color-text-primary); }
-.retro-picker-xp { font-size: 12px; color: var(--color-progress); font-weight: 600; }
-.retro-picker-already { opacity: 0.4; pointer-events: none; cursor: default; }
 
 /* ── Penalty entry variants ───────────────────────────────────── */
 .history-entry-penalty { background: rgba(142,59,95,0.06); border-radius: 8px; }
@@ -10347,34 +9155,6 @@
     color: var(--color-text-secondary);
     font-size: 12px;
     flex-shrink: 0;
-}
-.group-time-select {
-    flex: 1;
-    width: 100%;
-    background: var(--color-bg-secondary, rgba(255,255,255,0.04));
-    border: 1px solid var(--color-border, rgba(255,255,255,0.08));
-    border-radius: 8px;
-    color: var(--color-text-primary);
-    padding: 10px 36px 10px 14px;
-    font-size: 15px;
-    font-family: inherit;
-    appearance: none;
-    -webkit-appearance: none;
-    -moz-appearance: none;
-    cursor: pointer;
-    background-image: var(--color-select-arrow-img);
-    background-repeat: no-repeat;
-    background-position: right 10px center;
-    background-size: 14px;
-    transition: border-color 0.15s;
-}
-.group-time-select:focus {
-    outline: none;
-    border-color: var(--color-accent-blue);
-}
-.group-time-select option {
-    background: var(--color-select-option-bg);
-    color: var(--color-text-primary);
 }
 .group-act-list {
     max-height: 240px;
@@ -10618,7 +9398,7 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   CATEGORIES TAB — DESIGN SYSTEM (v119)
+   CATEGORIES TAB
    ─────────────────────────────────────────────────────────────────────────
    Job of this page (brief §3): Mode B "what does my life look like" —
    inventory, user-controlled, structural. The hero is the hierarchy itself.
@@ -10929,7 +9709,7 @@
 }
 
 /* ── Activity card (within Categories context) ─────────────────────────
-   Same brief-aligned material as My Activities, slightly slimmer to fit
+   Same material as My Activities, slightly slimmer to fit
    the nested context. Tappable to complete. Status communicated via the
    ring/check on the right; undo lives next to it. Edit/Delete behind kebab. */
 .cat-act-card {
@@ -11073,7 +9853,7 @@
 }
 
 /* Reuse the canonical activity-badge / badge-xp / badge-frequency / badge-streak
-   styles — they're already brief-aligned. We just need a slightly tighter
+   styles — they already match. We just need a slightly tighter
    variant for the nested context. */
 .cat-act-meta .activity-badge {
     padding: 2px 7px;
@@ -11398,7 +10178,7 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   ACTIVITY MODAL — DESIGN SYSTEM (v120)
+   ACTIVITY MODAL
    ─────────────────────────────────────────────────────────────────────────
    Job (brief §3): create/edit an activity. This is the most-used modal in
    the app, so it earns the most care. Hierarchy: Name → XP → Frequency are
@@ -11466,7 +10246,7 @@
     margin: 0;
 }
 
-/* ── Slot-limit notice — replaces level-lock-notice with brief-aligned shape ── */
+/* ── Slot-limit notice ─────────────────────────────────────────────── */
 .ay-limit-notice {
     display: flex;
     align-items: flex-start;
@@ -11890,7 +10670,7 @@
     flex-shrink: 0;
 }
 
-/* ── Radio group — custom-styled, no native dot, brief-aligned ── */
+/* ── Radio group — custom-styled, no native dot ── */
 .ay-radio-group {
     display: flex;
     flex-direction: column;
@@ -12052,9 +10832,9 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   CHALLENGES TAB — DESIGN SYSTEM (v122)
+   CHALLENGES TAB
    ─────────────────────────────────────────────────────────────────────────
-   Refined layout, v122: title is the page anchor; progress (count + bar +
+   Title is the page anchor; progress (count + bar +
    percent) is the visual hero band; Complete and Breakdown sit on one row
    below it. The challenge name lives in a sub-tab nav above — no on-page
    "Your Challenges" title.
@@ -12159,7 +10939,7 @@
 .ch-section-head:hover .ch-section-chev { opacity: 1; }
 [data-theme-mode="light"] .ch-section-count { background: rgba(15,17,21,0.05); }
 
-/* ── Card shell — same as v121 ───────────────────────────────────────── */
+/* ── Card shell ─────────────────────────────────────────────────────── */
 .ch-card {
     position: relative;
     background: var(--surface-card);
@@ -12215,7 +10995,7 @@
     gap: 5px;
 }
 .ch-card-title {
-    /* v122: enlarged. Title >> subtitle in weight AND size. */
+    /* Title >> subtitle in weight AND size. */
     font-size: 18px;
     font-weight: 700;
     color: var(--color-text-primary);
@@ -12281,7 +11061,7 @@
 .ch-icon-btn:active { transform: scale(0.92); }
 .ch-icon-btn svg { width: 14px; height: 14px; display: block; }
 
-/* ── Progress band — count + bar + percent (v122 hero) ──────────────── */
+/* ── Progress band — count + bar + percent, the hero ───────────────── */
 /* This replaces the .ch-hero block. The row above the bar shows the
    completion count (the user's main focus) and the percentage right-aligned.
    The bar runs full-width below. Generous empty space above and below. */
@@ -12357,7 +11137,7 @@
 .ch-card[data-state="completed"] .ch-pct { color: #8db866; }
 .ch-card[data-state="failed"] .ch-pct { color: #e07070; }
 
-/* The bar — slightly slimmer than v121 to support the new visual hierarchy */
+/* The bar — slim, so it sits under the count in the hierarchy */
 .ch-bar {
     width: 100%;
     height: 7px;
@@ -12588,7 +11368,7 @@
 }
 .ch-act-bar-v2-fill.done { background: linear-gradient(90deg, #6b7c3f, #8db866); }
 
-/* Metric update — lives INSIDE the breakdown now (v122) */
+/* Metric update — lives INSIDE the breakdown now */
 .ch-metric-update {
     display: flex;
     gap: 8px;
@@ -12801,7 +11581,7 @@
    Keeping them as accessible-only text would clutter the UI. */
 .ch-info-arrows { display: none; }
 
-/* ── Group Challenge — polish (same as v121) ─────────────────────────── */
+/* ── Group Challenge — polish ───────────────────────────────────────── */
 .gc-dashboard { gap: 12px; }
 .gc-header,
 .gc-progress-section,
@@ -12886,7 +11666,7 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   LIGHT MODE — DESIGN SYSTEM (v109)
+   LIGHT MODE
    ─────────────────────────────────────────────────────────────────────────
    Philosophy:
    • Cards float on the bg via SOFT SHADOWS, not visible borders. Lines feel
@@ -12922,15 +11702,12 @@
 /* Activity-item hover, completion states — light mode subtle tweaks only.
    Base hover gesture (translateY + shadow-md + accent ring) inherited from
    the base rule. We just dial the accent-bg overlay down for light. */
-[data-theme-mode="light"] .activity-item:not(.completed):not(.disabled):not(.permanently-done):hover {
-    background: var(--color-bg-card);
-}
 
 /* Modal — base now uses var(--shadow-xl) which resolves correctly per mode. */
 
 /* ── Top header (sticky) ───────────────────────────────────────────────── */
 /* The header reads as a calm, elevated card-like plane above the page —
-   shadow-driven elevation, no visible border (v110). */
+   shadow-driven elevation, no visible border. */
 [data-theme-mode="light"] .sticky-header {
     background: var(--color-bg-card);
     border-bottom: none;
@@ -13006,10 +11783,6 @@
     background: var(--surface-card-multi);
     border-color: rgba(46,111,190,0.18);
 }
-[data-theme-mode="light"] .activity-item.permanently-done {
-    background: rgba(61,84,24,0.05);
-    border-color: rgba(61,84,24,0.18);
-}
 
 /* ── XP pills & badges ─────────────────────────────────────────────────── */
 [data-theme-mode="light"] .card-xp { color: var(--chip-xp-fg); }
@@ -13031,24 +11804,6 @@
 /* ── Buttons — icon, secondary, tertiary ───────────────────────────────── */
 /* Icon buttons (Edit / Delete / + Path) need to read as actual buttons,
    not ghost outlines. Filled neutral surface, soft border, clear label. */
-[data-theme-mode="light"] .btn-icon {
-    background: rgba(0,0,0,0.035);
-    border: 1px solid rgba(0,0,0,0.08);
-    color: var(--color-text-primary);
-}
-[data-theme-mode="light"] .btn-icon:hover {
-    background: rgba(0,0,0,0.06);
-    border-color: rgba(0,0,0,0.12);
-}
-[data-theme-mode="light"] .btn-icon.delete {
-    color: var(--color-accent-red);
-    border-color: rgba(138,42,77,0.22);
-    background: rgba(138,42,77,0.04);
-}
-[data-theme-mode="light"] .btn-icon.delete:hover {
-    background: rgba(138,42,77,0.08);
-    border-color: rgba(138,42,77,0.32);
-}
 [data-theme-mode="light"] .btn-secondary,
 [data-theme-mode="light"] .btn-tertiary {
     background: rgba(0,0,0,0.04);
@@ -13074,7 +11829,6 @@
 [data-theme-mode="light"] .ah-row-deleted .ah-name { text-decoration-color: rgba(0,0,0,0.2); }
 
 /* ── Search modal & inputs ─────────────────────────────────────────────── */
-[data-theme-mode="light"] .search-modal { box-shadow: var(--shadow-xl); }
 [data-theme-mode="light"] .search-input-row input::placeholder { color: rgba(0,0,0,0.35); }
 [data-theme-mode="light"] .search-input-row input {
     color: var(--color-text-primary);
@@ -13119,10 +11873,6 @@
 
 /* ── Empty placeholder — was a dashed line on var(--color-border).
    Make the dash soft and the bg subtle. */
-[data-theme-mode="light"] .empty-placeholder {
-    background: rgba(0,0,0,0.02);
-    border: 1px dashed rgba(0,0,0,0.10);
-}
 
 /* ── Body radial glow — tone down on light bg ──────────────────────────── */
 /* The radial glows that decorate the body bg were tuned for dark mode at
@@ -13135,7 +11885,7 @@
 }
 
 /* ════════════════════════════════════════════════════════════════════
-   PROFILE OVERLAY v2 — design-brief aligned
+   PROFILE OVERLAY v2
    ────────────────────────────────────────────────────────────────────
    • Cards share the activity-card / settings-card material (#22242a +
      inset top highlight + drop shadows). No visible 1px outlines.
@@ -13405,7 +12155,6 @@
     margin-top: 1px;
     line-height: 1.4;
 }
-.pf-section-spacer { flex: 1; }
 
 /* ─── Stats card — hero progress bar ───────────────────────────────── */
 .pf-xp-hero {
@@ -13626,7 +12375,6 @@
 }
 .pf-collapse-icon-coral { color: var(--chip-streak-fg); background: var(--chip-streak-bg); }
 .pf-collapse-icon-blue  { color: var(--color-progress);  background: rgba(90,159,212,0.10); }
-.pf-collapse-icon-green { color: var(--chip-xp-fg);      background: rgba(74,222,128,0.10); }
 .pf-collapse-text { flex: 1; min-width: 0; }
 .pf-collapse-title { font-size: 14.5px; font-weight: 600; letter-spacing: -0.015em; color: var(--color-text-primary); }
 .pf-collapse-sub   { font-size: 11px; color: var(--color-text-secondary); margin-top: 1px; font-weight: 500; }
@@ -14127,7 +12875,7 @@
     padding: 20px 20px 0;
 }
 
-/* ─── Reward modal — design-brief refinement ───────────────────────── */
+/* ─── Reward modal ───────────────────────── */
 #rewardModal .modal {
     max-width: 460px;
 }
@@ -14170,41 +12918,13 @@
 
         /* ════════════════════════════════════════════════════════════════
            CHARACTER TECH TREE
-           Styled per the Mindkraft design brief: card material recipe,
+           Card material recipe,
            recessed sub-surfaces, hairlines not boxes, one color one job,
            SVG glyphs (no emoji primitives), tabular numerals.
            ════════════════════════════════════════════════════════════════ */
-
-        .tt-num { font-variant-numeric: tabular-nums; }
         .tt-gold { color: #f5c563; display: inline-flex; align-items: center; gap: 3px; }
-        .tt-blue { color: var(--color-progress); display: inline-flex; }
 
         /* Card material (same recipe as .settings-card) */
-        .tt-card {
-            background: var(--surface-card);
-            border: 1px solid var(--card-hairline);
-            border-radius: 14px;
-            padding: 20px 18px;
-            margin-bottom: 12px;
-            box-shadow:
-                0 1px 0 rgba(255,255,255,0.075) inset,
-                0 -1px 0 rgba(0,0,0,0.4) inset,
-                0 1px 2px rgba(0,0,0,0.5),
-                0 6px 18px rgba(0,0,0,0.35);
-        }
-        [data-theme-mode="light"] .tt-card {
-            background: var(--color-bg-card);
-            border-color: var(--color-border);
-            box-shadow: var(--shadow-card);
-        }
-
-        .tt-title {
-            font-size: 15px;
-            font-weight: 600;
-            letter-spacing: -0.015em;
-            color: var(--color-text-primary);
-            margin: 0 0 8px;
-        }
         .tt-muted {
             font-size: 12.5px;
             color: var(--color-text-secondary);
@@ -14218,13 +12938,6 @@
             border-radius: 8px;
             padding: 8px 10px;
             margin: 8px 0;
-        }
-
-        .tt-goal-input {
-            width: 100%;
-            resize: vertical;
-            min-height: 58px;
-            line-height: 1.5;
         }
 
         /* Gate rows — recessed surface, met = green (reward job) */
@@ -14292,25 +13005,8 @@
         .tt-generate-btn { margin-top: 6px; }
 
         /* Building state */
-        .tt-building { text-align: center; padding: 34px 20px; }
-        .tt-building .tt-btn-ghost { max-width: 220px; margin: 14px auto 0; }
-        .tt-building-spinner {
-            width: 40px; height: 40px;
-            margin: 0 auto 16px;
-            border-radius: 50%;
-            border: 3px solid rgba(128,128,140,0.2);
-            border-top-color: var(--color-progress);
-            animation: tt-spin 0.9s linear infinite;
-        }
-        @keyframes tt-spin { to { transform: rotate(360deg); } }
 
         /* Toolbar — recessed chip buttons */
-        .tt-toolbar {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 7px;
-            margin-bottom: 10px;
-        }
         .tt-tb-btn {
             flex: 1 1 auto;
             display: flex;
@@ -14332,288 +13028,15 @@
         .tt-tb-btn:hover { color: var(--color-text-primary); filter: brightness(1.15); }
 
         /* Goal bar — recessed, single hairline aesthetic */
-        .tt-goal-bar {
-            display: flex;
-            align-items: center;
-            gap: 9px;
-            background: var(--recessed-bg);
-            box-shadow: 0 0 0 1px var(--recessed-ring) inset;
-            border-radius: 10px;
-            padding: 9px 12px;
-            margin-bottom: 10px;
-            color: var(--color-text-secondary);
-        }
-        .tt-goal-text {
-            flex: 1;
-            font-size: 12.5px;
-            color: var(--color-text-secondary);
-            overflow: hidden;
-            text-overflow: ellipsis;
-            display: -webkit-box;
-            -webkit-line-clamp: 2;
-            -webkit-box-orient: vertical;
-        }
-        .tt-goal-edit {
-            background: none;
-            border: none;
-            color: var(--color-progress);
-            font-size: 12px;
-            font-weight: 700;
-            font-family: inherit;
-            cursor: pointer;
-            padding: 4px 6px;
-        }
         /* Vision — the future snapshot from generation */
-        .tt-vision {
-            background: rgba(245,197,99,0.05);
-            box-shadow: 0 0 0 1px rgba(245,197,99,0.14) inset;
-            border-radius: 10px;
-            padding: 11px 13px;
-            margin-bottom: 10px;
-        }
-        .tt-vision-kicker {
-            font-size: 9px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.18em;
-            color: #f5c563;
-            margin-bottom: 4px;
-        }
-        .tt-vision-text {
-            font-size: 13px;
-            color: var(--color-text-primary);
-            line-height: 1.55;
-        }
 
         /* AI-suggested challenge cards */
-        .tt-challenge-card {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            background: #22242a;
-            border: 1px solid rgba(255,255,255,0.045);
-            border-radius: 11px;
-            padding: 12px 13px;
-            margin-bottom: 6px;
-            box-shadow:
-                0 1px 0 rgba(255,255,255,0.075) inset,
-                0 -1px 0 rgba(0,0,0,0.4) inset,
-                0 1px 2px rgba(0,0,0,0.5);
-        }
-        [data-theme-mode="light"] .tt-challenge-card {
-            background: var(--color-bg-card);
-            border-color: var(--color-border);
-        }
-        .tt-challenge-main { flex: 1; min-width: 0; }
-        .tt-challenge-title {
-            font-size: 14px;
-            font-weight: 600;
-            letter-spacing: -0.005em;
-            color: var(--color-text-primary);
-        }
-        .tt-challenge-desc {
-            font-size: 12px;
-            color: var(--color-text-secondary);
-            line-height: 1.5;
-            margin-top: 2px;
-        }
-        .tt-challenge-meta {
-            font-size: 11px;
-            color: var(--color-text-secondary);
-            margin-top: 4px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        .tt-challenge-actions {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            flex-shrink: 0;
-        }
-        .tt-ch-add {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-            padding: 8px 12px;
-            border-radius: 9px;
-            border: none;
-            background: var(--color-progress);
-            color: #fff;
-            font-size: 12px;
-            font-weight: 700;
-            font-family: inherit;
-            cursor: pointer;
-            box-shadow: 0 1px 0 rgba(255,255,255,0.18) inset, 0 2px 6px rgba(90,159,212,0.3);
-        }
-        .tt-ch-add:hover { filter: brightness(1.1); }
-        .tt-ch-dismiss {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 30px; height: 30px;
-            border-radius: 8px;
-            border: none;
-            background: transparent;
-            color: var(--color-text-secondary);
-            cursor: pointer;
-        }
-        .tt-ch-dismiss:hover { background: rgba(255,255,255,0.05); }
-
-        .tt-rev-note {
-            font-size: 11.5px;
-            color: var(--color-text-secondary);
-            margin: 0 2px 10px;
-        }
 
         /* Canvas */
-        .tt-canvas-preview {
-            position: relative;
-            background: var(--surface-card-muted);
-            border: 1px solid var(--card-hairline);
-            border-radius: 14px;
-            overflow: hidden;
-            cursor: pointer;
-            margin-bottom: 14px;
-            box-shadow:
-                0 1px 0 rgba(255,255,255,0.05) inset,
-                0 1px 2px rgba(0,0,0,0.5);
-        }
-        [data-theme-mode="light"] .tt-canvas-preview {
-            background: var(--color-bg-card);
-            border-color: var(--color-border);
-        }
-        .tt-canvas-preview { max-height: 400px; overflow: auto; -webkit-overflow-scrolling: touch; }
-        .tt-canvas-preview .tt-svg { display: block; }
-        .tt-canvas-expand {
-            position: absolute;
-            right: 10px; bottom: 8px;
-            display: flex;
-            align-items: center;
-            gap: 5px;
-            font-size: 10.5px;
-            font-weight: 600;
-            color: var(--color-text-secondary);
-            background: rgba(0,0,0,0.4);
-            border-radius: 7px;
-            padding: 4px 8px;
-            pointer-events: none;
-        }
-        [data-theme-mode="light"] .tt-canvas-expand { background: rgba(255,255,255,0.65); }
-
-        .tt-svg-core { fill: rgba(90,159,212,0.14); stroke: var(--color-progress); stroke-width: 2; }
-        .tt-svg-core-label { font-size: 12.5px; font-weight: 800; fill: var(--color-text-primary); font-variant-numeric: tabular-nums; }
-        .tt-svg-core-sub { font-size: 7.5px; font-weight: 700; fill: var(--color-text-secondary); letter-spacing: 1.6px; }
-        .tt-svg-sector-label { font-size: 10.5px; font-weight: 700; opacity: 0.85; letter-spacing: 0.06em; text-transform: uppercase; }
-        .tt-svg-label { font-size: 10px; font-weight: 600; fill: var(--color-text-primary); opacity: 0.85; }
-        .tt-svg-label-dim { fill: var(--color-text-secondary); opacity: 0.6; }
-        .tt-svg-label-star { font-size: 8.5px; font-weight: 600; fill: var(--color-text-secondary); opacity: 0.75; }
-        .tt-svg-tier-label { font-size: 10px; font-weight: 700; fill: var(--color-text-secondary); letter-spacing: 0.14em; opacity: 0.6; }
-        .tt-svg-pct { font-size: 10px; font-weight: 800; fill: var(--color-text-primary); font-variant-numeric: tabular-nums; }
-        .tt-svg-node.tt-locked { opacity: 0.62; }
-        .tt-svg-node.tt-archived { opacity: 0.38; }
-        .tt-svg-node.tt-available .tt-svg-avail-ring {
-            animation: tt-avail-pulse 2.4s ease-in-out infinite;
-        }
-        @keyframes tt-avail-pulse {
-            0%, 100% { opacity: 0.55; }
-            50% { opacity: 1; }
-        }
 
         /* Fullscreen canvas */
-        .tt-fullscreen {
-            position: fixed;
-            inset: 0;
-            z-index: 10050;
-            display: flex;
-            flex-direction: column;
-            background: var(--color-bg-primary);
-        }
-        .tt-fullscreen-bar {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: calc(env(safe-area-inset-top, 0px) + 12px) 14px 10px;
-            box-shadow: 0 1px 0 var(--color-border);
-        }
-        .tt-fullscreen-title { font-size: 15px; font-weight: 700; letter-spacing: -0.015em; color: var(--color-text-primary); }
-        .tt-fullscreen-hint { flex: 1; font-size: 10.5px; color: var(--color-text-secondary); text-align: right; }
-        .tt-fullscreen-bar .tt-btn { width: auto; margin: 0; padding: 7px 12px; font-size: 12px; }
-        .tt-fullscreen-canvas {
-            flex: 1;
-            overflow: hidden;
-            touch-action: none;
-        }
-        .tt-fullscreen-canvas .tt-svg { width: 100%; height: 100%; display: block; }
 
         /* Node list rows — card material + left-edge dimension bar (3px, glowing) */
-        .tt-group { margin-bottom: 16px; }
-        .tt-group-label {
-            font-size: 11px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.14em;
-            color: var(--color-text-secondary);
-            margin: 0 2px 7px;
-        }
-        .tt-node-row {
-            position: relative;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            width: 100%;
-            text-align: left;
-            background: var(--surface-card);
-            border: 1px solid var(--card-hairline);
-            border-radius: 11px;
-            padding: 12px 13px 12px 16px;
-            margin-bottom: 6px;
-            color: var(--color-text-primary);
-            font-size: 14.5px;
-            font-weight: 500;
-            font-family: inherit;
-            letter-spacing: -0.005em;
-            cursor: pointer;
-            overflow: hidden;
-            box-shadow:
-                0 1px 0 rgba(255,255,255,0.075) inset,
-                0 -1px 0 rgba(0,0,0,0.4) inset,
-                0 1px 2px rgba(0,0,0,0.5);
-        }
-        [data-theme-mode="light"] .tt-node-row {
-            background: var(--color-bg-card);
-            border-color: var(--color-border);
-        }
-        .tt-node-row::before {
-            content: '';
-            position: absolute;
-            left: 0; top: 0; bottom: 0;
-            width: 3px;
-            background: var(--tt-dim, var(--color-progress));
-            box-shadow: 0 0 8px rgba(var(--tt-dim-rgb, 90,159,212), 0.55);
-        }
-        .tt-node-row:hover { filter: brightness(1.08); }
-        .tt-node-row-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .tt-node-row-right {
-            display: inline-flex;
-            align-items: center;
-            font-size: 12px;
-            font-weight: 700;
-            color: var(--color-text-secondary);
-        }
-        .tt-row-pct { color: var(--color-text-secondary); }
-        .tt-nexus-tag {
-            font-size: 9px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--color-progress);
-            background: rgba(90,159,212,0.12);
-            border-radius: 999px;
-            padding: 2px 7px;
-            margin-left: 6px;
-            vertical-align: 1.5px;
-        }
 
         /* Overlay (picker / forms) — modal panel material */
         .tt-overlay {
@@ -14660,59 +13083,6 @@
         .tt-form-actions .tt-btn { margin-top: 0; }
 
         /* Picker & prereq lists — recessed rows separated by hairlines */
-        .tt-picker-list, .tt-prereq-list {
-            max-height: 44vh;
-            overflow-y: auto;
-            margin: 10px 0 2px;
-        }
-        .tt-picker-row {
-            display: flex;
-            align-items: center;
-            gap: 9px;
-            width: 100%;
-            text-align: left;
-            background: var(--recessed-bg);
-            box-shadow: 0 0 0 1px var(--recessed-ring) inset;
-            border: none;
-            border-radius: 9px;
-            padding: 11px;
-            margin-bottom: 5px;
-            color: var(--color-text-primary);
-            font-size: 13px;
-            font-weight: 500;
-            font-family: inherit;
-            cursor: pointer;
-        }
-        .tt-picker-row:hover { filter: brightness(1.15); }
-        .tt-picker-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .tt-picker-meta { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--color-text-secondary); }
-        .tt-picker-tag {
-            font-size: 9px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            color: var(--color-text-secondary);
-            background: var(--recessed-bg-4);
-            border-radius: 999px;
-            padding: 1.5px 6px;
-        }
-        .tt-prereq-row {
-            display: flex;
-            align-items: center;
-            gap: 9px;
-            padding: 10px 4px;
-            box-shadow: 0 1px 0 var(--color-border);
-            font-size: 13px;
-            color: var(--color-text-primary);
-            cursor: pointer;
-        }
-        .tt-prereq-dot {
-            width: 9px; height: 9px;
-            border-radius: 50%;
-            flex-shrink: 0;
-            box-shadow: 0 0 6px rgba(0,0,0,0.3);
-        }
-        .tt-prereq-name { flex: 1; }
 
         /* Mastery inputs */
         .tt-mastery-row {
@@ -14728,15 +13098,6 @@
         }
 
         /* Node bottom sheet — major block material, 14px+ radius */
-        .tt-sheet-backdrop {
-            position: fixed;
-            inset: 0;
-            z-index: 10070;
-            display: none;
-            align-items: flex-end;
-            justify-content: center;
-            background: rgba(0,0,0,0.5);
-        }
         .tt-sheet {
             width: 100%;
             max-width: 480px;
@@ -14760,44 +13121,8 @@
             from { transform: translateY(30px); opacity: 0; }
             to { transform: translateY(0); opacity: 1; }
         }
-        .tt-sheet-head { display: flex; align-items: center; gap: 12px; }
-        .tt-sheet-bar {
-            width: 3px;
-            align-self: stretch;
-            border-radius: 2px;
-            background: var(--tt-dim, var(--color-progress));
-            box-shadow: 0 0 8px var(--tt-dim, var(--color-progress));
-            flex-shrink: 0;
-        }
         .tt-sheet-title { font-size: 15.5px; font-weight: 700; letter-spacing: -0.015em; color: var(--color-text-primary); }
-        .tt-sheet-sub { font-size: 11px; color: var(--color-text-secondary); margin-top: 2px; }
         .tt-sheet-desc { font-size: 12.5px; color: var(--color-text-secondary); line-height: 1.55; margin: 10px 0 0; }
-        .tt-sheet-progress { margin-top: 12px; }
-        .tt-sheet-progress-label {
-            font-size: 11px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.14em;
-            color: var(--color-text-secondary);
-            margin-bottom: 5px;
-        }
-        .tt-progressbar {
-            height: 6px;
-            background: rgba(128,128,140,0.16);
-            border-radius: 4px;
-            overflow: hidden;
-        }
-        .tt-progressbar-fill { height: 100%; border-radius: 4px; transition: width .3s ease; }
-        .tt-sheet-prereqs { margin-top: 12px; }
-        .tt-sheet-prereq {
-            display: flex;
-            align-items: center;
-            gap: 7px;
-            font-size: 12.5px;
-            color: var(--color-text-secondary);
-            padding: 3.5px 0;
-        }
-        .tt-sheet-prereq.met { color: var(--chip-xp-fg, #8fbf8f); }
         .tt-sheet-actions { margin-top: 14px; }
 
 
@@ -14820,7 +13145,7 @@
 
 /* ═══════════════════════════════════════════════════════════════════════
    QUESTS (Projects) — v5 redesign: recursive groups.
-   Card material, recessed surface, and chip recipes per the Design Brief;
+   Card material, recessed surface, and chip recipes;
    gold (#f5c563) stays reserved for quest milestones (rep banked, sealed),
    matching the app's existing quest-only gold precedent. Dimension colors
    come from DIM_HEX_MAP via inline style — this stylesheet never hardcodes
