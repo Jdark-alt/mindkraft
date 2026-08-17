@@ -531,6 +531,19 @@
                     </div>
                 </div>
             </div>
+
+            <!-- ══ Page Strip (v5 nav) — crumb + title, sticky with the header. Mobile-only (see .mk-page-strip CSS). ══ -->
+            <div class="mk-page-strip" id="mkPageStrip">
+                <div class="mk-page-strip-titlewrap">
+                    <span class="mk-crumb" id="mkCrumb">Activities</span>
+                    <span class="mk-crumb-sep">›</span>
+                    <span class="mk-page-title" id="mkPageTitle">My Activities</span>
+                </div>
+                <button class="mk-grit-btn" id="mkGritBtn" onclick="mkOpenGrit()" title="Grit balance" type="button">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f5c563" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.6 20.4 11 12 21.4 3.6 11 Z"/><path d="M7.6 11h8.8" opacity="0.6"/></svg>
+                    <span class="mk-grit-val" id="mkGritVal">0</span>
+                </button>
+            </div>
         </div>
 
         <!-- Main Content -->
@@ -1006,6 +1019,75 @@
 
                 <h1 class="st-page-title">Settings</h1>
 
+                <!-- ══ Theme (v5 nav) — appearance + navigation style switcher. Mobile-only. ══ -->
+                <div class="settings-card mk-only mk-theme-card" id="mkThemeCard">
+                    <button class="mk-theme-head" id="mkThemeHead" onclick="mkToggleTheme()" type="button">
+                        <span class="mk-theme-head-text">
+                            <span class="mk-theme-head-title">Theme</span>
+                            <span class="mk-theme-head-sub" id="mkThemeSub">Dark · Plate navigation</span>
+                        </span>
+                        <svg class="mk-theme-chevron" id="mkThemeChevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="mk-theme-body" id="mkThemeBody">
+                        <div class="mk-theme-body-inner">
+                            <div>
+                                <div class="mk-theme-kicker">Appearance</div>
+                                <div class="ay-seg">
+                                    <button type="button" class="ay-seg-btn" id="mkAppearanceDark" onclick="mkSetAppearance('dark')"><span>Dark</span></button>
+                                    <button type="button" class="ay-seg-btn" id="mkAppearanceLight" onclick="mkSetAppearance('light')"><span>Light</span></button>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="mk-theme-kicker-row">
+                                    <span class="mk-theme-kicker">Navigation</span>
+                                    <span class="mk-theme-kicker-hint">Plate is standard</span>
+                                </div>
+                                <div class="mk-nav-options" id="mkNavOptions">
+                                    <button type="button" class="mk-nav-option" data-nav="plate" onclick="mkSetNavStyle('plate')">
+                                        <span class="mk-nav-option-dot"></span>
+                                        <span class="mk-nav-option-text">
+                                            <span class="mk-nav-option-name">Plate</span>
+                                            <span class="mk-nav-option-desc">Sections and tabs on one plate</span>
+                                        </span>
+                                    </button>
+                                    <button type="button" class="mk-nav-option" data-nav="arc" onclick="mkSetNavStyle('arc')">
+                                        <span class="mk-nav-option-dot"></span>
+                                        <span class="mk-nav-option-text">
+                                            <span class="mk-nav-option-name">Arc</span>
+                                            <span class="mk-nav-option-desc">A dial of tabs you spin to the apex</span>
+                                        </span>
+                                        <span class="mk-nav-option-pro">Pro</span>
+                                    </button>
+                                    <button type="button" class="mk-nav-option" data-nav="plume" onclick="mkSetNavStyle('plume')">
+                                        <span class="mk-nav-option-dot"></span>
+                                        <span class="mk-nav-option-text">
+                                            <span class="mk-nav-option-name">Plume</span>
+                                            <span class="mk-nav-option-desc">Sections on a stem above their tab</span>
+                                        </span>
+                                        <span class="mk-nav-option-pro">Pro</span>
+                                    </button>
+                                    <button type="button" class="mk-nav-option" data-nav="ledger" onclick="mkSetNavStyle('ledger')">
+                                        <span class="mk-nav-option-dot"></span>
+                                        <span class="mk-nav-option-text">
+                                            <span class="mk-nav-option-name">Ledger</span>
+                                            <span class="mk-nav-option-desc">All four tabs lie open at once</span>
+                                        </span>
+                                        <span class="mk-nav-option-pro">Pro</span>
+                                    </button>
+                                    <button type="button" class="mk-nav-option" data-nav="spine" onclick="mkSetNavStyle('spine')">
+                                        <span class="mk-nav-option-dot"></span>
+                                        <span class="mk-nav-option-text">
+                                            <span class="mk-nav-option-name">Spine</span>
+                                            <span class="mk-nav-option-desc">One line: icons plus sections</span>
+                                        </span>
+                                        <span class="mk-nav-option-pro">Pro</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Install Mindkraft (hidden when already running as PWA) -->
                 <div class="settings-card" id="installCard">
                     <button class="st-collapse-btn" id="installToggleBtn" onclick="toggleInstallGuide()">
@@ -1392,6 +1474,312 @@
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                         </a>
                     </div>
+                </div>
+            </div>
+
+            <!-- ══════════════════════════════════════════════════════════════
+                 NAVIGATION v5 — empty pages (Social›Friends, Pursuits›Modes,
+                 Pursuits›Narratives, More›Rewards). Real content is future work.
+                 ══════════════════════════════════════════════════════════════ -->
+            <div id="mkEmptySocialFriends" class="tab-content">
+                <div class="empty-state mk-empty-page">
+                    <div class="empty-state-icon">👥</div>
+                    <p>No friends yet. Add someone from the Leaderboard tab.</p>
+                </div>
+            </div>
+            <div id="mkEmptyPursuitsModes" class="tab-content">
+                <div class="empty-state mk-empty-page">
+                    <div class="empty-state-icon">🎮</div>
+                    <p>Modes live here. Nothing to show yet.</p>
+                </div>
+            </div>
+            <div id="mkEmptyPursuitsNarratives" class="tab-content">
+                <div class="empty-state mk-empty-page">
+                    <div class="empty-state-icon">📖</div>
+                    <p>Narratives live here. Nothing to show yet.</p>
+                </div>
+            </div>
+            <div id="mkEmptyMoreRewards" class="tab-content">
+                <div class="empty-state mk-empty-page">
+                    <div class="empty-state-icon">🎁</div>
+                    <p>Rewards live here. Nothing to show yet.</p>
+                </div>
+            </div>
+
+            <!-- ══════════════════════════════════════════════════════════════
+                 NAVIGATION v5 — bottom nav, five switchable styles. Only one
+                 is visible at a time (CSS, driven by body.mk-nav-<style>);
+                 default is Plate. Mobile-only (see .mk-bottom-nav CSS).
+                 ══════════════════════════════════════════════════════════════ -->
+
+            <!-- ── 1. Plate (default) ── -->
+            <nav class="mk-bottom-nav mk-plate" id="mkNavPlate" aria-label="Primary">
+                <div class="mk-plate-row1">
+                    <button type="button" class="mk-plate-sec active" id="mkPlateSec0" onclick="mkGoSubAt(0)">My Activities</button>
+                    <button type="button" class="mk-plate-sec" id="mkPlateSec1" onclick="mkGoSubAt(1)">Categories</button>
+                    <button type="button" class="mk-plate-sec" id="mkPlateSec2" onclick="mkGoSubAt(2)">Map</button>
+                    <span class="mk-plate-bar" id="mkPlateBar" style="left:calc(5px + (100% - 10px) * 0.1667 - 17px);"></span>
+                </div>
+                <div class="mk-plate-divider"></div>
+                <div class="mk-plate-row2">
+                    <button type="button" class="mk-plate-tab" id="mkPlateTab0" onclick="mkGo(0)">
+                        <svg width="19" height="19" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="9" cy="7.5" r="3.4" fill="currentColor" opacity="0.14" stroke="currentColor" stroke-width="1.7"/>
+                            <path d="M3 20v-1.6a4.6 4.6 0 0 1 4.6-4.6h2.8a4.6 4.6 0 0 1 4.6 4.6V20" fill="currentColor" opacity="0.1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+                            <circle cx="17.6" cy="9.4" r="2.5" fill="currentColor" opacity="0.14" stroke="currentColor" stroke-width="1.4"/>
+                            <path d="M20.8 20v-1.3a3.3 3.3 0 0 0-2.7-3.24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                        </svg>
+                        <span class="mk-plate-tab-label">Social</span>
+                    </button>
+                    <button type="button" class="mk-plate-tab" id="mkPlateTab1" onclick="mkGo(1)">
+                        <svg width="19" height="19" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <line x1="6.5" y1="17.5" x2="12" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.5"/>
+                            <line x1="12" y1="12" x2="17.5" y2="6.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.5"/>
+                            <line x1="12" y1="12" x2="17.5" y2="16.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.3"/>
+                            <circle cx="6.5" cy="17.5" r="2.2" fill="currentColor" opacity="0.5"/>
+                            <circle cx="12" cy="12" r="2.7" fill="currentColor" opacity="0.16" stroke="currentColor" stroke-width="1.6"/>
+                            <circle cx="17.5" cy="6.5" r="2" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.8"/>
+                            <circle cx="17.5" cy="16.5" r="1.7" fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.5"/>
+                        </svg>
+                        <span class="mk-plate-tab-label">Pursuits</span>
+                    </button>
+                    <button type="button" class="mk-plate-tab active" id="mkPlateTab2" onclick="mkGo(2)">
+                        <svg width="19" height="19" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <rect x="3.2" y="4" width="13" height="16" rx="2.8" fill="currentColor" opacity="0.12" stroke="currentColor" stroke-width="1.6"/>
+                            <line x1="6" y1="8.4" x2="13" y2="8.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.5"/>
+                            <line x1="6" y1="12" x2="11" y2="12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.35"/>
+                            <circle cx="16.4" cy="15.6" r="4.4" fill="currentColor" opacity="0.16" stroke="currentColor" stroke-width="1.5"/>
+                            <polyline points="14.4,15.6 15.9,17.1 18.5,13.9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        <span class="mk-plate-tab-label">Activities</span>
+                    </button>
+                    <button type="button" class="mk-plate-tab" id="mkPlateTab3" onclick="mkGo(3)">
+                        <svg width="19" height="19" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M3.5 17 L7.5 12.4 L11.5 14.8 L16 8 L20.5 5.4 L20.5 17 Z" fill="currentColor" opacity="0.13"/>
+                            <polyline points="3.5,17 7.5,12.4 11.5,14.8 16,8 20.5,5.4" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+                            <circle cx="20.5" cy="5.4" r="1.5" fill="currentColor" opacity="0.6"/>
+                        </svg>
+                        <span class="mk-plate-tab-label">More</span>
+                    </button>
+                </div>
+            </nav>
+
+            <!-- ── 2. Arc ── -->
+            <nav class="mk-bottom-nav mk-arc" id="mkNavArc" aria-label="Primary">
+                <div class="mk-arc-fade"></div>
+                <div class="mk-arc-anchor"><div class="mk-arc-disc"></div></div>
+                <svg class="mk-arc-guide" width="402" height="150" viewBox="0 0 402 150" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M0 96.5 A518 518 0 0 1 402 96.5" fill="none" stroke="rgba(255,255,255,0.055)" stroke-width="1"/>
+                </svg>
+                <div class="mk-arc-anchor">
+                    <button type="button" class="mk-arc-sec active" id="mkArcSec0" onclick="mkGoSubAt(0)">My Activities</button>
+                    <button type="button" class="mk-arc-sec" id="mkArcSec1" onclick="mkGoSubAt(1)">Categories</button>
+                    <button type="button" class="mk-arc-sec" id="mkArcSec2" onclick="mkGoSubAt(2)">Map</button>
+                </div>
+                <div class="mk-arc-anchor mk-arc-ring" id="mkArcRing">
+                    <svg class="mk-arc-ringsvg" width="1000" height="1000" viewBox="-500 -500 1000 1000" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="0" cy="0" r="470" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+                        <g stroke="rgba(255,255,255,0.2)" stroke-width="1.4" stroke-linecap="round">
+                            <line x1="0" y1="-490" x2="0" y2="-481" transform="rotate(-55)"/>
+                            <line x1="0" y1="-490" x2="0" y2="-481" transform="rotate(-44)"/>
+                            <line x1="0" y1="-490" x2="0" y2="-481" transform="rotate(-33)"/>
+                            <line x1="0" y1="-490" x2="0" y2="-481" transform="rotate(-22)"/>
+                            <line x1="0" y1="-490" x2="0" y2="-481" transform="rotate(-11)"/>
+                            <line x1="0" y1="-490" x2="0" y2="-481"/>
+                            <line x1="0" y1="-490" x2="0" y2="-481" transform="rotate(11)"/>
+                            <line x1="0" y1="-490" x2="0" y2="-481" transform="rotate(22)"/>
+                            <line x1="0" y1="-490" x2="0" y2="-481" transform="rotate(33)"/>
+                            <line x1="0" y1="-490" x2="0" y2="-481" transform="rotate(44)"/>
+                            <line x1="0" y1="-490" x2="0" y2="-481" transform="rotate(55)"/>
+                        </g>
+                    </svg>
+                    <button type="button" class="mk-arc-tab" id="mkArcTab0" onclick="mkGo(0)">Social</button>
+                    <button type="button" class="mk-arc-tab" id="mkArcTab1" onclick="mkGo(1)">Pursuits</button>
+                    <button type="button" class="mk-arc-tab active" id="mkArcTab2" onclick="mkGo(2)">Activities</button>
+                    <button type="button" class="mk-arc-tab" id="mkArcTab3" onclick="mkGo(3)">More</button>
+                </div>
+                <div class="mk-arc-here">
+                    <span class="mk-arc-here-dash"></span>
+                    <svg class="mk-arc-here-icon" id="mkArcHere0" width="17" height="17" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="9" cy="7.5" r="3.4" fill="currentColor" opacity="0.16" stroke="currentColor" stroke-width="1.7"/>
+                        <path d="M3 20v-1.6a4.6 4.6 0 0 1 4.6-4.6h2.8a4.6 4.6 0 0 1 4.6 4.6V20" fill="currentColor" opacity="0.12" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+                        <circle cx="17.6" cy="9.4" r="2.5" fill="currentColor" opacity="0.16" stroke="currentColor" stroke-width="1.4"/>
+                        <path d="M20.8 20v-1.3a3.3 3.3 0 0 0-2.7-3.24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                    </svg>
+                    <svg class="mk-arc-here-icon" id="mkArcHere1" width="17" height="17" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <line x1="6.5" y1="17.5" x2="12" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.5"/>
+                        <line x1="12" y1="12" x2="17.5" y2="6.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.5"/>
+                        <line x1="12" y1="12" x2="17.5" y2="16.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.3"/>
+                        <circle cx="6.5" cy="17.5" r="2.2" fill="currentColor" opacity="0.5"/>
+                        <circle cx="12" cy="12" r="2.7" fill="currentColor" opacity="0.18" stroke="currentColor" stroke-width="1.6"/>
+                        <circle cx="17.5" cy="6.5" r="2" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.8"/>
+                        <circle cx="17.5" cy="16.5" r="1.7" fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.5"/>
+                    </svg>
+                    <svg class="mk-arc-here-icon active" id="mkArcHere2" width="17" height="17" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <rect x="3.2" y="4" width="13" height="16" rx="2.8" fill="currentColor" opacity="0.14" stroke="currentColor" stroke-width="1.6"/>
+                        <line x1="6" y1="8.4" x2="13" y2="8.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.5"/>
+                        <line x1="6" y1="12" x2="11" y2="12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.35"/>
+                        <circle cx="16.4" cy="15.6" r="4.4" fill="currentColor" opacity="0.18" stroke="currentColor" stroke-width="1.5"/>
+                        <polyline points="14.4,15.6 15.9,17.1 18.5,13.9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <svg class="mk-arc-here-icon" id="mkArcHere3" width="17" height="17" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M3.5 17 L7.5 12.4 L11.5 14.8 L16 8 L20.5 5.4 L20.5 17 Z" fill="currentColor" opacity="0.15"/>
+                        <polyline points="3.5,17 7.5,12.4 11.5,14.8 16,8 20.5,5.4" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+                        <circle cx="20.5" cy="5.4" r="1.5" fill="currentColor" opacity="0.6"/>
+                    </svg>
+                </div>
+            </nav>
+
+            <!-- ── 3. Plume ── -->
+            <nav class="mk-bottom-nav mk-plume" id="mkNavPlume" aria-label="Primary">
+                <div class="mk-plume-stemwrap">
+                    <div class="mk-plume-pill" id="mkPlumePill">
+                        <button type="button" class="mk-plume-sec active" id="mkPlumeSec0" onclick="mkGoSubAt(0)">My Activities</button>
+                        <button type="button" class="mk-plume-sec" id="mkPlumeSec1" onclick="mkGoSubAt(1)">Categories</button>
+                        <button type="button" class="mk-plume-sec" id="mkPlumeSec2" onclick="mkGoSubAt(2)">Map</button>
+                    </div>
+                    <span class="mk-plume-stem" id="mkPlumeStem"></span>
+                    <span class="mk-plume-root" id="mkPlumeRoot"></span>
+                </div>
+                <div class="mk-plume-tabs">
+                    <button type="button" class="mk-plume-tab" id="mkPlumeTab0" onclick="mkGo(0)">Social</button>
+                    <button type="button" class="mk-plume-tab" id="mkPlumeTab1" onclick="mkGo(1)">Pursuits</button>
+                    <button type="button" class="mk-plume-tab active" id="mkPlumeTab2" onclick="mkGo(2)">Activities</button>
+                    <button type="button" class="mk-plume-tab" id="mkPlumeTab3" onclick="mkGo(3)">More</button>
+                </div>
+            </nav>
+
+            <!-- ── 4. Ledger ── -->
+            <nav class="mk-bottom-nav mk-ledger" id="mkNavLedger" aria-label="Primary">
+                <div class="mk-ledger-band" id="mkLedgerBand0">
+                    <button type="button" class="mk-ledger-name" onclick="mkGo(0)"><span class="mk-ledger-dot"></span>Social</button>
+                    <div class="mk-ledger-subs">
+                        <button type="button" class="mk-ledger-sub" onclick="mkGoSub(0,0)">Friends</button>
+                        <button type="button" class="mk-ledger-sub" onclick="mkGoSub(0,1)">Leaderboard</button>
+                        <button type="button" class="mk-ledger-sub" onclick="mkGoSub(0,2)">Challenges</button>
+                    </div>
+                </div>
+                <div class="mk-ledger-band" id="mkLedgerBand1">
+                    <button type="button" class="mk-ledger-name" onclick="mkGo(1)"><span class="mk-ledger-dot"></span>Pursuits</button>
+                    <div class="mk-ledger-subs">
+                        <button type="button" class="mk-ledger-sub" onclick="mkGoSub(1,0)">Quests</button>
+                        <button type="button" class="mk-ledger-sub" onclick="mkGoSub(1,1)">Modes</button>
+                        <button type="button" class="mk-ledger-sub" onclick="mkGoSub(1,2)">Narratives</button>
+                    </div>
+                </div>
+                <div class="mk-ledger-band active" id="mkLedgerBand2">
+                    <button type="button" class="mk-ledger-name" onclick="mkGo(2)"><span class="mk-ledger-dot"></span>Activities</button>
+                    <div class="mk-ledger-subs">
+                        <button type="button" class="mk-ledger-sub active" onclick="mkGoSub(2,0)">My Activities</button>
+                        <button type="button" class="mk-ledger-sub" onclick="mkGoSub(2,1)">Categories</button>
+                        <button type="button" class="mk-ledger-sub" onclick="mkGoSub(2,2)">Map</button>
+                    </div>
+                </div>
+                <div class="mk-ledger-band" id="mkLedgerBand3">
+                    <button type="button" class="mk-ledger-name" onclick="mkGo(3)"><span class="mk-ledger-dot"></span>More</button>
+                    <div class="mk-ledger-subs">
+                        <button type="button" class="mk-ledger-sub" onclick="mkGoSub(3,0)">Analytics</button>
+                        <button type="button" class="mk-ledger-sub" onclick="mkGoSub(3,1)">Rewards</button>
+                        <button type="button" class="mk-ledger-sub" onclick="mkGoSub(3,2)">Settings</button>
+                    </div>
+                </div>
+            </nav>
+
+            <!-- ── 5. Spine ── -->
+            <nav class="mk-bottom-nav mk-spine" id="mkNavSpine" aria-label="Primary">
+                <button type="button" class="mk-spine-tab" id="mkSpineTab0" onclick="mkGo(0)" title="Social">
+                    <svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="9" cy="7.5" r="3.4" fill="currentColor" opacity="0.14" stroke="currentColor" stroke-width="1.7"/>
+                        <path d="M3 20v-1.6a4.6 4.6 0 0 1 4.6-4.6h2.8a4.6 4.6 0 0 1 4.6 4.6V20" fill="currentColor" opacity="0.1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+                        <circle cx="17.6" cy="9.4" r="2.5" fill="currentColor" opacity="0.14" stroke="currentColor" stroke-width="1.4"/>
+                        <path d="M20.8 20v-1.3a3.3 3.3 0 0 0-2.7-3.24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                    </svg>
+                    <span class="mk-spine-tab-name">Social</span>
+                </button>
+                <div class="mk-spine-subwrap" id="mkSpineWrap0">
+                    <span class="mk-spine-divider"></span>
+                    <button type="button" class="mk-spine-sub" onclick="mkGoSub(0,0)">Friends</button>
+                    <button type="button" class="mk-spine-sub" onclick="mkGoSub(0,1)">Leaderboard</button>
+                    <button type="button" class="mk-spine-sub" onclick="mkGoSub(0,2)">Challenges</button>
+                </div>
+
+                <button type="button" class="mk-spine-tab" id="mkSpineTab1" onclick="mkGo(1)" title="Pursuits">
+                    <svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <line x1="6.5" y1="17.5" x2="12" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.5"/>
+                        <line x1="12" y1="12" x2="17.5" y2="6.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.5"/>
+                        <line x1="12" y1="12" x2="17.5" y2="16.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.3"/>
+                        <circle cx="6.5" cy="17.5" r="2.2" fill="currentColor" opacity="0.5"/>
+                        <circle cx="12" cy="12" r="2.7" fill="currentColor" opacity="0.16" stroke="currentColor" stroke-width="1.6"/>
+                        <circle cx="17.5" cy="6.5" r="2" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.8"/>
+                        <circle cx="17.5" cy="16.5" r="1.7" fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.5"/>
+                    </svg>
+                    <span class="mk-spine-tab-name">Pursuits</span>
+                </button>
+                <div class="mk-spine-subwrap" id="mkSpineWrap1">
+                    <span class="mk-spine-divider"></span>
+                    <button type="button" class="mk-spine-sub" onclick="mkGoSub(1,0)">Quests</button>
+                    <button type="button" class="mk-spine-sub" onclick="mkGoSub(1,1)">Modes</button>
+                    <button type="button" class="mk-spine-sub" onclick="mkGoSub(1,2)">Narratives</button>
+                </div>
+
+                <button type="button" class="mk-spine-tab active" id="mkSpineTab2" onclick="mkGo(2)" title="Activities">
+                    <svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <rect x="3.2" y="4" width="13" height="16" rx="2.8" fill="currentColor" opacity="0.12" stroke="currentColor" stroke-width="1.6"/>
+                        <line x1="6" y1="8.4" x2="13" y2="8.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.5"/>
+                        <line x1="6" y1="12" x2="11" y2="12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.35"/>
+                        <circle cx="16.4" cy="15.6" r="4.4" fill="currentColor" opacity="0.16" stroke="currentColor" stroke-width="1.5"/>
+                        <polyline points="14.4,15.6 15.9,17.1 18.5,13.9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <span class="mk-spine-tab-name">Activities</span>
+                </button>
+                <div class="mk-spine-subwrap active" id="mkSpineWrap2">
+                    <span class="mk-spine-divider"></span>
+                    <button type="button" class="mk-spine-sub active" onclick="mkGoSub(2,0)">My Activities</button>
+                    <button type="button" class="mk-spine-sub" onclick="mkGoSub(2,1)">Categories</button>
+                    <button type="button" class="mk-spine-sub" onclick="mkGoSub(2,2)">Map</button>
+                </div>
+
+                <button type="button" class="mk-spine-tab" id="mkSpineTab3" onclick="mkGo(3)" title="More">
+                    <svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M3.5 17 L7.5 12.4 L11.5 14.8 L16 8 L20.5 5.4 L20.5 17 Z" fill="currentColor" opacity="0.13"/>
+                        <polyline points="3.5,17 7.5,12.4 11.5,14.8 16,8 20.5,5.4" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+                        <circle cx="20.5" cy="5.4" r="1.5" fill="currentColor" opacity="0.6"/>
+                    </svg>
+                    <span class="mk-spine-tab-name">More</span>
+                </button>
+                <div class="mk-spine-subwrap" id="mkSpineWrap3">
+                    <span class="mk-spine-divider"></span>
+                    <button type="button" class="mk-spine-sub" onclick="mkGoSub(3,0)">Analytics</button>
+                    <button type="button" class="mk-spine-sub" onclick="mkGoSub(3,1)">Rewards</button>
+                    <button type="button" class="mk-spine-sub" onclick="mkGoSub(3,2)">Settings</button>
+                </div>
+            </nav>
+        </div>
+    </div>
+
+    <!-- ══ Grit sheet (v5 nav) — new feature, self-contained, reuses .pl-modal ══ -->
+    <div id="mkGritModal" class="modal-overlay" onclick="if(event.target===this) mkCloseGrit()">
+        <div class="modal pl-modal">
+            <div class="modal-header pl-modal-header">
+                <div>
+                    <div class="pl-modal-eyebrow">Wallet</div>
+                    <h3 class="modal-title">Grit</h3>
+                </div>
+                <button class="pl-modal-close" onclick="mkCloseGrit()" aria-label="Close">✕</button>
+            </div>
+            <div class="modal-body pl-modal-body">
+                <div class="mk-grit-balance-row">
+                    <div style="flex:1;">
+                        <div style="font:700 9.5px Inter,sans-serif;letter-spacing:0.16em;text-transform:uppercase;color:var(--color-text-secondary);">Balance</div>
+                        <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f5c563" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.6 20.4 11 12 21.4 3.6 11 Z"/><path d="M7.6 11h8.8" opacity="0.6"/></svg>
+                            <span class="mk-grit-balance-num" id="mkGritModalVal">0</span>
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <div class="mk-theme-kicker" style="margin-bottom:9px;">Spend</div>
+                    <div class="mk-grit-spend-list" id="mkGritSpendList"></div>
                 </div>
             </div>
         </div>
@@ -2598,6 +2986,392 @@
                     });
             });
         }
+    </script>
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         Navigation v5 — state machine for the 4-tab x 3-section hierarchy
+         and the 5 switchable bottom-nav styles. Self-contained: does not
+         modify app.js, only drives it through its existing exposed
+         window.switchTab / window.switchSubTab / window.applyThemePreset /
+         window.saveTheme entry points. Runs after DOMContentLoaded so the
+         app.js module (which is deferred) has already finished executing
+         and populated those globals.
+         ══════════════════════════════════════════════════════════════════ -->
+    <script>
+    (function () {
+        'use strict';
+
+        var STEP = 11, SUB_STEP = 13, R_TAB = 470, R_SUB = 518;
+        var NAV_STYLES = ['plate', 'arc', 'plume', 'ledger', 'spine'];
+
+        var NAV = [
+            { key: 'social', name: 'Social', subs: [
+                { label: 'Friends',     kind: 'empty',     el: 'mkEmptySocialFriends' },
+                { label: 'Leaderboard', kind: 'legacy',    tab: 'friends' },
+                { label: 'Challenges',  kind: 'legacy',    tab: 'challenges' }
+            ] },
+            { key: 'pursuits', name: 'Pursuits', subs: [
+                { label: 'Quests',     kind: 'legacy', tab: 'projects' },
+                { label: 'Modes',      kind: 'empty',  el: 'mkEmptyPursuitsModes' },
+                { label: 'Narratives', kind: 'empty',  el: 'mkEmptyPursuitsNarratives' }
+            ] },
+            { key: 'activities', name: 'Activities', subs: [
+                { label: 'My Activities', kind: 'legacySub', tab: 'activities', sub: 'myActivities' },
+                { label: 'Categories',    kind: 'legacySub', tab: 'activities', sub: 'categories' },
+                { label: 'Map',           kind: 'legacySub', tab: 'activities', sub: 'techTree' }
+            ] },
+            { key: 'more', name: 'More', subs: [
+                { label: 'Analytics', kind: 'legacy', tab: 'analytics' },
+                { label: 'Rewards',   kind: 'empty',  el: 'mkEmptyMoreRewards' },
+                { label: 'Settings',  kind: 'legacy', tab: 'settings' }
+            ] }
+        ];
+
+        var GRIT_SPEND = [
+            { name: 'Streak shield', sub: 'Protects one activity for a day', cost: 40 },
+            { name: 'Gift a shield', sub: 'Send a shield to a friend', cost: 60 },
+            { name: 'Start a friend challenge', sub: 'Invite a friend to a head-to-head', cost: 25 },
+            { name: 'Generate a map branch', sub: 'New tech-tree branch from your history', cost: 100 }
+        ];
+
+        var state = { t: 2, s: 0, mem: [0, 0, 0, 0], navStyle: 'plate', spin: -2 * STEP, grit: 1240 };
+        var themeOpen = false;
+
+        try {
+            var savedStyle = localStorage.getItem('mk_nav_style');
+            if (savedStyle && NAV_STYLES.indexOf(savedStyle) !== -1) state.navStyle = savedStyle;
+            var savedGrit = parseInt(localStorage.getItem('mk_grit_balance'), 10);
+            if (!isNaN(savedGrit)) state.grit = savedGrit;
+        } catch (e) {}
+
+        function $(id) { return document.getElementById(id); }
+
+        /* ── Content activation: reuse the app's own switchTab/switchSubTab
+           for legacy pages so gating + real renders stay intact; only the
+           four brand-new empty pages are toggled by hand. ── */
+        function activateEmpty(elId) {
+            var nodes = document.querySelectorAll('.tab-content');
+            for (var i = 0; i < nodes.length; i++) nodes[i].classList.remove('active');
+            var el = $(elId);
+            if (el) el.classList.add('active');
+            return el;
+        }
+
+        function activateEntry(entry) {
+            if (entry.kind === 'legacy') {
+                if (typeof window.switchTab === 'function') window.switchTab(entry.tab);
+                var el = $(entry.tab + 'Tab');
+                if (!el || !el.classList.contains('active')) return null; // gated — the app's own toast already fired
+                return el;
+            }
+            if (entry.kind === 'legacySub') {
+                if (typeof window.switchTab === 'function') window.switchTab(entry.tab);
+                var tabEl = $(entry.tab + 'Tab');
+                if (!tabEl || !tabEl.classList.contains('active')) return null;
+                if (typeof window.switchSubTab === 'function') window.switchSubTab(entry.tab, entry.sub);
+                var panelId = entry.tab + 'Sub' + entry.sub.charAt(0).toUpperCase() + entry.sub.slice(1);
+                return $(panelId);
+            }
+            return activateEmpty(entry.el);
+        }
+
+        function animate(el, dir) {
+            if (!el) return;
+            el.classList.remove('mk-anim-fwd', 'mk-anim-back');
+            void el.offsetWidth;
+            el.classList.add(dir < 0 ? 'mk-anim-back' : 'mk-anim-fwd');
+        }
+
+        /* ── Plate ── */
+        function renderPlate() {
+            var tab = NAV[state.t];
+            for (var i = 0; i < 3; i++) {
+                var b = $('mkPlateSec' + i);
+                if (!b) continue;
+                b.textContent = tab.subs[i].label;
+                b.classList.toggle('active', i === state.s);
+            }
+            var bar = $('mkPlateBar');
+            if (bar) bar.style.left = 'calc(5px + (100% - 10px) * ' + ((state.s + 0.5) / 3).toFixed(4) + ' - 17px)';
+            for (var t = 0; t < 4; t++) {
+                var tb = $('mkPlateTab' + t);
+                if (tb) tb.classList.toggle('active', t === state.t);
+            }
+        }
+
+        /* ── Arc ── */
+        function arcTransform(angle, radius, counter) {
+            return 'translate(-50%,-50%) rotate(' + angle + 'deg) translate(0,-' + radius + 'px) rotate(' + counter + 'deg)';
+        }
+        function renderArc() {
+            var tab = NAV[state.t];
+            for (var i = 0; i < 3; i++) {
+                var b = $('mkArcSec' + i);
+                if (!b) continue;
+                var a = (i - 1) * SUB_STEP;
+                b.textContent = tab.subs[i].label;
+                b.classList.toggle('active', i === state.s);
+                b.style.fontSize = i === state.s ? '12px' : '11px';
+                b.style.transform = arcTransform(a, R_SUB, -a);
+            }
+            var ring = $('mkArcRing');
+            if (ring) ring.style.transform = 'rotate(' + state.spin + 'deg)';
+            for (var ti = 0; ti < 4; ti++) {
+                var best = 0, bestAbs = Infinity;
+                for (var k = -2; k <= 2; k++) {
+                    var v = Math.abs((ti + k * 4) * STEP + state.spin);
+                    if (v < bestAbs) { bestAbs = v; best = k; }
+                }
+                var ang = (ti + best * 4) * STEP;
+                var visibleAngle = ang + state.spin;
+                var active = ti === state.t;
+                var off = Math.abs(visibleAngle) > 25;
+                var tb = $('mkArcTab' + ti);
+                if (tb) {
+                    tb.classList.toggle('active', active);
+                    tb.style.fontSize = active ? '14px' : '11.5px';
+                    tb.style.opacity = off ? '0' : (active ? '1' : '0.72');
+                    tb.style.pointerEvents = off ? 'none' : 'auto';
+                    tb.style.transform = arcTransform(ang, R_TAB, -ang - state.spin);
+                }
+                var hereIcon = $('mkArcHere' + ti);
+                if (hereIcon) hereIcon.classList.toggle('active', active);
+            }
+        }
+
+        /* ── Plume ── */
+        function renderPlume() {
+            var tab = NAV[state.t];
+            for (var i = 0; i < 3; i++) {
+                var b = $('mkPlumeSec' + i);
+                if (!b) continue;
+                b.textContent = tab.subs[i].label;
+                b.classList.toggle('active', i === state.s);
+            }
+            var rootPct = (state.t + 0.5) / 4 * 100;
+            var rootX = 'calc(6px + (100% - 12px) * ' + ((state.t + 0.5) / 4).toFixed(4) + ')';
+            var pill = $('mkPlumePill');
+            if (pill) pill.style.left = 'max(0px, min(calc(100% - 232px), calc(' + rootPct.toFixed(4) + '% - 116px)))';
+            var stem = $('mkPlumeStem');
+            if (stem) stem.style.left = rootX;
+            var root = $('mkPlumeRoot');
+            if (root) root.style.left = 'calc(' + rootX + ' - 2px)';
+            for (var t = 0; t < 4; t++) {
+                var tb = $('mkPlumeTab' + t);
+                if (tb) tb.classList.toggle('active', t === state.t);
+            }
+        }
+
+        /* ── Ledger ── */
+        function renderLedger() {
+            for (var t = 0; t < 4; t++) {
+                var band = $('mkLedgerBand' + t);
+                if (!band) continue;
+                band.classList.toggle('active', t === state.t);
+                var subs = band.querySelectorAll('.mk-ledger-sub');
+                for (var si = 0; si < subs.length; si++) subs[si].classList.toggle('active', t === state.t && si === state.s);
+            }
+        }
+
+        /* ── Spine ── */
+        function renderSpine() {
+            for (var t = 0; t < 4; t++) {
+                var tb = $('mkSpineTab' + t);
+                if (tb) tb.classList.toggle('active', t === state.t);
+                var wrap = $('mkSpineWrap' + t);
+                if (wrap) {
+                    wrap.classList.toggle('active', t === state.t);
+                    var subs = wrap.querySelectorAll('.mk-spine-sub');
+                    for (var si = 0; si < subs.length; si++) subs[si].classList.toggle('active', t === state.t && si === state.s);
+                }
+            }
+        }
+
+        function renderNav() {
+            renderPlate();
+            renderArc();
+            renderPlume();
+            renderLedger();
+            renderSpine();
+        }
+
+        function renderPageStrip() {
+            var tab = NAV[state.t];
+            var crumb = $('mkCrumb'); if (crumb) crumb.textContent = tab.name;
+            var title = $('mkPageTitle'); if (title) title.textContent = tab.subs[state.s].label;
+        }
+
+        function renderGrit() {
+            var v = $('mkGritVal'); if (v) v.textContent = state.grit.toLocaleString();
+            var m = $('mkGritModalVal'); if (m) m.textContent = state.grit.toLocaleString();
+        }
+
+        /* ── Navigation actions ── */
+        function commit(t, s, dir) {
+            var entry = NAV[t].subs[s];
+            var el = activateEntry(entry);
+            if (!el) return false; // gated or missing — no-op; the app's own feedback (toast) already fired
+            if (t !== state.t) {
+                var d = ((t - state.t + 2) % 4 + 4) % 4 - 2;
+                state.spin -= d * STEP;
+            }
+            state.t = t; state.s = s; state.mem[t] = s;
+            renderPageStrip();
+            renderNav();
+            animate(el, dir);
+            return true;
+        }
+
+        window.mkGo = function (t) {
+            if (t === state.t) return;
+            var dir = t > state.t ? 1 : -1;
+            commit(t, state.mem[t], dir);
+        };
+
+        window.mkGoSub = function (t, s) {
+            if (t === state.t && s === state.s) return;
+            var dir = (t === state.t) ? (s < state.s ? -1 : 1) : (t > state.t ? 1 : -1);
+            commit(t, s, dir);
+        };
+
+        window.mkGoSubAt = function (s) { window.mkGoSub(state.t, s); };
+
+        window.mkStep = function (delta) {
+            var n = state.s + delta;
+            if (n >= 0 && n < 3) { window.mkGoSub(state.t, n); return; }
+            var t = state.t + delta;
+            if (t >= 0 && t < 4) window.mkGo(t);
+        };
+
+        /* ── Swipe: mobile-only, bails out of anything with its own
+           horizontal scroll (charts, hscroll lists, calendar strips) so it
+           never hijacks an existing gesture. ── */
+        function hasHScrollAncestor(el, stop) {
+            var node = el;
+            while (node && node !== stop) {
+                if (node.scrollWidth > node.clientWidth + 2) {
+                    var cs = getComputedStyle(node);
+                    if (cs.overflowX === 'auto' || cs.overflowX === 'scroll') return true;
+                }
+                node = node.parentElement;
+            }
+            return false;
+        }
+        function initSwipe() {
+            var content = document.querySelector('.main-content');
+            if (!content) return;
+            var x0 = 0, y0 = 0, tracking = false;
+            content.addEventListener('pointerdown', function (e) {
+                if (window.innerWidth > 768) return;
+                if (e.target.closest('input,textarea,select,button,label,a')) return;
+                if (hasHScrollAncestor(e.target, content)) return;
+                x0 = e.clientX; y0 = e.clientY; tracking = true;
+            });
+            content.addEventListener('pointerup', function (e) {
+                if (!tracking) return;
+                tracking = false;
+                if (window.innerWidth > 768) return;
+                var dx = e.clientX - x0, dy = e.clientY - y0;
+                if (Math.abs(dx) < 58 || Math.abs(dx) < Math.abs(dy) * 1.4) return;
+                window.mkStep(dx < 0 ? 1 : -1);
+            });
+        }
+
+        /* ── Settings › Theme card ── */
+        window.mkToggleTheme = function () {
+            themeOpen = !themeOpen;
+            var body = $('mkThemeBody'), chev = $('mkThemeChevron');
+            if (body) body.classList.toggle('open', themeOpen);
+            if (chev) chev.classList.toggle('open', themeOpen);
+        };
+
+        function renderThemeCard() {
+            var navName = state.navStyle.charAt(0).toUpperCase() + state.navStyle.slice(1);
+            var isLight = document.documentElement.getAttribute('data-theme-mode') === 'light';
+            var sub = $('mkThemeSub'); if (sub) sub.textContent = (isLight ? 'Light' : 'Dark') + ' · ' + navName + ' navigation';
+            var dark = $('mkAppearanceDark'), light = $('mkAppearanceLight');
+            if (dark) dark.classList.toggle('active', !isLight);
+            if (light) light.classList.toggle('active', isLight);
+            var opts = document.querySelectorAll('.mk-nav-option');
+            for (var i = 0; i < opts.length; i++) opts[i].classList.toggle('active', opts[i].getAttribute('data-nav') === state.navStyle);
+        }
+
+        window.mkSetAppearance = function (mode) {
+            if (typeof window.applyThemePreset === 'function') {
+                window.applyThemePreset(mode === 'light' ? 'light' : 'default');
+                if (typeof window.saveTheme === 'function') window.saveTheme();
+            }
+            renderThemeCard();
+        };
+
+        window.mkSetNavStyle = function (style) {
+            if (NAV_STYLES.indexOf(style) === -1) return;
+            state.navStyle = style;
+            try { localStorage.setItem('mk_nav_style', style); } catch (e) {}
+            document.body.classList.remove('mk-nav-plate', 'mk-nav-arc', 'mk-nav-plume', 'mk-nav-ledger', 'mk-nav-spine');
+            document.body.classList.add('mk-nav-' + style);
+            renderThemeCard();
+            renderNav();
+        };
+
+        /* ── Grit sheet (new, self-contained — see commit message for scope note) ── */
+        function renderGritSpend() {
+            var list = $('mkGritSpendList');
+            if (!list) return;
+            list.innerHTML = '';
+            GRIT_SPEND.forEach(function (item, i) {
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'mk-grit-spend-row';
+                btn.disabled = state.grit < item.cost;
+                btn.innerHTML =
+                    '<span style="flex:1;min-width:0;">' +
+                        '<span class="mk-grit-spend-name"></span>' +
+                        '<span class="mk-grit-spend-sub"></span>' +
+                    '</span>' +
+                    '<span class="mk-grit-spend-cost">' +
+                        '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#f5c563" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.6 20.4 11 12 21.4 3.6 11 Z"/></svg>' +
+                        item.cost +
+                    '</span>';
+                btn.querySelector('.mk-grit-spend-name').textContent = item.name;
+                btn.querySelector('.mk-grit-spend-sub').textContent = item.sub;
+                btn.addEventListener('click', function () { spendGrit(i); });
+                list.appendChild(btn);
+            });
+        }
+        function spendGrit(i) {
+            var item = GRIT_SPEND[i];
+            if (!item || state.grit < item.cost) return;
+            state.grit -= item.cost;
+            try { localStorage.setItem('mk_grit_balance', String(state.grit)); } catch (e) {}
+            renderGrit();
+            renderGritSpend();
+        }
+        window.mkOpenGrit = function () {
+            renderGritSpend();
+            var modal = $('mkGritModal');
+            if (modal) modal.classList.add('active');
+        };
+        window.mkCloseGrit = function () {
+            var modal = $('mkGritModal');
+            if (modal) modal.classList.remove('active');
+        };
+
+        function boot() {
+            document.body.classList.add('mk-nav-' + state.navStyle);
+            renderPageStrip();
+            renderNav();
+            renderGrit();
+            renderThemeCard();
+            initSwipe();
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', boot);
+        } else {
+            boot();
+        }
+    })();
     </script>
 
     <!-- PWA Install Prompt -->
