@@ -14001,7 +14001,6 @@
     --mk-nav-gap: 14px;                            /* bottom offset, every style */
     --mk-nav-w: min(402px, calc(100% - 28px));     /* width, every style */
     --mk-scrim: 26, 26, 26;                        /* bottom scrim tint (dark) */
-    /* Deep float: lifts the bar off the cards behind it without recolouring it. */
     --mk-nav-float:
         0 1px 0 rgba(255,255,255,0.08) inset,
         0 -1px 0 rgba(0,0,0,0.35) inset,
@@ -14018,7 +14017,8 @@
         0 22px 54px rgba(15,17,21,0.16);
 }
 
-/* ── Page strip — deliberately quieter than the header above it ── */
+/* ── Page strip — carries the section you are in, plus grit. Deliberately
+   quieter than the header above it. ── */
 .mk-page-strip {
     display: none;
     align-items: baseline;
@@ -14036,24 +14036,27 @@
 .mk-page-strip-titlewrap { min-width: 0; display: flex; align-items: baseline; gap: 5px; }
 .mk-crumb, .mk-crumb-sep {
     flex: none;
-    font: 500 11px Inter, sans-serif;
+    font: 500 12px Inter, sans-serif;
     color: var(--color-text-secondary);
-    opacity: 0.8;
+    opacity: 0.85;
 }
 .mk-crumb-sep { opacity: 0.4; }
-.mk-page-title {
-    font: 600 15.5px Inter, sans-serif;
-    letter-spacing: -0.02em;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    color: var(--color-text-primary);
-}
+/* The section name lives in the page title below the strip now. */
+.mk-page-title { display: none; }
 .mk-grit-btn {
     flex: none; display: flex; align-items: center; gap: 5px; border: none;
     background: transparent; padding: 2px 0; cursor: pointer; color: var(--color-text-primary);
 }
 .mk-grit-val { font: 700 12.5px Inter, sans-serif; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+
+/* ── Per-page title, under the strip ── */
+.mk-page-heading {
+    display: none;
+    font: 700 22px Inter, sans-serif;
+    letter-spacing: -0.03em;
+    color: var(--color-text-primary);
+    margin: 2px 0 14px;
+}
 
 /* ── Page-transition animation ── */
 @keyframes mkNavFwd { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
@@ -14126,64 +14129,61 @@
 .mk-plate-tab.active { color: var(--color-progress); opacity: 1; filter: drop-shadow(0 0 9px rgba(90,159,212,0.5)); }
 .mk-plate-tab-label { font: 700 9.5px Inter, sans-serif; letter-spacing: 0.11em; text-transform: uppercase; }
 
-/* ════════════════ 2. ARC — 210px band, two concentric rings ════════════════
-   Circle centre sits at (50%, 584px) in band coordinates.
-     section ring  r = 518, 12° per step, on a disc of r = 546
-     tab ring      r = 470,  9° per step, on a disc of r = 494
-   9°/12° keep every label inboard of a 360px-wide screen, which is what
-   used to clip them. The band itself takes pointer events, so the ~25% of
-   screen it covers never passes a tap through to the list behind. */
+/* ════════════════ 2. ARC — two dials, capped at 15% of the viewport ════════════════
+   Rings are anchored off the band's BOTTOM (top: calc(100% + 444px)), so the
+   geometry holds at any band height:
+     tab labels    r = 470  → 26px above the band bottom, 18° per slot
+     section labels r = 518 → 74px above the band bottom, 15° per slot
+   Three slots show on each dial (left edge / apex / right edge); the tab
+   dial's fourth page parks off-screen until it is rotated in. */
 .mk-arc {
     width: 100%;
-    height: calc(210px + env(safe-area-inset-bottom));
+    height: calc(clamp(104px, 15vh, 132px) + env(safe-area-inset-bottom));
     bottom: 0;
     overflow: hidden;
     pointer-events: auto;
+    touch-action: pan-y;
 }
 .mk-arc-fade {
     position: absolute; inset: 0;
     background: linear-gradient(180deg,
         rgba(var(--mk-scrim), 0) 0%,
-        rgba(var(--mk-scrim), 0.5) 24%,
-        rgba(var(--mk-scrim), 0.88) 46%,
-        rgb(var(--mk-scrim)) 64%);
+        rgba(var(--mk-scrim), 0.55) 26%,
+        rgba(var(--mk-scrim), 0.9) 50%,
+        rgb(var(--mk-scrim)) 68%);
 }
-.mk-arc-anchor { position: absolute; left: 50%; top: 584px; width: 0; height: 0; }
-/* Outer disc reads as the deeper/further layer; the inner tab disc sits on
-   top of it with a brighter rim, so the two rings are visibly stacked. */
+.mk-arc-anchor { position: absolute; left: 50%; top: calc(100% + 444px); width: 0; height: 0; }
 .mk-arc-disc-sec {
-    position: absolute; left: -546px; top: -546px; width: 1092px; height: 1092px; border-radius: 50%;
+    position: absolute; left: -548px; top: -548px; width: 1096px; height: 1096px; border-radius: 50%;
     background: radial-gradient(100% 100% at 50% 0%, rgba(255,255,255,0.035), rgba(24,26,31,0.94) 30%, rgba(19,21,25,0.96));
     border: 1px solid rgba(255,255,255,0.06);
     box-shadow: 0 -12px 30px rgba(0,0,0,0.5);
 }
 .mk-arc-disc-tab {
-    position: absolute; left: -494px; top: -494px; width: 988px; height: 988px; border-radius: 50%;
+    position: absolute; left: -530px; top: -530px; width: 1060px; height: 1060px; border-radius: 50%;
     background: radial-gradient(105% 105% at 50% 0%, rgba(255,255,255,0.07), rgba(38,40,47,0.96) 26%, rgba(31,33,39,0.97));
     border: 1px solid rgba(255,255,255,0.13);
     box-shadow: 0 -1px 0 rgba(255,255,255,0.09) inset, 0 -16px 36px rgba(0,0,0,0.55);
 }
+.mk-arc-pins, .mk-arc-ringsvg { position: absolute; left: -600px; top: -600px; pointer-events: none; }
 .mk-arc-ring { transition: transform 340ms cubic-bezier(.2,.8,.2,1); }
-.mk-arc-ringsvg { position: absolute; left: -600px; top: -600px; pointer-events: none; }
 .mk-arc-tab, .mk-arc-sec {
     position: absolute; left: 0; top: 0; border: none; background: transparent; cursor: pointer;
-    white-space: nowrap; padding: 4px 8px; font-family: Inter, sans-serif; letter-spacing: -0.01em;
-    transition: color 0.24s, font-size 0.24s, opacity 0.24s; font-weight: 500; opacity: 0.72;
+    white-space: nowrap; padding: 3px 7px; font-family: Inter, sans-serif; letter-spacing: -0.01em;
+    transition: color 0.24s, opacity 0.24s, text-shadow 0.24s; font-weight: 500; opacity: 0.7;
     color: var(--color-text-secondary); pointer-events: auto;
 }
-.mk-arc-tab { font-size: 11.5px; }
-.mk-arc-sec { font-size: 11px; }
-.mk-arc-tab.active { font-weight: 700; font-size: 14px; opacity: 1; color: var(--color-progress); }
-.mk-arc-sec.active { font-weight: 600; font-size: 12px; opacity: 1; color: var(--color-progress); }
-.mk-arc-here {
-    position: absolute; left: 50%; bottom: calc(var(--mk-nav-gap) + env(safe-area-inset-bottom));
-    transform: translateX(-50%);
-    display: flex; flex-direction: column; align-items: center; gap: 7px; color: var(--color-progress);
-    filter: drop-shadow(0 0 8px rgba(90,159,212,0.55)); pointer-events: none;
+.mk-arc-tab { font-size: 12px; }
+.mk-arc-sec { font-size: 10.5px; }
+/* Active slot glows at the apex. */
+.mk-arc-tab.active {
+    font-weight: 700; opacity: 1; color: var(--color-progress);
+    text-shadow: 0 0 12px rgba(90,159,212,0.65), 0 0 26px rgba(90,159,212,0.35);
 }
-.mk-arc-here-dash { width: 26px; height: 2px; border-radius: 99px; background: var(--color-progress); box-shadow: 0 0 9px var(--color-progress); }
-.mk-arc-here-icon { display: none; }
-.mk-arc-here-icon.active { display: block; }
+.mk-arc-sec.active {
+    font-weight: 600; opacity: 1; color: var(--color-progress);
+    text-shadow: 0 0 10px rgba(90,159,212,0.5);
+}
 
 /* ════════════════ 3. PLUME — 84px ════════════════ */
 .mk-plume { height: 84px; flex-direction: column; }
@@ -14229,16 +14229,10 @@
     border: 1px solid var(--card-hairline); background: rgba(34,36,42,0.9);
     -webkit-backdrop-filter: blur(18px) saturate(140%); backdrop-filter: blur(18px) saturate(140%);
     box-shadow: var(--mk-nav-float);
-    position: fixed; transition: height 320ms cubic-bezier(.2,.8,.2,1);
+    transition: height 320ms cubic-bezier(.2,.8,.2,1);
 }
-.mk-ledger-toggle {
-    position: absolute; top: 3px; right: 5px; width: 24px; height: 22px; display: flex;
-    align-items: center; justify-content: center; border: none; background: transparent; cursor: pointer;
-    color: var(--color-text-secondary); opacity: 0.55; z-index: 2; padding: 0;
-    transition: transform 0.24s cubic-bezier(.2,.8,.2,1), opacity 0.18s;
-}
-.mk-ledger-toggle:hover { opacity: 0.9; }
 .mk-ledger-band {
+    position: relative;
     overflow: hidden; border-radius: 14px;
     transition: height 320ms cubic-bezier(.2,.8,.2,1), background 0.2s ease, opacity 0.22s ease, padding 320ms cubic-bezier(.2,.8,.2,1);
     height: 25px; background: transparent; padding: 5px 8px; box-sizing: border-box; display: flex;
@@ -14256,6 +14250,18 @@
     background: rgba(255,255,255,0.16);
 }
 .mk-ledger-band.active .mk-ledger-dot { background: var(--color-progress); box-shadow: 0 0 7px var(--color-progress); }
+/* The chevron belongs to the band, not the outer shell, so the two stay
+   concentric — it used to hang off the shell and skew the collapsed look. */
+.mk-ledger-toggle {
+    display: none;
+    position: absolute; top: 4px; right: 5px;
+    width: 20px; height: 16px; align-items: center; justify-content: center;
+    border: none; background: transparent; cursor: pointer; padding: 0;
+    color: var(--color-text-secondary); opacity: 0.55; z-index: 2;
+    transition: transform 0.24s cubic-bezier(.2,.8,.2,1), opacity 0.18s;
+}
+.mk-ledger-band.active .mk-ledger-toggle { display: flex; }
+.mk-ledger-toggle:hover { opacity: 0.9; }
 .mk-ledger-subs {
     display: flex; gap: 2px; overflow: hidden; flex: none;
     transition: opacity 0.22s ease, height 320ms ease, margin-top 320ms ease;
@@ -14268,60 +14274,126 @@
     transition: color 0.18s, background 0.18s; font-weight: 500; background: var(--recessed-bg-2); color: var(--color-text-secondary);
 }
 .mk-ledger-sub.active { font-weight: 600; background: var(--recessed-bg-4); color: var(--color-progress); }
-/* Collapsed: only the active band stays, so it stops eating the screen. */
 body.mk-ledger-collapsed .mk-ledger { height: 64px; }
 body.mk-ledger-collapsed .mk-ledger-toggle { transform: rotate(180deg); }
 body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
     height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; pointer-events: none;
 }
 
-/* ════════════════ 5. SPINE — 52px ════════════════ */
+/* ════════════════ 5. SPINE — 45px, shrinks to fit its section names ════════════════ */
 .mk-spine {
-    height: 52px; align-items: center; gap: 5px; padding: 8px 9px; border-radius: 22px;
+    height: 45px; align-items: center; gap: 4px; padding: 7px 8px; border-radius: 19px;
     border: 1px solid var(--card-hairline); background: rgba(34,36,42,0.9);
     -webkit-backdrop-filter: blur(18px) saturate(140%); backdrop-filter: blur(18px) saturate(140%);
     box-shadow: var(--mk-nav-float);
 }
 .mk-spine-tab {
-    display: flex; align-items: center; justify-content: center; gap: 6px; flex: none;
-    width: 30px; height: 30px; padding: 0; border: 1px solid var(--card-hairline); border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; gap: 5px; flex: none;
+    width: 28px; height: 28px; padding: 0; border: 1px solid var(--card-hairline); border-radius: 50%;
     background: var(--recessed-bg-2); color: var(--color-text-secondary); cursor: pointer;
     transition: background 0.15s, color 0.15s;
 }
-.mk-spine-tab svg { width: 16px; height: 16px; flex: none; }
+.mk-spine-tab svg { width: 15px; height: 15px; flex: none; }
 /* Fixed width so the sections beside it never shift as the tab name changes. */
 .mk-spine-tab.active {
-    width: 98px; height: 34px; padding: 0 9px 0 8px; border: none; border-radius: 999px;
+    width: 92px; height: 31px; padding: 0 8px 0 7px; border: none; border-radius: 999px;
     background: rgba(90,159,212,0.16); color: var(--color-progress); cursor: default;
     justify-content: flex-start;
 }
 .mk-spine-tab-name {
-    display: none; font: 600 12.5px Inter, sans-serif; letter-spacing: -0.015em; white-space: nowrap;
-    overflow: hidden; text-overflow: ellipsis;
+    display: none; font: 600 11.5px Inter, sans-serif; letter-spacing: -0.015em; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; min-width: 0;
 }
-.mk-spine-tab.active .mk-spine-tab-name { display: inline; }
+.mk-spine-tab.active .mk-spine-tab-name { display: block; }
 .mk-spine-subwrap {
-    display: none; align-items: center; gap: 3px; flex: 0; min-width: 0; width: 0; overflow-x: hidden;
-    -webkit-overflow-scrolling: touch; mask-image: linear-gradient(90deg, #000 88%, transparent 100%);
+    display: none; align-items: center; gap: 3px; flex: 0; min-width: 0; width: 0; overflow: hidden;
 }
-.mk-spine-subwrap.active { display: flex; flex: 1; width: auto; overflow-x: auto; scrollbar-width: none; }
-.mk-spine-subwrap::-webkit-scrollbar { height: 0; }
-.mk-spine-divider { width: 1px; height: 18px; background: var(--card-hairline); margin: 0 3px 0 0; flex: none; }
+.mk-spine-subwrap.active { display: flex; flex: 1; width: auto; }
+.mk-spine-divider { width: 1px; height: 16px; background: var(--card-hairline); margin: 0 2px 0 0; flex: none; }
 .mk-spine-sub {
-    flex: none; padding: 6px 9px; border: none; border-radius: 9px; cursor: pointer; font-family: Inter, sans-serif;
-    font-size: 11.5px; letter-spacing: -0.01em; white-space: nowrap; transition: color 0.18s, background 0.18s;
+    flex: none; padding: 5px 8px; border: none; border-radius: 9px; cursor: pointer; font-family: Inter, sans-serif;
+    font-size: 11px; letter-spacing: -0.01em; white-space: nowrap; transition: color 0.18s, background 0.18s;
     font-weight: 500; background: transparent; color: var(--color-text-secondary);
 }
 .mk-spine-sub.active { font-weight: 600; background: var(--recessed-bg-4); color: var(--color-progress); }
+/* Compaction tiers, applied by fitSpine() until all three names fit. */
+.mk-spine.mk-spine-c1 .mk-spine-sub { padding: 5px 6px; font-size: 10.5px; }
+.mk-spine.mk-spine-c1 { gap: 3px; }
+.mk-spine.mk-spine-c2 .mk-spine-sub { padding: 4px 5px; font-size: 10px; }
+.mk-spine.mk-spine-c2 .mk-spine-tab { width: 26px; height: 26px; }
+.mk-spine.mk-spine-c2 .mk-spine-tab.active { width: 84px; }
+.mk-spine.mk-spine-c2 { gap: 3px; padding: 7px 7px; }
+/* Last resort: the page strip already names the active tab, so drop its
+   label here rather than clip the section names. */
+.mk-spine.mk-spine-c3 .mk-spine-sub { padding: 4px 5px; font-size: 10px; }
+.mk-spine.mk-spine-c3 .mk-spine-tab { width: 26px; height: 26px; }
+.mk-spine.mk-spine-c3 .mk-spine-tab.active { width: 30px; height: 30px; padding: 0; border-radius: 50%; justify-content: center; }
+.mk-spine.mk-spine-c3 .mk-spine-tab-name { display: none; }
+.mk-spine.mk-spine-c3 { gap: 3px; padding: 7px 7px; }
 
-/* ════════════════ Settings › Theme card — navigation picker ════════════════ */
+/* ════════════════ Settings › Theme card — navigation previews ════════════════ */
 .mk-nav-select-row { display: none; margin-top: 14px; }
 .mk-nav-select-label {
     display: block; font: 700 9.5px Inter, sans-serif; letter-spacing: 0.16em; text-transform: uppercase;
-    color: var(--color-text-secondary); margin-bottom: 7px;
+    color: var(--color-text-secondary); margin-bottom: 9px;
 }
-.mk-nav-select { width: 100%; }
-.mk-nav-select-hint { font: 500 11px Inter, sans-serif; color: var(--color-text-secondary); margin: 7px 0 0; }
+.mk-nav-select-hint { font: 500 11px Inter, sans-serif; color: var(--color-text-secondary); margin: 9px 0 0; }
+.mk-nav-cards { display: flex; flex-direction: column; gap: 7px; }
+.mk-nav-card {
+    display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 9px 11px;
+    border-radius: 12px; cursor: pointer; font-family: inherit; color: var(--color-text-primary);
+    border: 1px solid var(--card-hairline); background: var(--recessed-bg-2);
+    transition: background 0.18s, border-color 0.18s;
+}
+.mk-nav-card.active { border-color: rgba(90,159,212,0.45); background: rgba(90,159,212,0.1); }
+.mk-nav-card-text { flex: 1; min-width: 0; }
+.mk-nav-card-name { display: block; font: 600 13px Inter, sans-serif; letter-spacing: -0.01em; }
+.mk-nav-card-desc { display: block; font: 500 11px Inter, sans-serif; color: var(--color-text-secondary); margin-top: 2px; }
+
+/* Miniature of each nav style, drawn in CSS. */
+.mkp {
+    position: relative; flex: none; width: 62px; height: 40px; border-radius: 8px;
+    background: rgba(20,21,25,0.85); border: 1px solid var(--card-hairline);
+    overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end;
+    padding: 4px; gap: 3px; box-sizing: border-box;
+}
+.mk-nav-card.active .mkp { border-color: rgba(90,159,212,0.35); }
+.mkp i, .mkp b, .mkp em { display: block; background: rgba(255,255,255,0.28); border-radius: 999px; }
+.mkp .on { background: var(--color-progress); box-shadow: 0 0 5px var(--color-progress); }
+.mkp-row { display: flex; align-items: center; justify-content: space-between; gap: 3px; }
+.mkp-row i { height: 2.5px; flex: 1; }
+.mkp-rule { height: 1px; background: rgba(255,255,255,0.12); }
+.mkp-dots b { width: 5px; height: 5px; border-radius: 50%; flex: none; }
+.mkp-dots { justify-content: space-around; }
+/* Arc: two nested arcs plus three slot marks */
+.mkp-arc { justify-content: flex-end; padding: 0; }
+.mkp-arc-o, .mkp-arc-i { position: absolute; left: 50%; border-radius: 50%; border: 1px solid rgba(255,255,255,0.16); }
+.mkp-arc-o { width: 96px; height: 96px; margin-left: -48px; bottom: -62px; }
+.mkp-arc-i { width: 74px; height: 74px; margin-left: -37px; bottom: -50px; background: rgba(255,255,255,0.05); }
+.mkp-arc-lbl { position: absolute; width: 9px; height: 2.5px; border-radius: 999px; background: rgba(255,255,255,0.32); }
+.mkp-arc-lbl.l { left: 5px; bottom: 12px; }
+.mkp-arc-lbl.r { right: 5px; bottom: 12px; }
+.mkp-arc-lbl.c { left: 50%; margin-left: -6px; bottom: 19px; width: 12px; background: var(--color-progress); box-shadow: 0 0 5px var(--color-progress); }
+/* Plume: pill on a stem above the bar */
+.mkp-plume { justify-content: flex-end; }
+.mkp-pill { display: flex; gap: 2px; align-items: center; padding: 2px; border-radius: 4px;
+    background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.1); width: 36px; margin: 0 auto; box-sizing: border-box; }
+.mkp-pill i { height: 2.5px; flex: 1; }
+.mkp-stem { width: 1px; height: 4px; background: rgba(90,159,212,0.6); margin: 0 auto; }
+.mkp-bar { display: flex; justify-content: space-around; align-items: center; padding: 3px 2px; border-radius: 5px;
+    background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.1); }
+.mkp-bar b { width: 4px; height: 4px; border-radius: 50%; }
+/* Ledger: stacked bands, one open */
+.mkp-ledger { justify-content: center; gap: 2.5px; }
+.mkp-band { height: 4px; border-radius: 2px; background: rgba(255,255,255,0.14); }
+.mkp-band.on { height: 15px; background: rgba(90,159,212,0.16); border: 1px solid rgba(90,159,212,0.35);
+    display: flex; align-items: flex-end; gap: 2px; padding: 2px; box-sizing: border-box; }
+.mkp-band.on em { flex: 1; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.3); }
+/* Spine: one row of dots plus a cap and two segments */
+.mkp-spine { flex-direction: row; align-items: center; justify-content: center; gap: 2.5px; padding: 4px 5px; }
+.mkp-dot { width: 5px; height: 5px; border-radius: 50%; background: rgba(255,255,255,0.28); flex: none; }
+.mkp-cap { width: 15px; height: 7px; border-radius: 999px; background: var(--color-progress); box-shadow: 0 0 5px var(--color-progress); flex: none; }
+.mkp-seg { width: 8px; height: 3px; border-radius: 999px; background: rgba(255,255,255,0.28); flex: none; }
 
 /* ════════════════ Grit sheet — reuses the app's .pl-modal component ════════════════ */
 .mk-kicker { font: 700 9.5px Inter, sans-serif; letter-spacing: 0.16em; text-transform: uppercase; color: var(--color-text-secondary); margin-bottom: 9px; }
@@ -14347,22 +14419,27 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 
 /* ════════════════ Mobile activation (matches the app's existing 768px breakpoint) ════════════════ */
 @media (max-width: 768px) {
-    /* The old flat tab bar is replaced by the v5 bottom nav. */
     .nav-tabs {
         width: 0 !important; height: 0 !important; padding: 0 !important; margin: 0 !important;
         overflow: hidden !important; opacity: 0 !important; pointer-events: none !important;
     }
-    /* The bottom nav already carries these sections, and the page strip
-       already carries the title — so the in-page copies are redundant.
+    /* The bottom nav already carries these sections.
        (#challengesSubTabs stays: Group Challenge has no other route in.) */
     #activitiesSubTabs { display: none; }
-    .an-page-title, .st-page-title { display: none; }
+    /* Every page's own title is rendered by the nav as .mk-page-heading, so the
+       hand-written ones would double up. ".tt-web-head h2" is the tech-tree's
+       "Your web" — the nav calls that page Map. */
+    .an-page-title, .st-page-title, .tt-web-head h2 { display: none; }
     .an-page-header { justify-content: flex-end; }
 
     .mk-page-strip { display: flex; }
+    .mk-page-heading { display: block; }
     .mk-nav-select-row { display: block; }
 
-    /* Header reads as the layer above the strip. */
+    /* The 16px page-slide used to poke 4px past the viewport, flashing a
+       scrollbar — that is the "zoom" wobble on page change. */
+    .main-content { overflow-x: clip; }
+
     .sticky-header .header-content {
         position: relative; z-index: 2;
         box-shadow: 0 1px 0 rgba(255,255,255,0.05), 0 5px 14px rgba(0,0,0,0.42);
@@ -14371,8 +14448,6 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
         box-shadow: 0 1px 0 rgba(255,255,255,0.6), 0 5px 14px rgba(15,17,21,0.10);
     }
 
-    /* Tall enough that the gradient's soft end reads *above* the bar, which is
-       what separates the nav from the cards scrolling under it. */
     .mk-nav-shield { display: block; height: 200px; }
     .mk-bottom-nav { display: none; }
     #mkNavPlate { display: flex; }
@@ -14382,17 +14457,15 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
     body.mk-nav-ledger #mkNavPlate { display: none; }  body.mk-nav-ledger #mkNavLedger { display: flex; }
     body.mk-nav-spine  #mkNavPlate { display: none; }  body.mk-nav-spine  #mkNavSpine  { display: flex; }
 
-    /* Arc paints its own fade over the whole band, so the shared scrim is off. */
     body.mk-nav-arc    .mk-nav-shield { display: none; }
     body.mk-nav-plume  .mk-nav-shield { height: 180px; }
     body.mk-nav-ledger .mk-nav-shield { height: 246px; }
     body.mk-nav-spine  .mk-nav-shield { height: 150px; }
     body.mk-nav-ledger.mk-ledger-collapsed .mk-nav-shield { height: 162px; }
 
-    /* Content clearance = nav height + gap + breathing room. Constant per style. */
     .main-content                    { padding-bottom: calc(148px + env(safe-area-inset-bottom)) !important; }
-    body.mk-nav-arc    .main-content { padding-bottom: calc(224px + env(safe-area-inset-bottom)) !important; }
+    body.mk-nav-arc    .main-content { padding-bottom: calc(clamp(104px, 15vh, 132px) + 26px + env(safe-area-inset-bottom)) !important; }
     body.mk-nav-plume  .main-content { padding-bottom: calc(128px + env(safe-area-inset-bottom)) !important; }
     body.mk-nav-ledger .main-content { padding-bottom: calc(194px + env(safe-area-inset-bottom)) !important; }
-    body.mk-nav-spine  .main-content { padding-bottom: calc(96px + env(safe-area-inset-bottom)) !important; }
+    body.mk-nav-spine  .main-content { padding-bottom: calc(90px + env(safe-area-inset-bottom)) !important; }
 }
