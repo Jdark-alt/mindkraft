@@ -602,6 +602,7 @@
                  suppressed on Challenges, which keeps its own sub-tab row. ══ -->
             <div class="mk-page-heading" id="mkPageHeading">
                 <h1 class="mk-page-heading-title" id="mkPageHeadingTitle">My Activities</h1>
+                <span class="mk-page-actions-lead" id="mkPageActionsLead"></span>
                 <span class="mk-page-actions" id="mkPageActions"></span>
             </div>
 
@@ -2990,17 +2991,22 @@
                 { label: 'Challenges',  kind: 'legacy',    tab: 'challenges', noTitle: true }
             ] },
             { key: 'pursuits', name: 'Pursuits', subs: [
-                { label: 'Quests',     kind: 'legacy', tab: 'projects', action: '#projectsListView .pr-toolbar .act-tb-btn' },
+                { label: 'Quests',     kind: 'legacy', tab: 'projects', action: {
+                    lead:  '#projectsListView .pr-toolbar .act-tb-btn',
+                    trail: '#projectsListView .pr-toolbar .act-tb-add-main' } },
                 { label: 'Modes',      kind: 'empty',  el: 'mkEmptyPursuitsModes' },
                 { label: 'Narratives', kind: 'empty',  el: 'mkEmptyPursuitsNarratives' }
             ] },
             { key: 'activities', name: 'Activities', subs: [
                 { label: 'My Activities', kind: 'legacySub', tab: 'activities', sub: 'myActivities' },
-                { label: 'Categories',    kind: 'legacySub', tab: 'activities', sub: 'categories', action: '.cat-page-header .cat-info-btn' },
+                { label: 'Categories',    kind: 'legacySub', tab: 'activities', sub: 'categories', action: {
+                    lead:  '.cat-page-header .cat-info-btn',
+                    trail: ['#activitiesSubCategories .cat-toolbar .act-tb-btn',
+                            '#activitiesSubCategories .cat-toolbar .act-tb-add-main'] } },
                 { label: 'Map',           kind: 'legacySub', tab: 'activities', sub: 'techTree' }
             ] },
             { key: 'more', name: 'More', subs: [
-                { label: 'Analytics', kind: 'legacy', tab: 'analytics', action: '#analyticsFilterToggle' },
+                { label: 'Analytics', kind: 'legacy', tab: 'analytics', action: { trail: '#analyticsFilterToggle' } },
                 { label: 'Rewards',   kind: 'empty',  el: 'mkEmptyMoreRewards' },
                 { label: 'Settings',  kind: 'legacy', tab: 'settings' }
             ] }
@@ -3231,25 +3237,45 @@
             fitSpine();
         }
 
-        /* A page's own control — its "i" explainer, or Analytics' Filter pill —
-           is lifted onto the title row so the two read as one line. The node is
-           moved, not cloned, so its inline handler and id keep working; we
-           remember where it came from and put it back on the way out (and
-           whenever the layout leaves the mobile breakpoint). */
-        var movedAction = null;
-        function restoreAction() {
-            if (!movedAction) return;
-            movedAction.parent.insertBefore(movedAction.node, movedAction.next);
-            movedAction = null;
+        /* A page's own controls — its "i" explainer, its search, its primary
+           Add pill, Analytics' Filter — are lifted onto the title row so the
+           page opens with one line of chrome instead of two. `lead` sits
+           straight after the title; `trail` right-aligns at the end of the
+           row. Nodes are moved, not cloned, so their inline handlers and ids
+           keep working; we remember where each came from and put it back on
+           the way out (and whenever the layout leaves the mobile breakpoint).
+           An action may be a bare selector (treated as `lead`), or
+           { lead, trail } where either side is a selector or a list of them. */
+        var movedActions = [];
+        function restoreActions() {
+            /* Reverse order: a node whose `next` sibling also moved needs that
+               sibling back in place first, or it lands in the wrong slot. */
+            for (var i = movedActions.length - 1; i >= 0; i--) {
+                var m = movedActions[i];
+                m.parent.insertBefore(m.node, m.next);
+            }
+            movedActions = [];
         }
-        function placeAction(sel) {
-            restoreAction();
-            if (!sel || !isMobile()) return;
-            var slot = $('mkPageActions');
-            var node = document.querySelector(sel);
-            if (!slot || !node) return;
-            movedAction = { node: node, parent: node.parentNode, next: node.nextSibling };
+        function liftAction(sel, slot) {
+            var node = sel && slot ? document.querySelector(sel) : null;
+            if (!node) return;
+            movedActions.push({ node: node, parent: node.parentNode, next: node.nextSibling });
             slot.appendChild(node);
+        }
+        function placeAction(action) {
+            restoreActions();
+            if (!action || !isMobile()) return;
+            var spec = typeof action === 'string' ? { lead: action } : action;
+            var lead = $('mkPageActionsLead'), trail = $('mkPageActions');
+            [].concat(spec.lead || []).forEach(function (sel) { liftAction(sel, lead); });
+            [].concat(spec.trail || []).forEach(function (sel) { liftAction(sel, trail); });
+        }
+
+        /* Drilled into a single quest, the Quests list is off screen — so the
+           toolbar we borrowed from it must not stay on the title row either. */
+        function questDetailOpen() {
+            var dv = $('projectsDetailView');
+            return !!(dv && dv.style.display !== 'none');
         }
 
         function renderPageStrip() {
@@ -3261,7 +3287,9 @@
             var title = $('mkPageHeadingTitle');
             if (title) title.textContent = entry.title || entry.label;
             if (head) head.style.display = entry.noTitle ? 'none' : '';
-            placeAction(entry.noTitle ? null : entry.action);
+            var action = entry.noTitle ? null : entry.action;
+            if (entry.tab === 'projects' && questDetailOpen()) action = null;
+            placeAction(action);
         }
 
         function renderGrit() {
@@ -3476,6 +3504,78 @@
             if (modal) modal.classList.remove('active');
         };
 
+        /* ══════════════════════════════════════════════════════════════
+           Bottom sheets — every .modal-overlay dialog docks to the bottom
+           edge on phones instead of floating in the middle of the screen
+           (the geometry is in style.css). A sheet opens at its resting
+           height, leaving the page visible above it; the first scroll inside
+           it — or a drag up on its grab handle — grows it to 75% of the
+           viewport, where it freezes and its body scrolls on under a pinned
+           header. Presentational only: the app's own open/close functions are
+           untouched, we just watch for the `active` class they toggle.
+           ══════════════════════════════════════════════════════════════ */
+        var SHEET_FULL = 'mk-sheet-full';
+
+        function expandSheet(sheet) {
+            if (isMobile()) sheet.classList.add(SHEET_FULL);
+        }
+
+        function bindSheet(overlay) {
+            var sheet = overlay.querySelector('.modal');
+            if (!sheet || sheet.mkSheetBound) return;
+            sheet.mkSheetBound = true;
+
+            /* Scroll events do not bubble, so listen in the capture phase —
+               the scrolling element is the sheet itself for most dialogs and
+               an inner pane for the few that scroll their own body. */
+            sheet.addEventListener('scroll', function (e) {
+                if (e.target && e.target.scrollTop > 4) expandSheet(sheet);
+            }, true);
+
+            /* Drag the handle: up to expand, down to settle back. Closing
+               stays with each dialog's own close button — a sheet that could
+               be flung away would take unsaved form input with it. */
+            var head = sheet.querySelector('.modal-header');
+            if (!head) return;
+            var startY = null;
+            head.addEventListener('touchstart', function (e) {
+                startY = (isMobile() && e.touches.length === 1) ? e.touches[0].clientY : null;
+            }, { passive: true });
+            head.addEventListener('touchmove', function (e) {
+                if (startY === null) return;
+                var dy = e.touches[0].clientY - startY;
+                if (dy < -22) { expandSheet(sheet); startY = null; }
+                else if (dy > 22) { sheet.classList.remove(SHEET_FULL); startY = null; }
+            }, { passive: true });
+            head.addEventListener('touchend', function () { startY = null; }, { passive: true });
+        }
+
+        /* Every open starts from the resting height with the body at the top,
+           however the dialog was left last time. */
+        function resetSheet(overlay) {
+            var sheet = overlay.querySelector('.modal');
+            if (!sheet) return;
+            sheet.classList.remove(SHEET_FULL);
+            sheet.scrollTop = 0;
+            sheet.querySelectorAll('.modal-body, .retro-picker-scroll').forEach(function (pane) {
+                pane.scrollTop = 0;
+            });
+        }
+
+        function initSheets() {
+            var overlays = document.querySelectorAll('.modal-overlay');
+            if (!overlays.length) return;
+            var watch = window.MutationObserver ? new MutationObserver(function (recs) {
+                recs.forEach(function (r) {
+                    if (r.target.classList.contains('active')) resetSheet(r.target);
+                });
+            }) : null;
+            overlays.forEach(function (overlay) {
+                bindSheet(overlay);
+                if (watch) watch.observe(overlay, { attributes: true, attributeFilter: ['class'] });
+            });
+        }
+
         function boot() {
             document.body.classList.add('mk-nav-' + state.navStyle);
             renderPageStrip();
@@ -3484,6 +3584,14 @@
             renderThemeCard();
             initSwipe();
             initArcDials();
+            initSheets();
+            /* Opening or closing a quest flips the detail view's display, which
+               decides whether the Quests toolbar belongs on the title row. */
+            var dv = $('projectsDetailView');
+            if (dv && window.MutationObserver) {
+                new MutationObserver(function () { renderPageStrip(); })
+                    .observe(dv, { attributes: true, attributeFilter: ['style'] });
+            }
             // Touching the ledger keeps it open; the idle timer starts on load.
             var ledger = $('mkNavLedger');
             if (ledger) ledger.addEventListener('pointerdown', function () {

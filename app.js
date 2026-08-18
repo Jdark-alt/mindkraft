@@ -16573,7 +16573,6 @@
                 var goals = (tt.goals || []).filter(function(g) { return !g.retiredAt; });
                 var rows = (goals.length ? goals.map(function(g, i) { return ttGoalRowHtml(g.rawText, i); }) : [ttGoalRowHtml('', 0)]).join('');
                 container.innerHTML = '<div class="tt-intro">'
-                    + '<h2 class="tt-intro-title">Your web</h2>'
                     + '<p class="tt-intro-sub">Name what you\'re working toward. Your real activities become the anchors; the AI weaves upgrades, quests, fusions and a wildcard or two out of them. Goals run through it all as coloured threads.</p>'
                     + (tt.lastError ? '<div class="tt-error">' + escapeHtml(tt.lastError) + ' <button class="tt-inline-btn" onclick="ttRetryGenerate()">Retry</button></div>' : '')
                     + '<div id="ttGoalFields" class="tt-goal-fields">' + rows + '</div>'
@@ -16606,8 +16605,9 @@
             }
             var activeGoals = ttActiveGoals();
             var html = '<div class="tt-web' + (reveal ? ' tt-reveal' : '') + '">'
+                // No heading here: the page is called Map and its title already
+                // says so, so a second "Your web" title only doubled up.
                 + '<div class="tt-web-head">'
-                + '<h2>Your web</h2>'
                 + '<div class="tt-head-chips">'
                 + '<button class="tt-chip-btn" onclick="ttAddGoal()">＋ Goal</button>'
                 + '<button class="tt-chip-btn" onclick="ttRebuildMap()">⟳ Rebuild</button>'
@@ -17938,18 +17938,37 @@
             renderProjects();
         };
 
+        // One row per group on the quest card. A sequence is drawn as a path —
+        // dots strung along a rail with the live step lit — because order is the
+        // whole point of it. A list has no order, and dots bunched at the left
+        // end of that same rail read as a sequence someone abandoned early, so
+        // it gets its own primitive: one segment per item, spread across the
+        // full row, each lighting up as it is ticked off, with the tally beside
+        // them. Same slot, same width, no implied direction.
         function renderThreadRow(g) {
-            var cur = currentIndex(g);
+            var kids = g.children || [];
             var rep = (g.repeat || 1) > 1;
-            var dots = (g.children || []).map(function(c, idx) {
-                var cls = nodeDone(c) ? 'pr-tdot-done' : (g.ordered && idx === cur ? 'pr-tdot-cur' : '');
-                return '<span class="pr-tdot ' + cls + '"></span>';
-            }).join('');
+            var done = kids.filter(nodeDone).length;
+            var line;
+            if (g.ordered) {
+                var cur = currentIndex(g);
+                var dots = kids.map(function(c, idx) {
+                    var cls = nodeDone(c) ? 'pr-tdot-done' : (idx === cur ? 'pr-tdot-cur' : '');
+                    return '<span class="pr-tdot ' + cls + '"></span>';
+                }).join('');
+                line = '<span class="pr-thread-rail"></span><div class="pr-thread-dots">' + dots + '</div>';
+            } else {
+                var segs = kids.map(function(c) {
+                    return '<span class="pr-tseg' + (nodeDone(c) ? ' pr-tseg-done' : '') + '"></span>';
+                }).join('');
+                line = '<div class="pr-thread-segs">' + segs + '</div>' +
+                    '<span class="pr-thread-frac">' + done + '/' + kids.length + '</span>';
+            }
             var tagCls = rep ? 'pr-tag-rep' : (g.ordered ? 'pr-tag-ord' : 'pr-tag-un');
             var tagText = rep ? ('×' + g.repeat) : (g.ordered ? 'sequence' : 'list');
             return '<div class="pr-thread' + (g.ordered ? ' pr-thread-ordered' : ' pr-thread-un') + '">' +
                 '<span class="pr-thread-name">' + escapeHtml(g.name || 'Group') + '</span>' +
-                '<div class="pr-thread-line"><span class="pr-thread-rail"></span><div class="pr-thread-dots">' + dots + '</div></div>' +
+                '<div class="pr-thread-line">' + line + '</div>' +
                 '<span class="pr-thread-tag ' + tagCls + '">' + tagText + '</span>' +
             '</div>';
         }
@@ -18054,12 +18073,14 @@
             var dim = p.dimensionId ? (window.userData.dimensions || []).find(function(d) { return d.id === p.dimensionId; }) : null;
             var dimHex = dim ? DIM_HEX_MAP[dim.color] : null;
 
+            // No back row: it repeated the page title one line under it, and the
+            // Quests tab and the system back gesture both already return to the
+            // list. Edit rides in the hero card's own top-right corner instead
+            // of floating above it.
             var header =
-                '<button class="pr-back" onclick="closeProjectDetail()">' +
-                    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>Quests</button>' +
-                '<button class="pr-icon-btn pr-detail-edit" onclick="openProjectModal(\'' + p.id + '\')" aria-label="Edit quest"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>' +
                 '<div class="pr-detail-head' + (sealed ? ' pr-detail-sealed' : '') + '">' +
                     '<span class="pr-strip" style="' + projectStripStyle(p) + '"></span>' +
+                    '<button class="pr-icon-btn pr-detail-edit" onclick="openProjectModal(\'' + p.id + '\')" aria-label="Edit quest"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>' +
                     '<div class="pr-detail-top">' +
                         '<span class="pr-detail-emoji">' + (p.emoji || DEFAULT_QUEST_EMOJI) + '</span>' +
                         '<div class="pr-detail-titles">' +

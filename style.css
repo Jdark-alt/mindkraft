@@ -10029,6 +10029,14 @@
     background: linear-gradient(135deg, rgba(107,124,63,0.06) 0%, rgba(74,124,158,0.04) 100%);
     border-color: rgba(107,124,63,0.16);
 }
+/* The tiers are indented to show nesting, but they are block-level and were
+   also width:100%, so each indent pushed that tier past the card's right edge
+   — the Activity row by the full 44px. Auto width makes the indent eat into
+   the tier instead of hanging off it, and the indents are tightened for the
+   narrower modal. */
+.cat-info-graphic .ob-mock-tier { width: auto; }
+.cat-info-graphic .ob-mock-tier-path { margin-left: 16px; }
+.cat-info-graphic .ob-mock-tier-act { margin-left: 32px; }
 
 .cat-info-row {
     display: flex;
@@ -13242,19 +13250,35 @@
 .pr-thread-rail { position: absolute; left: 5px; right: 5px; height: 2px; background: var(--recessed-bg-4); border-radius: 2px; }
 .pr-thread-ordered .pr-thread-rail { background: rgba(90,159,212,0.25); }
 .pr-thread-dots { position: relative; width: 100%; display: flex; justify-content: space-between; align-items: center; }
-.pr-thread-un .pr-thread-dots { justify-content: flex-start; gap: 8px; }
 .pr-tdot { width: 10px; height: 10px; border-radius: 50%; box-sizing: border-box; border: 1.5px solid var(--recessed-ring); background: var(--surface-card); flex-shrink: 0; }
 .pr-tdot-done { background: var(--chip-xp-fg); border-color: var(--chip-xp-fg); }
 .pr-tdot-cur { background: var(--color-progress); border-color: var(--color-progress); box-shadow: 0 0 7px rgba(90,159,212,0.7); }
+
+/* ── list groups: segments, not dots on a rail ──────────────────────────
+   A rail says "this runs left to right", which is exactly what an unordered
+   list does not. So a list gets one segment per item instead, spread across
+   the same row and filling in as items are ticked — a tally you can read at a
+   glance, with a fraction beside it and no direction implied. */
+.pr-thread-segs { display: flex; align-items: center; gap: 3px; flex: 1; min-width: 0; }
+.pr-tseg {
+    flex: 1 1 0; min-width: 3px; height: 7px; border-radius: 3px;
+    background: var(--recessed-bg-4);
+    box-shadow: inset 0 0 0 1px var(--recessed-ring);
+    transition: background 0.25s ease, box-shadow 0.25s ease;
+}
+.pr-tseg-done { background: var(--chip-xp-fg); box-shadow: 0 0 6px rgba(74,222,128,0.28); }
+[data-theme-mode="light"] .pr-tseg-done { box-shadow: 0 0 5px rgba(21,128,61,0.22); }
+.pr-thread-frac { flex: none; margin-left: 8px; font-size: 10px; font-weight: 700; color: var(--color-text-secondary); font-variant-numeric: tabular-nums; opacity: 0.75; }
 .pr-thread-tag { font-size: 8.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 6px; border-radius: 999px; flex-shrink: 0; }
 .pr-tag-ord { color: var(--color-progress); background: rgba(90,159,212,0.14); }
 .pr-tag-un { color: var(--color-text-secondary); background: var(--recessed-bg-4); }
 .pr-tag-rep { color: #f5c563; background: rgba(245,197,99,0.13); }
 
 /* ── detail header ──────────────────────────────────────────────────────── */
-.pr-back { display: inline-flex; align-items: center; gap: 6px; background: none; border: none; color: var(--color-text-primary); font-family: inherit; font-size: 15px; font-weight: 700; letter-spacing: -0.01em; cursor: pointer; padding: 4px 2px; margin-bottom: 10px; }
-.pr-back svg { width: 15px; height: 15px; opacity: 0.85; }
-.pr-detail-edit { float: right; margin-top: -4px; }
+/* Edit lives in the hero card's own top-right corner. The name row keeps
+   clear of it so a long quest name never runs underneath. */
+.pr-detail-edit { position: absolute; top: 10px; right: 10px; z-index: 2; }
+.pr-detail-head .pr-detail-name-row { padding-right: 34px; }
 .pr-detail-head { position: relative; background: var(--surface-card); border: 1px solid var(--card-hairline); border-radius: 15px; padding: 16px 16px 15px 19px; margin-bottom: 14px; overflow: hidden; box-shadow: 0 1px 0 rgba(255,255,255,0.075) inset, 0 -1px 0 rgba(0,0,0,0.35) inset, 0 1px 2px rgba(0,0,0,0.5), 0 4px 12px rgba(0,0,0,0.34); clear: both; }
 .pr-detail-sealed { box-shadow: 0 0 0 1px rgba(245,197,99,0.16), 0 1px 2px rgba(0,0,0,0.5), 0 4px 12px rgba(0,0,0,0.34); }
 [data-theme-mode="light"] .pr-detail-head { border-color: var(--color-border); box-shadow: var(--shadow-card); }
@@ -13557,7 +13581,6 @@
    ═══════════════════════════════════════════════════════════════════════ */
 .tt-web{display:flex;flex-direction:column;gap:10px;}
 .tt-web-head{display:flex;align-items:center;gap:10px;}
-.tt-web-head h2{flex:1;min-width:0;font-size:18px;font-weight:800;letter-spacing:-0.025em;color:#f0f0f0;margin:0;}
 .tt-head-chips{display:flex;gap:6px;flex-shrink:0;}
 .tt-chip-btn{font-family:inherit;font-size:11.5px;font-weight:700;color:#c8c8c8;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:16px;padding:6px 11px;cursor:pointer;white-space:nowrap;}
 .tt-chip-btn:active{background:rgba(255,255,255,0.09);}
@@ -13599,7 +13622,6 @@
 
 /* Intro / gate screen */
 .tt-intro{padding:6px 2px;}
-.tt-intro-title{font-size:22px;font-weight:800;letter-spacing:-0.03em;color:#f0f0f0;}
 .tt-intro-sub{font-size:12.5px;color:#9a9a9a;line-height:1.55;margin-top:8px;margin-bottom:14px;}
 .tt-goal-fields{display:flex;flex-direction:column;gap:8px;}
 .tt-goal-row{display:flex;align-items:center;gap:8px;}
@@ -14050,8 +14072,10 @@
 .mk-grit-val { font: 700 12.5px Inter, sans-serif; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
 
 /* ── Per-page title, under the strip. The row also hosts the page's own
-   control (its "i" explainer, or Analytics' Filter pill), moved here by
-   placeAction() so title and control share one line. ── */
+   controls, moved here by placeAction() so the page opens with one line of
+   chrome: the "i" explainer sits straight after the title, and the page's
+   working controls (search, the primary Add pill, Analytics' Filter) collect
+   at the right-hand end. ── */
 .mk-page-heading {
     display: none;
     align-items: center;
@@ -14059,22 +14083,27 @@
     margin: 2px 0 14px;
 }
 .mk-page-heading-title {
-    flex: 1; min-width: 0;
+    flex: 0 1 auto; min-width: 0;
     font: 700 22px Inter, sans-serif;
     letter-spacing: -0.03em;
     color: var(--color-text-primary);
     margin: 0;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.mk-page-actions { flex: none; display: flex; align-items: center; gap: 8px; }
-.mk-page-actions:empty { display: none; }
-/* The borrowed control keeps its own styling; only its margins are reset so
-   it sits on the title's baseline row. */
-.mk-page-actions > * { margin: 0 !important; }
+.mk-page-actions-lead { flex: none; display: flex; align-items: center; gap: 6px; margin-left: -4px; }
+.mk-page-actions { flex: none; display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.mk-page-actions-lead:empty, .mk-page-actions:empty { display: none; }
+/* Borrowed controls keep their own styling; only their margins are reset so
+   they sit on the title's baseline row. */
+.mk-page-actions-lead > *, .mk-page-actions > * { margin: 0 !important; }
+/* The Add pill is the widest thing on the row, so it is tightened here; the
+   title truncates before it does, since a clipped button label is worse than
+   a clipped page name. */
+.mk-page-actions .act-tb-add-main { padding: 0 11px 0 9px; }
 
-/* "Your web" is what the tech tree calls itself; the app calls that page Map,
-   and the page title already says so. Hidden everywhere, not just on mobile. */
-.tt-web-head h2 { display: none; }
+/* "Your web" is what the tech tree used to call itself; the app calls that
+   page Map, and the page title already says so, so the heading is gone from
+   the markup. The chips it shared a row with right-align in the space. */
 .tt-web-head { justify-content: flex-end; }
 
 /* ── Page-transition animation ── */
@@ -14451,12 +14480,14 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
        (#challengesSubTabs stays: Group Challenge has no other route in.) */
     #activitiesSubTabs { display: none; }
     /* Every page's own title is rendered by the nav as .mk-page-heading, so the
-       hand-written ones would double up. ".tt-web-head h2" is the tech-tree's
-       "Your web" — the nav calls that page Map. */
+       hand-written ones would double up. */
     .an-page-title, .st-page-title { display: none; }
-    /* Both of these rows are now empty — their title is hidden and their
-       control has moved up to the page title row. */
+    /* These rows are now empty — their title is hidden and their controls have
+       moved up to the page title row. The Quests and Categories toolbars go
+       with them: everything they carried is on the title line, and Categories'
+       dimension count is already implicit in the list below it. */
     .an-page-header, .cat-page-header { display: none; }
+    #projectsListView .pr-toolbar, #activitiesSubCategories .cat-toolbar { display: none; }
     .tool-cluster:empty { display: none; }
 
     .mk-page-strip { display: flex; }
@@ -14495,4 +14526,107 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
     body.mk-nav-plume  .main-content { padding-bottom: calc(128px + env(safe-area-inset-bottom)) !important; }
     body.mk-nav-ledger .main-content { padding-bottom: calc(194px + env(safe-area-inset-bottom)) !important; }
     body.mk-nav-spine  .main-content { padding-bottom: calc(90px + env(safe-area-inset-bottom)) !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   BOTTOM SHEETS — every dialog on a phone
+   A dialog floating in the middle of a phone screen hides the page it came
+   from and has no natural home for a long form. So on mobile every
+   .modal-overlay dialog docks to the bottom edge instead: full-bleed,
+   rounded only at the top, resting at a height that leaves the page in
+   view above it. Scrolling inside the sheet — or dragging its grab handle
+   up — grows it to 75% of the viewport, where it freezes and the body goes
+   on scrolling under a header that stays pinned. Sheets keep the app's own
+   markup: the header, body and footer each already exist on every dialog,
+   they are only re-anchored here. Desktop is untouched — a sheet stuck to
+   the bottom of a wide window would be worse than a centred card.
+   ═══════════════════════════════════════════════════════════════════════ */
+@keyframes mkSheetRise { from { transform: translateY(100%); } to { transform: none; } }
+
+@media (max-width: 768px) {
+    .modal-overlay {
+        align-items: flex-end;
+        justify-content: center;
+        padding: 0;
+    }
+    .modal-overlay.active > .modal { animation: mkSheetRise 0.3s cubic-bezier(.2,.8,.2,1) both; }
+
+    .modal {
+        /* Resting height, then the height it freezes at once you scroll. */
+        --sheet-rest: 62vh;
+        --sheet-full: 75vh;
+        width: 100%;
+        max-width: none;
+        max-height: var(--sheet-rest);
+        border-radius: 20px 20px 0 0;
+        border-left: none;
+        border-right: none;
+        border-bottom: none;
+        /* The sheet's own scroll must not chain into the page behind it. */
+        overscroll-behavior: contain;
+        transition: max-height 0.3s cubic-bezier(.2,.8,.2,1);
+    }
+    .modal.mk-sheet-full { max-height: var(--sheet-full); }
+    /* dvh follows the browser chrome as it collapses; the vh above is the
+       fallback for engines without it. */
+    @supports (height: 100dvh) {
+        .modal { --sheet-rest: 62dvh; --sheet-full: 75dvh; }
+    }
+    /* The two dialogs that scroll an inner pane instead of the sheet itself
+       set their own max-height, so they need the sheet's numbers restated. */
+    .modal.pr-modal, .modal.retro-picker-modal { max-height: var(--sheet-rest); }
+    .modal.pr-modal.mk-sheet-full,
+    .modal.retro-picker-modal.mk-sheet-full { max-height: var(--sheet-full); }
+
+    /* Header: pinned, and it carries the grab handle in its top padding. */
+    .modal-header {
+        position: sticky;
+        top: 0;
+        z-index: 3;
+        padding: 22px 18px 12px;
+        background: var(--color-modal-bg);
+        border-bottom: 1px solid var(--card-hairline);
+        border-radius: 20px 20px 0 0;
+    }
+    .pl-modal > .modal-header { background: var(--surface-card); }
+    [data-theme-mode="light"] .pl-modal > .modal-header { background: var(--color-bg-card); }
+    .modal-header::before {
+        content: '';
+        position: absolute;
+        top: 9px;
+        left: 50%;
+        margin-left: -19px;
+        width: 38px;
+        height: 4px;
+        border-radius: 999px;
+        background: var(--color-text-secondary);
+        opacity: 0.3;
+    }
+
+    /* Footer: the primary action stays reachable without scrolling down to
+       it. Its own fill is translucent, so it is composited over the sheet's
+       surface — left transparent, the body would scroll through it. */
+    .modal-footer {
+        position: sticky;
+        bottom: 0;
+        z-index: 3;
+        background:
+            linear-gradient(var(--color-modal-footer-bg), var(--color-modal-footer-bg)),
+            var(--color-modal-bg);
+        border-radius: 0;
+    }
+    .pl-modal .pl-modal-footer {
+        position: sticky;
+        bottom: 0;
+        z-index: 3;
+        background: var(--surface-card);
+    }
+    [data-theme-mode="light"] .pl-modal .pl-modal-footer { background: var(--color-bg-card); }
+
+    /* Whatever sits last in the sheet clears the home indicator, so the
+       primary button is never half under it. */
+    .modal-footer { padding-bottom: calc(13px + env(safe-area-inset-bottom)); }
+    .pl-modal .pl-modal-footer { padding-bottom: calc(14px + env(safe-area-inset-bottom)); }
+    .modal:not(:has(.modal-footer)) .modal-body { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+    .retro-picker-modal .retro-picker-scroll { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
 }
