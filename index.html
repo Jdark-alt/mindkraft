@@ -600,7 +600,10 @@
             <!-- ══ Per-page title (v5 nav). The strip above carries the section
                  you are in; this carries the page's own name. Mobile-only, and
                  suppressed on Challenges, which keeps its own sub-tab row. ══ -->
-            <h1 class="mk-page-heading" id="mkPageHeading">My Activities</h1>
+            <div class="mk-page-heading" id="mkPageHeading">
+                <h1 class="mk-page-heading-title" id="mkPageHeadingTitle">My Activities</h1>
+                <span class="mk-page-actions" id="mkPageActions"></span>
+            </div>
 
             <!-- Activities Tab -->
             <div id="activitiesTab" class="tab-content active">
@@ -2987,17 +2990,17 @@
                 { label: 'Challenges',  kind: 'legacy',    tab: 'challenges', noTitle: true }
             ] },
             { key: 'pursuits', name: 'Pursuits', subs: [
-                { label: 'Quests',     kind: 'legacy', tab: 'projects' },
+                { label: 'Quests',     kind: 'legacy', tab: 'projects', action: '#projectsListView .pr-toolbar .act-tb-btn' },
                 { label: 'Modes',      kind: 'empty',  el: 'mkEmptyPursuitsModes' },
                 { label: 'Narratives', kind: 'empty',  el: 'mkEmptyPursuitsNarratives' }
             ] },
             { key: 'activities', name: 'Activities', subs: [
                 { label: 'My Activities', kind: 'legacySub', tab: 'activities', sub: 'myActivities' },
-                { label: 'Categories',    kind: 'legacySub', tab: 'activities', sub: 'categories' },
+                { label: 'Categories',    kind: 'legacySub', tab: 'activities', sub: 'categories', action: '.cat-page-header .cat-info-btn' },
                 { label: 'Map',           kind: 'legacySub', tab: 'activities', sub: 'techTree' }
             ] },
             { key: 'more', name: 'More', subs: [
-                { label: 'Analytics', kind: 'legacy', tab: 'analytics' },
+                { label: 'Analytics', kind: 'legacy', tab: 'analytics', action: '#analyticsFilterToggle' },
                 { label: 'Rewards',   kind: 'empty',  el: 'mkEmptyMoreRewards' },
                 { label: 'Settings',  kind: 'legacy', tab: 'settings' }
             ] }
@@ -3022,6 +3025,7 @@
         } catch (e) {}
 
         function $(id) { return document.getElementById(id); }
+        function isMobile() { return window.matchMedia('(max-width: 768px)').matches; }
 
         /* ── Content activation: reuse the app's own switchTab/switchSubTab
            for legacy pages so gating + real renders stay intact; only the
@@ -3214,6 +3218,9 @@
             if (spineTier) nav.classList.add(spineTier);
         }
         window.addEventListener('resize', function () { spineTierKey = ''; fitSpine(); });
+        /* Crossing the breakpoint must hand any borrowed control back, or it
+           would sit inside a heading that desktop hides. */
+        window.addEventListener('resize', function () { renderPageStrip(); });
 
         function renderNav() {
             renderPlate();
@@ -3224,16 +3231,37 @@
             fitSpine();
         }
 
+        /* A page's own control — its "i" explainer, or Analytics' Filter pill —
+           is lifted onto the title row so the two read as one line. The node is
+           moved, not cloned, so its inline handler and id keep working; we
+           remember where it came from and put it back on the way out (and
+           whenever the layout leaves the mobile breakpoint). */
+        var movedAction = null;
+        function restoreAction() {
+            if (!movedAction) return;
+            movedAction.parent.insertBefore(movedAction.node, movedAction.next);
+            movedAction = null;
+        }
+        function placeAction(sel) {
+            restoreAction();
+            if (!sel || !isMobile()) return;
+            var slot = $('mkPageActions');
+            var node = document.querySelector(sel);
+            if (!slot || !node) return;
+            movedAction = { node: node, parent: node.parentNode, next: node.nextSibling };
+            slot.appendChild(node);
+        }
+
         function renderPageStrip() {
             var tab = NAV[state.t];
             var crumb = $('mkCrumb'); if (crumb) crumb.textContent = tab.name;
             /* The page's own name sits below the strip now, as a page title. */
+            var entry = tab.subs[state.s];
             var head = $('mkPageHeading');
-            if (head) {
-                var entry = tab.subs[state.s];
-                head.textContent = entry.title || entry.label;
-                head.style.display = entry.noTitle ? 'none' : '';
-            }
+            var title = $('mkPageHeadingTitle');
+            if (title) title.textContent = entry.title || entry.label;
+            if (head) head.style.display = entry.noTitle ? 'none' : '';
+            placeAction(entry.noTitle ? null : entry.action);
         }
 
         function renderGrit() {

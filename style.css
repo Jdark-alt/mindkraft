@@ -14049,14 +14049,33 @@
 }
 .mk-grit-val { font: 700 12.5px Inter, sans-serif; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
 
-/* ── Per-page title, under the strip ── */
+/* ── Per-page title, under the strip. The row also hosts the page's own
+   control (its "i" explainer, or Analytics' Filter pill), moved here by
+   placeAction() so title and control share one line. ── */
 .mk-page-heading {
     display: none;
+    align-items: center;
+    gap: 10px;
+    margin: 2px 0 14px;
+}
+.mk-page-heading-title {
+    flex: 1; min-width: 0;
     font: 700 22px Inter, sans-serif;
     letter-spacing: -0.03em;
     color: var(--color-text-primary);
-    margin: 2px 0 14px;
+    margin: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.mk-page-actions { flex: none; display: flex; align-items: center; gap: 8px; }
+.mk-page-actions:empty { display: none; }
+/* The borrowed control keeps its own styling; only its margins are reset so
+   it sits on the title's baseline row. */
+.mk-page-actions > * { margin: 0 !important; }
+
+/* "Your web" is what the tech tree calls itself; the app calls that page Map,
+   and the page title already says so. Hidden everywhere, not just on mobile. */
+.tt-web-head h2 { display: none; }
+.tt-web-head { justify-content: flex-end; }
 
 /* ── Page-transition animation ── */
 @keyframes mkNavFwd { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
@@ -14244,7 +14263,12 @@
     cursor: pointer; text-align: left; font-family: Inter, sans-serif; letter-spacing: -0.012em;
     transition: color 0.22s, font-size 0.22s; font-size: 11.5px; font-weight: 500; color: var(--color-text-secondary);
 }
-.mk-ledger-band.active .mk-ledger-name { font-size: 12.5px; font-weight: 600; color: var(--color-progress); }
+.mk-ledger-band.active .mk-ledger-name {
+    font-size: 12.5px; font-weight: 600; color: var(--color-progress);
+    /* Selected page reads as a heading for the sections beneath it. */
+    justify-content: center; width: 100%; text-align: center;
+}
+.mk-ledger-band.active .mk-ledger-dot { display: none; }
 .mk-ledger-dot {
     width: 4px; height: 4px; border-radius: 50%; flex: none; transition: background 0.22s, box-shadow 0.22s;
     background: rgba(255,255,255,0.16);
@@ -14429,11 +14453,14 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
     /* Every page's own title is rendered by the nav as .mk-page-heading, so the
        hand-written ones would double up. ".tt-web-head h2" is the tech-tree's
        "Your web" — the nav calls that page Map. */
-    .an-page-title, .st-page-title, .tt-web-head h2 { display: none; }
-    .an-page-header { justify-content: flex-end; }
+    .an-page-title, .st-page-title { display: none; }
+    /* Both of these rows are now empty — their title is hidden and their
+       control has moved up to the page title row. */
+    .an-page-header, .cat-page-header { display: none; }
+    .tool-cluster:empty { display: none; }
 
     .mk-page-strip { display: flex; }
-    .mk-page-heading { display: block; }
+    .mk-page-heading { display: flex; }
     .mk-nav-select-row { display: block; }
 
     /* The 16px page-slide used to poke 4px past the viewport, flashing a
