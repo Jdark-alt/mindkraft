@@ -597,6 +597,11 @@
 </svg><span>Settings</span></button>
             </div>
 
+            <!-- ══ Per-page title (v5 nav). The strip above carries the section
+                 you are in; this carries the page's own name. Mobile-only, and
+                 suppressed on Challenges, which keeps its own sub-tab row. ══ -->
+            <h1 class="mk-page-heading" id="mkPageHeading">My Activities</h1>
+
             <!-- Activities Tab -->
             <div id="activitiesTab" class="tab-content active">
                 <!-- Sub-tab pills -->
@@ -1231,20 +1236,45 @@
                     <!-- ══ Navigation style (v5 nav) — mobile-only; the five bottom-nav
                          styles only exist at the mobile breakpoint. ══ -->
                     <div class="mk-nav-select-row" id="mkNavSelectRow">
-                        <label class="mk-nav-select-label" for="mkNavSelect">Navigation</label>
-                        <select id="mkNavSelect" class="filter-select mk-nav-select" onchange="mkSetNavStyle(this.value)">
-                            <option value="plate">Plate — sections and tabs on one plate</option>
-                            <option value="arc">Arc — a dial of tabs you spin to the apex</option>
-                            <option value="plume">Plume — sections on a stem above their tab</option>
-                            <option value="ledger">Ledger — all four tabs lie open at once</option>
-                            <option value="spine">Spine — one line, icons plus sections</option>
-                        </select>
+                        <div class="mk-nav-select-label">Navigation</div>
+                        <div class="mk-nav-cards" id="mkNavCards" role="group" aria-label="Navigation style">
+                        <button type="button" class="mk-nav-card" data-nav="plate" onclick="mkSetNavStyle('plate')" aria-pressed="false">
+                            <span class="mkp mkp-plate"><span class="mkp-row"><i></i><i class="on"></i><i></i></span><span class="mkp-rule"></span><span class="mkp-row mkp-dots"><b></b><b class="on"></b><b></b><b></b></span></span>
+                            <span class="mk-nav-card-text">
+                                <span class="mk-nav-card-name">Plate</span>
+                                <span class="mk-nav-card-desc">Sections and tabs on one plate</span>
+                            </span>
+                        </button>
+                        <button type="button" class="mk-nav-card" data-nav="arc" onclick="mkSetNavStyle('arc')" aria-pressed="false">
+                            <span class="mkp mkp-arc"><span class="mkp-arc-o"></span><span class="mkp-arc-i"></span><span class="mkp-arc-lbl l"></span><span class="mkp-arc-lbl c on"></span><span class="mkp-arc-lbl r"></span></span>
+                            <span class="mk-nav-card-text">
+                                <span class="mk-nav-card-name">Arc</span>
+                                <span class="mk-nav-card-desc">A dial you spin to the apex</span>
+                            </span>
+                        </button>
+                        <button type="button" class="mk-nav-card" data-nav="plume" onclick="mkSetNavStyle('plume')" aria-pressed="false">
+                            <span class="mkp mkp-plume"><span class="mkp-pill"><i></i><i class="on"></i><i></i></span><span class="mkp-stem"></span><span class="mkp-bar"><b></b><b class="on"></b><b></b><b></b></span></span>
+                            <span class="mk-nav-card-text">
+                                <span class="mk-nav-card-name">Plume</span>
+                                <span class="mk-nav-card-desc">Sections on a stem above their tab</span>
+                            </span>
+                        </button>
+                        <button type="button" class="mk-nav-card" data-nav="ledger" onclick="mkSetNavStyle('ledger')" aria-pressed="false">
+                            <span class="mkp mkp-ledger"><span class="mkp-band"></span><span class="mkp-band on"><em></em><em></em><em></em></span><span class="mkp-band"></span></span>
+                            <span class="mk-nav-card-text">
+                                <span class="mk-nav-card-name">Ledger</span>
+                                <span class="mk-nav-card-desc">All four tabs lie open at once</span>
+                            </span>
+                        </button>
+                        <button type="button" class="mk-nav-card" data-nav="spine" onclick="mkSetNavStyle('spine')" aria-pressed="false">
+                            <span class="mkp mkp-spine"><span class="mkp-dot"></span><span class="mkp-dot"></span><span class="mkp-cap on"></span><span class="mkp-seg"></span><span class="mkp-seg"></span><span class="mkp-dot"></span></span>
+                            <span class="mk-nav-card-text">
+                                <span class="mk-nav-card-name">Spine</span>
+                                <span class="mk-nav-card-desc">One line: icons plus sections</span>
+                            </span>
+                        </button>
+                        </div>
                         <p class="mk-nav-select-hint">Plate is standard. Changes apply straight away.</p>
-                    </div>
-
-                    <!-- Reset button shown inline when custom theme is active -->
-                    <div id="themeResetRow" style="display:none;margin-top:10px;">
-                        <button class="btn-secondary" onclick="resetCustomTheme()" style="font-size:12px;">↺ Reset to saved</button>
                     </div>
 
                     <!-- Custom theme panel (collapsible; shown when Custom swatch active) -->
@@ -1451,224 +1481,39 @@
                 </div>
             </div>
 
-            <!-- ══════════════════════════════════════════════════════════════
-                 NAVIGATION v5 — bottom nav, five switchable styles. Only one
-                 is visible at a time (CSS, driven by body.mk-nav-<style>);
-                 default is Plate. Mobile-only (see .mk-bottom-nav CSS).
-                 ══════════════════════════════════════════════════════════════ -->
+        </div>
 
-            <!-- Swallows taps in the strip of screen the nav occupies, so a miss
-                 between nav controls can never complete an activity underneath. -->
-            <div class="mk-nav-shield" id="mkNavShield" aria-hidden="true"></div>
+        <!-- ══════════════════════════════════════════════════════════════
+             NAVIGATION v5 — bottom nav, five switchable styles. Only one
+             is visible at a time (CSS, driven by body.mk-nav-<style>);
+             default is Plate. Mobile-only (see .mk-bottom-nav CSS).
+             ══════════════════════════════════════════════════════════════ -->
 
-            <!-- ── 1. Plate (default) ── -->
-            <nav class="mk-bottom-nav mk-plate" id="mkNavPlate" aria-label="Primary">
-                <div class="mk-plate-row1">
-                    <button type="button" class="mk-plate-sec active" id="mkPlateSec0" onclick="mkGoSubAt(0)">My Activities</button>
-                    <button type="button" class="mk-plate-sec" id="mkPlateSec1" onclick="mkGoSubAt(1)">Categories</button>
-                    <button type="button" class="mk-plate-sec" id="mkPlateSec2" onclick="mkGoSubAt(2)">Map</button>
-                    <span class="mk-plate-bar" id="mkPlateBar" style="left:calc(5px + (100% - 10px) * 0.1667 - 17px);"></span>
-                </div>
-                <div class="mk-plate-divider"></div>
-                <div class="mk-plate-row2">
-                    <button type="button" class="mk-plate-tab" id="mkPlateTab0" onclick="mkGo(0)">
-                        <svg width="19" height="19" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <circle cx="9" cy="7.5" r="3.4" fill="currentColor" opacity="0.14" stroke="currentColor" stroke-width="1.7"/>
-                            <path d="M3 20v-1.6a4.6 4.6 0 0 1 4.6-4.6h2.8a4.6 4.6 0 0 1 4.6 4.6V20" fill="currentColor" opacity="0.1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
-                            <circle cx="17.6" cy="9.4" r="2.5" fill="currentColor" opacity="0.14" stroke="currentColor" stroke-width="1.4"/>
-                            <path d="M20.8 20v-1.3a3.3 3.3 0 0 0-2.7-3.24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-                        </svg>
-                        <span class="mk-plate-tab-label">Social</span>
-                    </button>
-                    <button type="button" class="mk-plate-tab" id="mkPlateTab1" onclick="mkGo(1)">
-                        <svg width="19" height="19" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <line x1="6.5" y1="17.5" x2="12" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.5"/>
-                            <line x1="12" y1="12" x2="17.5" y2="6.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.5"/>
-                            <line x1="12" y1="12" x2="17.5" y2="16.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.3"/>
-                            <circle cx="6.5" cy="17.5" r="2.2" fill="currentColor" opacity="0.5"/>
-                            <circle cx="12" cy="12" r="2.7" fill="currentColor" opacity="0.16" stroke="currentColor" stroke-width="1.6"/>
-                            <circle cx="17.5" cy="6.5" r="2" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.8"/>
-                            <circle cx="17.5" cy="16.5" r="1.7" fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.5"/>
-                        </svg>
-                        <span class="mk-plate-tab-label">Pursuits</span>
-                    </button>
-                    <button type="button" class="mk-plate-tab active" id="mkPlateTab2" onclick="mkGo(2)">
-                        <svg width="19" height="19" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <rect x="3.2" y="4" width="13" height="16" rx="2.8" fill="currentColor" opacity="0.12" stroke="currentColor" stroke-width="1.6"/>
-                            <line x1="6" y1="8.4" x2="13" y2="8.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.5"/>
-                            <line x1="6" y1="12" x2="11" y2="12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.35"/>
-                            <circle cx="16.4" cy="15.6" r="4.4" fill="currentColor" opacity="0.16" stroke="currentColor" stroke-width="1.5"/>
-                            <polyline points="14.4,15.6 15.9,17.1 18.5,13.9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                        </svg>
-                        <span class="mk-plate-tab-label">Activities</span>
-                    </button>
-                    <button type="button" class="mk-plate-tab" id="mkPlateTab3" onclick="mkGo(3)">
-                        <svg width="19" height="19" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M3.5 17 L7.5 12.4 L11.5 14.8 L16 8 L20.5 5.4 L20.5 17 Z" fill="currentColor" opacity="0.13"/>
-                            <polyline points="3.5,17 7.5,12.4 11.5,14.8 16,8 20.5,5.4" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
-                            <circle cx="20.5" cy="5.4" r="1.5" fill="currentColor" opacity="0.6"/>
-                        </svg>
-                        <span class="mk-plate-tab-label">More</span>
-                    </button>
-                </div>
-            </nav>
+        <!-- Swallows taps in the strip of screen the nav occupies, so a miss
+             between nav controls can never complete an activity underneath. -->
+        <div class="mk-nav-shield" id="mkNavShield" aria-hidden="true"></div>
 
-            <!-- ── 2. Arc — two concentric rings on stacked discs. Both rings
-                 rotate so the active tab (inner) and active section (outer)
-                 always land on the apex. Geometry lives in CSS/JS constants:
-                 circle centre sits at (50%, 584px) in band coords. ── -->
-            <nav class="mk-bottom-nav mk-arc" id="mkNavArc" aria-label="Primary">
-                <div class="mk-arc-fade"></div>
-
-                <!-- Outer disc carries the sections; inner disc carries the tabs. -->
-                <div class="mk-arc-anchor"><div class="mk-arc-disc-sec"></div></div>
-                <div class="mk-arc-anchor"><div class="mk-arc-disc-tab"></div></div>
-
-                <!-- Section ring (r = 518, 12° per step) -->
-                <div class="mk-arc-anchor mk-arc-ring" id="mkArcRingSec">
-                    <svg class="mk-arc-ringsvg" width="1200" height="1200" viewBox="-600 -600 1200 1200" xmlns="http://www.w3.org/2000/svg">
-                        <circle cx="0" cy="0" r="518" fill="none" stroke="rgba(255,255,255,0.055)" stroke-width="1"/>
-                    </svg>
-                    <button type="button" class="mk-arc-sec active" id="mkArcSec0" onclick="mkGoSubAt(0)">My Activities</button>
-                    <button type="button" class="mk-arc-sec" id="mkArcSec1" onclick="mkGoSubAt(1)">Categories</button>
-                    <button type="button" class="mk-arc-sec" id="mkArcSec2" onclick="mkGoSubAt(2)">Map</button>
-                </div>
-
-                <!-- Tab ring (r = 470, 9° per step) -->
-                <div class="mk-arc-anchor mk-arc-ring" id="mkArcRing">
-                    <svg class="mk-arc-ringsvg" width="1200" height="1200" viewBox="-600 -600 1200 1200" xmlns="http://www.w3.org/2000/svg">
-                        <circle cx="0" cy="0" r="470" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
-                        <g stroke="rgba(255,255,255,0.2)" stroke-width="1.4" stroke-linecap="round">
-                            <line x1="0" y1="-490" x2="0" y2="-481" transform="rotate(-45)"/>
-                            <line x1="0" y1="-490" x2="0" y2="-481" transform="rotate(-36)"/>
-                            <line x1="0" y1="-490" x2="0" y2="-481" transform="rotate(-27)"/>
-                            <line x1="0" y1="-490" x2="0" y2="-481" transform="rotate(-18)"/>
-                            <line x1="0" y1="-490" x2="0" y2="-481" transform="rotate(-9)"/>
-                            <line x1="0" y1="-490" x2="0" y2="-481"/>
-                            <line x1="0" y1="-490" x2="0" y2="-481" transform="rotate(9)"/>
-                            <line x1="0" y1="-490" x2="0" y2="-481" transform="rotate(18)"/>
-                            <line x1="0" y1="-490" x2="0" y2="-481" transform="rotate(27)"/>
-                            <line x1="0" y1="-490" x2="0" y2="-481" transform="rotate(36)"/>
-                            <line x1="0" y1="-490" x2="0" y2="-481" transform="rotate(45)"/>
-                        </g>
-                    </svg>
-                    <button type="button" class="mk-arc-tab" id="mkArcTab0" onclick="mkGo(0)">Social</button>
-                    <button type="button" class="mk-arc-tab" id="mkArcTab1" onclick="mkGo(1)">Pursuits</button>
-                    <button type="button" class="mk-arc-tab active" id="mkArcTab2" onclick="mkGo(2)">Activities</button>
-                    <button type="button" class="mk-arc-tab" id="mkArcTab3" onclick="mkGo(3)">More</button>
-                </div>
-
-                <div class="mk-arc-here">
-                    <span class="mk-arc-here-dash"></span>
-                    <svg class="mk-arc-here-icon" id="mkArcHere0" width="21" height="21" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                        <circle cx="9" cy="7.5" r="3.4" fill="currentColor" opacity="0.16" stroke="currentColor" stroke-width="1.7"/>
-                        <path d="M3 20v-1.6a4.6 4.6 0 0 1 4.6-4.6h2.8a4.6 4.6 0 0 1 4.6 4.6V20" fill="currentColor" opacity="0.12" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
-                        <circle cx="17.6" cy="9.4" r="2.5" fill="currentColor" opacity="0.16" stroke="currentColor" stroke-width="1.4"/>
-                        <path d="M20.8 20v-1.3a3.3 3.3 0 0 0-2.7-3.24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-                    </svg>
-                    <svg class="mk-arc-here-icon" id="mkArcHere1" width="21" height="21" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                        <line x1="6.5" y1="17.5" x2="12" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.5"/>
-                        <line x1="12" y1="12" x2="17.5" y2="6.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.5"/>
-                        <line x1="12" y1="12" x2="17.5" y2="16.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.3"/>
-                        <circle cx="6.5" cy="17.5" r="2.2" fill="currentColor" opacity="0.5"/>
-                        <circle cx="12" cy="12" r="2.7" fill="currentColor" opacity="0.18" stroke="currentColor" stroke-width="1.6"/>
-                        <circle cx="17.5" cy="6.5" r="2" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.8"/>
-                        <circle cx="17.5" cy="16.5" r="1.7" fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.5"/>
-                    </svg>
-                    <svg class="mk-arc-here-icon active" id="mkArcHere2" width="21" height="21" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                        <rect x="3.2" y="4" width="13" height="16" rx="2.8" fill="currentColor" opacity="0.14" stroke="currentColor" stroke-width="1.6"/>
-                        <line x1="6" y1="8.4" x2="13" y2="8.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.5"/>
-                        <line x1="6" y1="12" x2="11" y2="12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.35"/>
-                        <circle cx="16.4" cy="15.6" r="4.4" fill="currentColor" opacity="0.18" stroke="currentColor" stroke-width="1.5"/>
-                        <polyline points="14.4,15.6 15.9,17.1 18.5,13.9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                    <svg class="mk-arc-here-icon" id="mkArcHere3" width="21" height="21" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M3.5 17 L7.5 12.4 L11.5 14.8 L16 8 L20.5 5.4 L20.5 17 Z" fill="currentColor" opacity="0.15"/>
-                        <polyline points="3.5,17 7.5,12.4 11.5,14.8 16,8 20.5,5.4" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
-                        <circle cx="20.5" cy="5.4" r="1.5" fill="currentColor" opacity="0.6"/>
-                    </svg>
-                </div>
-            </nav>
-
-            <!-- ── 3. Plume ── -->
-            <nav class="mk-bottom-nav mk-plume" id="mkNavPlume" aria-label="Primary">
-                <div class="mk-plume-stemwrap">
-                    <div class="mk-plume-pill" id="mkPlumePill">
-                        <button type="button" class="mk-plume-sec active" id="mkPlumeSec0" onclick="mkGoSubAt(0)">My Activities</button>
-                        <button type="button" class="mk-plume-sec" id="mkPlumeSec1" onclick="mkGoSubAt(1)">Categories</button>
-                        <button type="button" class="mk-plume-sec" id="mkPlumeSec2" onclick="mkGoSubAt(2)">Map</button>
-                    </div>
-                    <span class="mk-plume-stem" id="mkPlumeStem"></span>
-                    <span class="mk-plume-root" id="mkPlumeRoot"></span>
-                </div>
-                <div class="mk-plume-tabs">
-                    <button type="button" class="mk-plume-tab" id="mkPlumeTab0" onclick="mkGo(0)">Social</button>
-                    <button type="button" class="mk-plume-tab" id="mkPlumeTab1" onclick="mkGo(1)">Pursuits</button>
-                    <button type="button" class="mk-plume-tab active" id="mkPlumeTab2" onclick="mkGo(2)">Activities</button>
-                    <button type="button" class="mk-plume-tab" id="mkPlumeTab3" onclick="mkGo(3)">More</button>
-                </div>
-            </nav>
-
-            <!-- ── 4. Ledger — collapses to the active band on a timer or on
-                 demand, so it stops eating the bottom of the screen. ── -->
-            <nav class="mk-bottom-nav mk-ledger" id="mkNavLedger" aria-label="Primary">
-                <button type="button" class="mk-ledger-toggle" id="mkLedgerToggle" onclick="mkToggleLedger()" aria-label="Collapse navigation">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-                </button>
-                <div class="mk-ledger-band" id="mkLedgerBand0">
-                    <button type="button" class="mk-ledger-name" onclick="mkGo(0)"><span class="mk-ledger-dot"></span>Social</button>
-                    <div class="mk-ledger-subs">
-                        <button type="button" class="mk-ledger-sub" onclick="mkGoSub(0,0)">Friends</button>
-                        <button type="button" class="mk-ledger-sub" onclick="mkGoSub(0,1)">Leaderboard</button>
-                        <button type="button" class="mk-ledger-sub" onclick="mkGoSub(0,2)">Challenges</button>
-                    </div>
-                </div>
-                <div class="mk-ledger-band" id="mkLedgerBand1">
-                    <button type="button" class="mk-ledger-name" onclick="mkGo(1)"><span class="mk-ledger-dot"></span>Pursuits</button>
-                    <div class="mk-ledger-subs">
-                        <button type="button" class="mk-ledger-sub" onclick="mkGoSub(1,0)">Quests</button>
-                        <button type="button" class="mk-ledger-sub" onclick="mkGoSub(1,1)">Modes</button>
-                        <button type="button" class="mk-ledger-sub" onclick="mkGoSub(1,2)">Narratives</button>
-                    </div>
-                </div>
-                <div class="mk-ledger-band active" id="mkLedgerBand2">
-                    <button type="button" class="mk-ledger-name" onclick="mkGo(2)"><span class="mk-ledger-dot"></span>Activities</button>
-                    <div class="mk-ledger-subs">
-                        <button type="button" class="mk-ledger-sub active" onclick="mkGoSub(2,0)">My Activities</button>
-                        <button type="button" class="mk-ledger-sub" onclick="mkGoSub(2,1)">Categories</button>
-                        <button type="button" class="mk-ledger-sub" onclick="mkGoSub(2,2)">Map</button>
-                    </div>
-                </div>
-                <div class="mk-ledger-band" id="mkLedgerBand3">
-                    <button type="button" class="mk-ledger-name" onclick="mkGo(3)"><span class="mk-ledger-dot"></span>More</button>
-                    <div class="mk-ledger-subs">
-                        <button type="button" class="mk-ledger-sub" onclick="mkGoSub(3,0)">Analytics</button>
-                        <button type="button" class="mk-ledger-sub" onclick="mkGoSub(3,1)">Rewards</button>
-                        <button type="button" class="mk-ledger-sub" onclick="mkGoSub(3,2)">Settings</button>
-                    </div>
-                </div>
-            </nav>
-
-            <!-- ── 5. Spine ── -->
-            <nav class="mk-bottom-nav mk-spine" id="mkNavSpine" aria-label="Primary">
-                <button type="button" class="mk-spine-tab" id="mkSpineTab0" onclick="mkGo(0)" title="Social">
-                    <svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <!-- ── 1. Plate (default) ── -->
+        <nav class="mk-bottom-nav mk-plate" id="mkNavPlate" aria-label="Primary">
+            <div class="mk-plate-row1">
+                <button type="button" class="mk-plate-sec active" id="mkPlateSec0" onclick="mkGoSubAt(0)">My Activities</button>
+                <button type="button" class="mk-plate-sec" id="mkPlateSec1" onclick="mkGoSubAt(1)">Categories</button>
+                <button type="button" class="mk-plate-sec" id="mkPlateSec2" onclick="mkGoSubAt(2)">Map</button>
+                <span class="mk-plate-bar" id="mkPlateBar" style="left:calc(5px + (100% - 10px) * 0.1667 - 17px);"></span>
+            </div>
+            <div class="mk-plate-divider"></div>
+            <div class="mk-plate-row2">
+                <button type="button" class="mk-plate-tab" id="mkPlateTab0" onclick="mkGo(0)">
+                    <svg width="19" height="19" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                         <circle cx="9" cy="7.5" r="3.4" fill="currentColor" opacity="0.14" stroke="currentColor" stroke-width="1.7"/>
                         <path d="M3 20v-1.6a4.6 4.6 0 0 1 4.6-4.6h2.8a4.6 4.6 0 0 1 4.6 4.6V20" fill="currentColor" opacity="0.1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
                         <circle cx="17.6" cy="9.4" r="2.5" fill="currentColor" opacity="0.14" stroke="currentColor" stroke-width="1.4"/>
                         <path d="M20.8 20v-1.3a3.3 3.3 0 0 0-2.7-3.24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
                     </svg>
-                    <span class="mk-spine-tab-name">Social</span>
+                    <span class="mk-plate-tab-label">Social</span>
                 </button>
-                <div class="mk-spine-subwrap" id="mkSpineWrap0">
-                    <span class="mk-spine-divider"></span>
-                    <button type="button" class="mk-spine-sub" onclick="mkGoSub(0,0)">Friends</button>
-                    <button type="button" class="mk-spine-sub" onclick="mkGoSub(0,1)">Leaderboard</button>
-                    <button type="button" class="mk-spine-sub" onclick="mkGoSub(0,2)">Challenges</button>
-                </div>
-
-                <button type="button" class="mk-spine-tab" id="mkSpineTab1" onclick="mkGo(1)" title="Pursuits">
-                    <svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <button type="button" class="mk-plate-tab" id="mkPlateTab1" onclick="mkGo(1)">
+                    <svg width="19" height="19" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                         <line x1="6.5" y1="17.5" x2="12" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.5"/>
                         <line x1="12" y1="12" x2="17.5" y2="6.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.5"/>
                         <line x1="12" y1="12" x2="17.5" y2="16.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.3"/>
@@ -1677,48 +1522,211 @@
                         <circle cx="17.5" cy="6.5" r="2" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.8"/>
                         <circle cx="17.5" cy="16.5" r="1.7" fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.5"/>
                     </svg>
-                    <span class="mk-spine-tab-name">Pursuits</span>
+                    <span class="mk-plate-tab-label">Pursuits</span>
                 </button>
-                <div class="mk-spine-subwrap" id="mkSpineWrap1">
-                    <span class="mk-spine-divider"></span>
-                    <button type="button" class="mk-spine-sub" onclick="mkGoSub(1,0)">Quests</button>
-                    <button type="button" class="mk-spine-sub" onclick="mkGoSub(1,1)">Modes</button>
-                    <button type="button" class="mk-spine-sub" onclick="mkGoSub(1,2)">Narratives</button>
-                </div>
-
-                <button type="button" class="mk-spine-tab active" id="mkSpineTab2" onclick="mkGo(2)" title="Activities">
-                    <svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <button type="button" class="mk-plate-tab active" id="mkPlateTab2" onclick="mkGo(2)">
+                    <svg width="19" height="19" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                         <rect x="3.2" y="4" width="13" height="16" rx="2.8" fill="currentColor" opacity="0.12" stroke="currentColor" stroke-width="1.6"/>
                         <line x1="6" y1="8.4" x2="13" y2="8.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.5"/>
                         <line x1="6" y1="12" x2="11" y2="12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.35"/>
                         <circle cx="16.4" cy="15.6" r="4.4" fill="currentColor" opacity="0.16" stroke="currentColor" stroke-width="1.5"/>
                         <polyline points="14.4,15.6 15.9,17.1 18.5,13.9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
                     </svg>
-                    <span class="mk-spine-tab-name">Activities</span>
+                    <span class="mk-plate-tab-label">Activities</span>
                 </button>
-                <div class="mk-spine-subwrap active" id="mkSpineWrap2">
-                    <span class="mk-spine-divider"></span>
-                    <button type="button" class="mk-spine-sub active" onclick="mkGoSub(2,0)">My Activities</button>
-                    <button type="button" class="mk-spine-sub" onclick="mkGoSub(2,1)">Categories</button>
-                    <button type="button" class="mk-spine-sub" onclick="mkGoSub(2,2)">Map</button>
-                </div>
-
-                <button type="button" class="mk-spine-tab" id="mkSpineTab3" onclick="mkGo(3)" title="More">
-                    <svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <button type="button" class="mk-plate-tab" id="mkPlateTab3" onclick="mkGo(3)">
+                    <svg width="19" height="19" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                         <path d="M3.5 17 L7.5 12.4 L11.5 14.8 L16 8 L20.5 5.4 L20.5 17 Z" fill="currentColor" opacity="0.13"/>
                         <polyline points="3.5,17 7.5,12.4 11.5,14.8 16,8 20.5,5.4" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
                         <circle cx="20.5" cy="5.4" r="1.5" fill="currentColor" opacity="0.6"/>
                     </svg>
-                    <span class="mk-spine-tab-name">More</span>
+                    <span class="mk-plate-tab-label">More</span>
                 </button>
-                <div class="mk-spine-subwrap" id="mkSpineWrap3">
-                    <span class="mk-spine-divider"></span>
-                    <button type="button" class="mk-spine-sub" onclick="mkGoSub(3,0)">Analytics</button>
-                    <button type="button" class="mk-spine-sub" onclick="mkGoSub(3,1)">Rewards</button>
-                    <button type="button" class="mk-spine-sub" onclick="mkGoSub(3,2)">Settings</button>
+            </div>
+        </nav>
+
+        <!-- ── 2. Arc — two concentric dials on stacked discs, each showing
+             three slots: one at each edge and the active one glowing at the
+             apex. The tab dial holds four pages, so the fourth parks
+             off-screen until you rotate it in. Both dials rotate by swipe or
+             by tapping an edge label. Geometry constants live in the JS
+             (centre at 50%/558px in band coords; tab r=470 @18°,
+             section r=518 @15°). ── -->
+        <nav class="mk-bottom-nav mk-arc" id="mkNavArc" aria-label="Primary">
+            <div class="mk-arc-fade"></div>
+
+            <!-- Outer disc carries the sections; inner disc carries the tabs. -->
+            <div class="mk-arc-anchor"><div class="mk-arc-disc-sec"></div></div>
+            <div class="mk-arc-anchor"><div class="mk-arc-disc-tab"></div></div>
+
+            <!-- Slot pins: fixed to the band (never rotate), so they mark the
+                 three landing positions consistently instead of drifting. -->
+            <div class="mk-arc-anchor">
+                <svg class="mk-arc-pins" width="1200" height="1200" viewBox="-600 -600 1200 1200" xmlns="http://www.w3.org/2000/svg">
+                    <g stroke="rgba(255,255,255,0.22)" stroke-width="1.4" stroke-linecap="round" fill="none">
+                        <line x1="0" y1="-505" x2="0" y2="-494" transform="rotate(-18)"/>
+                        <line x1="0" y1="-505" x2="0" y2="-494"/>
+                        <line x1="0" y1="-505" x2="0" y2="-494" transform="rotate(18)"/>
+                    </g>
+                    <g stroke="rgba(255,255,255,0.16)" stroke-width="1.3" stroke-linecap="round" fill="none">
+                        <line x1="0" y1="-540" x2="0" y2="-531" transform="rotate(-15)"/>
+                        <line x1="0" y1="-540" x2="0" y2="-531"/>
+                        <line x1="0" y1="-540" x2="0" y2="-531" transform="rotate(15)"/>
+                    </g>
+                </svg>
+            </div>
+
+            <!-- Section dial (r = 518, 15° per slot) -->
+            <div class="mk-arc-anchor mk-arc-ring" id="mkArcRingSec">
+                <svg class="mk-arc-ringsvg" width="1200" height="1200" viewBox="-600 -600 1200 1200" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="0" cy="0" r="518" fill="none" stroke="rgba(255,255,255,0.055)" stroke-width="1"/>
+                </svg>
+                <button type="button" class="mk-arc-sec active" id="mkArcSec0">My Activities</button>
+                <button type="button" class="mk-arc-sec" id="mkArcSec1">Categories</button>
+                <button type="button" class="mk-arc-sec" id="mkArcSec2">Map</button>
+            </div>
+
+            <!-- Tab dial (r = 470, 18° per slot) -->
+            <div class="mk-arc-anchor mk-arc-ring" id="mkArcRing">
+                <svg class="mk-arc-ringsvg" width="1200" height="1200" viewBox="-600 -600 1200 1200" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="0" cy="0" r="470" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+                </svg>
+                <button type="button" class="mk-arc-tab" id="mkArcTab0">Social</button>
+                <button type="button" class="mk-arc-tab" id="mkArcTab1">Pursuits</button>
+                <button type="button" class="mk-arc-tab active" id="mkArcTab2">Activities</button>
+                <button type="button" class="mk-arc-tab" id="mkArcTab3">More</button>
+            </div>
+        </nav>
+
+        <!-- ── 3. Plume ── -->
+        <nav class="mk-bottom-nav mk-plume" id="mkNavPlume" aria-label="Primary">
+            <div class="mk-plume-stemwrap">
+                <div class="mk-plume-pill" id="mkPlumePill">
+                    <button type="button" class="mk-plume-sec active" id="mkPlumeSec0" onclick="mkGoSubAt(0)">My Activities</button>
+                    <button type="button" class="mk-plume-sec" id="mkPlumeSec1" onclick="mkGoSubAt(1)">Categories</button>
+                    <button type="button" class="mk-plume-sec" id="mkPlumeSec2" onclick="mkGoSubAt(2)">Map</button>
                 </div>
-            </nav>
-        </div>
+                <span class="mk-plume-stem" id="mkPlumeStem"></span>
+                <span class="mk-plume-root" id="mkPlumeRoot"></span>
+            </div>
+            <div class="mk-plume-tabs">
+                <button type="button" class="mk-plume-tab" id="mkPlumeTab0" onclick="mkGo(0)">Social</button>
+                <button type="button" class="mk-plume-tab" id="mkPlumeTab1" onclick="mkGo(1)">Pursuits</button>
+                <button type="button" class="mk-plume-tab active" id="mkPlumeTab2" onclick="mkGo(2)">Activities</button>
+                <button type="button" class="mk-plume-tab" id="mkPlumeTab3" onclick="mkGo(3)">More</button>
+            </div>
+        </nav>
+
+        <!-- ── 4. Ledger — collapses to the active band on a timer or on
+             demand, so it stops eating the bottom of the screen. ── -->
+        <nav class="mk-bottom-nav mk-ledger" id="mkNavLedger" aria-label="Primary">
+            <div class="mk-ledger-band" id="mkLedgerBand0">
+                <button type="button" class="mk-ledger-name" onclick="mkGo(0)"><span class="mk-ledger-dot"></span>Social</button>
+                    <button type="button" class="mk-ledger-toggle" onclick="mkToggleLedger(event)" aria-label="Collapse navigation" tabindex="-1"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+                <div class="mk-ledger-subs">
+                    <button type="button" class="mk-ledger-sub" onclick="mkGoSub(0,0)">Friends</button>
+                    <button type="button" class="mk-ledger-sub" onclick="mkGoSub(0,1)">Leaderboard</button>
+                    <button type="button" class="mk-ledger-sub" onclick="mkGoSub(0,2)">Challenges</button>
+                </div>
+            </div>
+            <div class="mk-ledger-band" id="mkLedgerBand1">
+                <button type="button" class="mk-ledger-name" onclick="mkGo(1)"><span class="mk-ledger-dot"></span>Pursuits</button>
+                    <button type="button" class="mk-ledger-toggle" onclick="mkToggleLedger(event)" aria-label="Collapse navigation" tabindex="-1"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+                <div class="mk-ledger-subs">
+                    <button type="button" class="mk-ledger-sub" onclick="mkGoSub(1,0)">Quests</button>
+                    <button type="button" class="mk-ledger-sub" onclick="mkGoSub(1,1)">Modes</button>
+                    <button type="button" class="mk-ledger-sub" onclick="mkGoSub(1,2)">Narratives</button>
+                </div>
+            </div>
+            <div class="mk-ledger-band active" id="mkLedgerBand2">
+                <button type="button" class="mk-ledger-name" onclick="mkGo(2)"><span class="mk-ledger-dot"></span>Activities</button>
+                    <button type="button" class="mk-ledger-toggle" onclick="mkToggleLedger(event)" aria-label="Collapse navigation" tabindex="-1"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+                <div class="mk-ledger-subs">
+                    <button type="button" class="mk-ledger-sub active" onclick="mkGoSub(2,0)">My Activities</button>
+                    <button type="button" class="mk-ledger-sub" onclick="mkGoSub(2,1)">Categories</button>
+                    <button type="button" class="mk-ledger-sub" onclick="mkGoSub(2,2)">Map</button>
+                </div>
+            </div>
+            <div class="mk-ledger-band" id="mkLedgerBand3">
+                <button type="button" class="mk-ledger-name" onclick="mkGo(3)"><span class="mk-ledger-dot"></span>More</button>
+                    <button type="button" class="mk-ledger-toggle" onclick="mkToggleLedger(event)" aria-label="Collapse navigation" tabindex="-1"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+                <div class="mk-ledger-subs">
+                    <button type="button" class="mk-ledger-sub" onclick="mkGoSub(3,0)">Analytics</button>
+                    <button type="button" class="mk-ledger-sub" onclick="mkGoSub(3,1)">Rewards</button>
+                    <button type="button" class="mk-ledger-sub" onclick="mkGoSub(3,2)">Settings</button>
+                </div>
+            </div>
+        </nav>
+
+        <!-- ── 5. Spine ── -->
+        <nav class="mk-bottom-nav mk-spine" id="mkNavSpine" aria-label="Primary">
+            <button type="button" class="mk-spine-tab" id="mkSpineTab0" onclick="mkGo(0)" title="Social">
+                <svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="9" cy="7.5" r="3.4" fill="currentColor" opacity="0.14" stroke="currentColor" stroke-width="1.7"/>
+                    <path d="M3 20v-1.6a4.6 4.6 0 0 1 4.6-4.6h2.8a4.6 4.6 0 0 1 4.6 4.6V20" fill="currentColor" opacity="0.1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+                    <circle cx="17.6" cy="9.4" r="2.5" fill="currentColor" opacity="0.14" stroke="currentColor" stroke-width="1.4"/>
+                    <path d="M20.8 20v-1.3a3.3 3.3 0 0 0-2.7-3.24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                </svg>
+                <span class="mk-spine-tab-name">Social</span>
+            </button>
+            <div class="mk-spine-subwrap" id="mkSpineWrap0">
+                <span class="mk-spine-divider"></span>
+                <button type="button" class="mk-spine-sub" onclick="mkGoSub(0,0)">Friends</button>
+                <button type="button" class="mk-spine-sub" onclick="mkGoSub(0,1)">Leaderboard</button>
+                <button type="button" class="mk-spine-sub" onclick="mkGoSub(0,2)">Challenges</button>
+            </div>
+
+            <button type="button" class="mk-spine-tab" id="mkSpineTab1" onclick="mkGo(1)" title="Pursuits">
+                <svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <line x1="6.5" y1="17.5" x2="12" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.5"/>
+                    <line x1="12" y1="12" x2="17.5" y2="6.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.5"/>
+                    <line x1="12" y1="12" x2="17.5" y2="16.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.3"/>
+                    <circle cx="6.5" cy="17.5" r="2.2" fill="currentColor" opacity="0.5"/>
+                    <circle cx="12" cy="12" r="2.7" fill="currentColor" opacity="0.16" stroke="currentColor" stroke-width="1.6"/>
+                    <circle cx="17.5" cy="6.5" r="2" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.8"/>
+                    <circle cx="17.5" cy="16.5" r="1.7" fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.5"/>
+                </svg>
+                <span class="mk-spine-tab-name">Pursuits</span>
+            </button>
+            <div class="mk-spine-subwrap" id="mkSpineWrap1">
+                <span class="mk-spine-divider"></span>
+                <button type="button" class="mk-spine-sub" onclick="mkGoSub(1,0)">Quests</button>
+                <button type="button" class="mk-spine-sub" onclick="mkGoSub(1,1)">Modes</button>
+                <button type="button" class="mk-spine-sub" onclick="mkGoSub(1,2)">Narratives</button>
+            </div>
+
+            <button type="button" class="mk-spine-tab active" id="mkSpineTab2" onclick="mkGo(2)" title="Activities">
+                <svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="3.2" y="4" width="13" height="16" rx="2.8" fill="currentColor" opacity="0.12" stroke="currentColor" stroke-width="1.6"/>
+                    <line x1="6" y1="8.4" x2="13" y2="8.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.5"/>
+                    <line x1="6" y1="12" x2="11" y2="12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.35"/>
+                    <circle cx="16.4" cy="15.6" r="4.4" fill="currentColor" opacity="0.16" stroke="currentColor" stroke-width="1.5"/>
+                    <polyline points="14.4,15.6 15.9,17.1 18.5,13.9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <span class="mk-spine-tab-name">Activities</span>
+            </button>
+            <div class="mk-spine-subwrap active" id="mkSpineWrap2">
+                <span class="mk-spine-divider"></span>
+                <button type="button" class="mk-spine-sub active" onclick="mkGoSub(2,0)">My Activities</button>
+                <button type="button" class="mk-spine-sub" onclick="mkGoSub(2,1)">Categories</button>
+                <button type="button" class="mk-spine-sub" onclick="mkGoSub(2,2)">Map</button>
+            </div>
+
+            <button type="button" class="mk-spine-tab" id="mkSpineTab3" onclick="mkGo(3)" title="More">
+                <svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M3.5 17 L7.5 12.4 L11.5 14.8 L16 8 L20.5 5.4 L20.5 17 Z" fill="currentColor" opacity="0.13"/>
+                    <polyline points="3.5,17 7.5,12.4 11.5,14.8 16,8 20.5,5.4" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+                    <circle cx="20.5" cy="5.4" r="1.5" fill="currentColor" opacity="0.6"/>
+                </svg>
+                <span class="mk-spine-tab-name">More</span>
+            </button>
+            <div class="mk-spine-subwrap" id="mkSpineWrap3">
+                <span class="mk-spine-divider"></span>
+                <button type="button" class="mk-spine-sub" onclick="mkGoSub(3,0)">Analytics</button>
+                <button type="button" class="mk-spine-sub" onclick="mkGoSub(3,1)">Rewards</button>
+                <button type="button" class="mk-spine-sub" onclick="mkGoSub(3,2)">Settings</button>
+            </div>
+        </nav>
     </div>
 
     <!-- ══ Grit sheet (v5 nav) — new feature, self-contained, reuses .pl-modal ══ -->
@@ -2976,7 +2984,7 @@
             { key: 'social', name: 'Social', subs: [
                 { label: 'Friends',     kind: 'empty',     el: 'mkEmptySocialFriends' },
                 { label: 'Leaderboard', kind: 'legacy',    tab: 'friends' },
-                { label: 'Challenges',  kind: 'legacy',    tab: 'challenges' }
+                { label: 'Challenges',  kind: 'legacy',    tab: 'challenges', noTitle: true }
             ] },
             { key: 'pursuits', name: 'Pursuits', subs: [
                 { label: 'Quests',     kind: 'legacy', tab: 'projects' },
@@ -3002,7 +3010,8 @@
             { name: 'Generate a map branch', sub: 'New tech-tree branch from your history', cost: 100 }
         ];
 
-        var state = { t: 2, s: 0, mem: [0, 0, 0, 0], navStyle: 'plate', spin: -2 * STEP, grit: 1240 };
+        var state = { t: 2, s: 0, mem: [0, 0, 0, 0], navStyle: 'plate',
+                      spin: -2 * STEP, subSpin: 0, grit: 1240 };
         var ledgerTimer = null;
 
         try {
@@ -3071,43 +3080,49 @@
         function arcTransform(angle, radius, counter) {
             return 'translate(-50%,-50%) rotate(' + angle + 'deg) translate(0,-' + radius + 'px) rotate(' + counter + 'deg)';
         }
+        /* Nearest angular representation of slot `i` on a ring of `n` slots,
+           given the ring's accumulated rotation. Rounding (rather than a
+           bounded search) keeps this correct no matter how far `spin` drifts —
+           the old bounded loop is why every label vanished after enough
+           rotations. */
+        function slotAngle(i, n, step, spin) {
+            var k = Math.round((-spin / step - i) / n);
+            return (i + k * n) * step;
+        }
         function renderArc() {
             var tab = NAV[state.t];
-            /* Sections ride their own ring, rotated so the active one lands on
-               the apex directly above the active tab. */
-            var secSpin = -(state.s - 1) * SUB_STEP;
+
+            /* Section dial: three slots, all visible — left edge, apex, right edge. */
             var secRing = $('mkArcRingSec');
-            if (secRing) secRing.style.transform = 'rotate(' + secSpin + 'deg)';
+            if (secRing) secRing.style.transform = 'rotate(' + state.subSpin + 'deg)';
             for (var i = 0; i < 3; i++) {
                 var b = $('mkArcSec' + i);
                 if (!b) continue;
-                var a = (i - 1) * SUB_STEP;
+                var sa = slotAngle(i, 3, SUB_STEP, state.subSpin);
+                var sVis = sa + state.subSpin;
+                var sOff = Math.abs(sVis) > SUB_STEP * 1.6;
                 b.textContent = tab.subs[i].label;
                 b.classList.toggle('active', i === state.s);
-                b.style.transform = arcTransform(a, R_SUB, -a - secSpin);
+                b.style.opacity = sOff ? '0' : (i === state.s ? '1' : '0.7');
+                b.style.pointerEvents = sOff ? 'none' : 'auto';
+                b.style.transform = arcTransform(sa, R_SUB, -sa - state.subSpin);
             }
+
+            /* Tab dial: four slots, three shown — the fourth parks off-screen
+               until it is rotated in. */
             var ring = $('mkArcRing');
             if (ring) ring.style.transform = 'rotate(' + state.spin + 'deg)';
             for (var ti = 0; ti < 4; ti++) {
-                var best = 0, bestAbs = Infinity;
-                for (var k = -2; k <= 2; k++) {
-                    var v = Math.abs((ti + k * 4) * STEP + state.spin);
-                    if (v < bestAbs) { bestAbs = v; best = k; }
-                }
-                var ang = (ti + best * 4) * STEP;
-                var visibleAngle = ang + state.spin;
+                var ang = slotAngle(ti, 4, STEP, state.spin);
+                var vis = ang + state.spin;
                 var active = ti === state.t;
-                var off = Math.abs(visibleAngle) > 25;
+                var off = Math.abs(vis) > STEP * 1.6;
                 var tb = $('mkArcTab' + ti);
-                if (tb) {
-                    tb.classList.toggle('active', active);
-                    tb.style.fontSize = active ? '14px' : '11.5px';
-                    tb.style.opacity = off ? '0' : (active ? '1' : '0.72');
-                    tb.style.pointerEvents = off ? 'none' : 'auto';
-                    tb.style.transform = arcTransform(ang, R_TAB, -ang - state.spin);
-                }
-                var hereIcon = $('mkArcHere' + ti);
-                if (hereIcon) hereIcon.classList.toggle('active', active);
+                if (!tb) continue;
+                tb.classList.toggle('active', active);
+                tb.style.opacity = off ? '0' : (active ? '1' : '0.7');
+                tb.style.pointerEvents = off ? 'none' : 'auto';
+                tb.style.transform = arcTransform(ang, R_TAB, -ang - state.spin);
             }
         }
 
@@ -3159,18 +3174,66 @@
             }
         }
 
+        /* Spine has to hold four tabs and three section names on one line.
+           Step the layout down through compact tiers until the sections fit
+           without clipping and the tab label is not ellipsised.
+
+           The tier is chosen for the WORST tab, not the current one, so the bar
+           looks identical whichever tab you are on — otherwise it would resize
+           under you as you navigate. Recomputed only when the width changes. */
+        var spineTier = null, spineTierKey = '';
+        function measureSpineTier(nav) {
+            var wraps = [0, 1, 2, 3].map(function (i) { return $('mkSpineWrap' + i); });
+            var activeWrap = nav.querySelector('.mk-spine-subwrap.active');
+            var name = nav.querySelector('.mk-spine-tab.active .mk-spine-tab-name');
+            var tiers = ['', 'mk-spine-c1', 'mk-spine-c2', 'mk-spine-c3'];
+            var chosen = tiers[tiers.length - 1];
+            for (var i = 0; i < tiers.length; i++) {
+                nav.classList.remove('mk-spine-c1', 'mk-spine-c2', 'mk-spine-c3');
+                if (tiers[i]) nav.classList.add(tiers[i]);
+                var ok = !name || getComputedStyle(name).display === 'none' ||
+                         name.scrollWidth <= name.clientWidth + 1;
+                for (var w = 0; w < wraps.length && ok; w++) {
+                    if (!wraps[w]) continue;
+                    var was = wraps[w].classList.contains('active');
+                    if (!was) { activeWrap.classList.remove('active'); wraps[w].classList.add('active'); }
+                    ok = wraps[w].scrollWidth <= wraps[w].clientWidth + 1;
+                    if (!was) { wraps[w].classList.remove('active'); activeWrap.classList.add('active'); }
+                }
+                if (ok) { chosen = tiers[i]; break; }
+            }
+            return chosen;
+        }
+        function fitSpine() {
+            var nav = $('mkNavSpine');
+            if (!nav || getComputedStyle(nav).display === 'none') return;
+            if (!nav.querySelector('.mk-spine-subwrap.active')) return;
+            var key = String(nav.clientWidth);
+            if (key !== spineTierKey) { spineTier = measureSpineTier(nav); spineTierKey = key; }
+            nav.classList.remove('mk-spine-c1', 'mk-spine-c2', 'mk-spine-c3');
+            if (spineTier) nav.classList.add(spineTier);
+        }
+        window.addEventListener('resize', function () { spineTierKey = ''; fitSpine(); });
+
         function renderNav() {
             renderPlate();
             renderArc();
             renderPlume();
             renderLedger();
             renderSpine();
+            fitSpine();
         }
 
         function renderPageStrip() {
             var tab = NAV[state.t];
             var crumb = $('mkCrumb'); if (crumb) crumb.textContent = tab.name;
-            var title = $('mkPageTitle'); if (title) title.textContent = tab.subs[state.s].label;
+            /* The page's own name sits below the strip now, as a page title. */
+            var head = $('mkPageHeading');
+            if (head) {
+                var entry = tab.subs[state.s];
+                head.textContent = entry.title || entry.label;
+                head.style.display = entry.noTitle ? 'none' : '';
+            }
         }
 
         function renderGrit() {
@@ -3179,14 +3242,18 @@
         }
 
         /* ── Navigation actions ── */
+        /* Shortest signed step from `from` to `to` around a ring of `n`. */
+        function ringDelta(from, to, n) {
+            var half = Math.floor(n / 2);
+            return ((((to - from + half) % n) + n) % n) - half;
+        }
+
         function commit(t, s, dir) {
             var entry = NAV[t].subs[s];
             var el = activateEntry(entry);
             if (!el) return false; // gated or missing — no-op; the app's own feedback (toast) already fired
-            if (t !== state.t) {
-                var d = ((t - state.t + 2) % 4 + 4) % 4 - 2;
-                state.spin -= d * STEP;
-            }
+            if (t !== state.t) state.spin -= ringDelta(state.t, t, 4) * STEP;
+            if (s !== state.s) state.subSpin -= ringDelta(state.s, s, 3) * SUB_STEP;
             state.t = t; state.s = s; state.mem[t] = s;
             bumpLedgerIdle();
             renderPageStrip();
@@ -3215,6 +3282,50 @@
             var t = state.t + delta;
             if (t >= 0 && t < 4) window.mkGo(t);
         };
+
+        /* Arc dials cycle rather than stopping at the ends, so a swipe always
+           moves and the parked fourth tab can be brought round either way. */
+        function cycleTab(d) { window.mkGo((((state.t + d) % 4) + 4) % 4); }
+        function cycleSection(d) { window.mkGoSub(state.t, (((state.s + d) % 3) + 3) % 3); }
+
+        /* ── Arc dials: swipe to rotate, tap an edge label to bring it round.
+           Which dial responds depends on where the gesture starts: the upper
+           part of the band is the section dial, the lower part the tab dial. ── */
+        function initArcDials() {
+            var nav = $('mkNavArc');
+            if (!nav) return;
+
+            for (var i = 0; i < 4; i++) {
+                (function (idx) {
+                    var el = $('mkArcTab' + idx);
+                    if (el) el.addEventListener('click', function () { window.mkGo(idx); });
+                })(i);
+            }
+            for (var j = 0; j < 3; j++) {
+                (function (idx) {
+                    var el = $('mkArcSec' + idx);
+                    if (el) el.addEventListener('click', function () { window.mkGoSubAt(idx); });
+                })(j);
+            }
+
+            var x0 = 0, y0 = 0, onSectionDial = false, tracking = false;
+            nav.addEventListener('pointerdown', function (e) {
+                var r = nav.getBoundingClientRect();
+                x0 = e.clientX; y0 = e.clientY; tracking = true;
+                // The tab disc's top edge sits ~64px down the band.
+                onSectionDial = (e.clientY - r.top) < 64;
+            });
+            nav.addEventListener('pointerup', function (e) {
+                if (!tracking) return;
+                tracking = false;
+                var dx = e.clientX - x0, dy = e.clientY - y0;
+                if (Math.abs(dx) < 34 || Math.abs(dx) < Math.abs(dy) * 1.2) return;
+                // Dragging left pulls the next slot toward the apex.
+                var d = dx < 0 ? 1 : -1;
+                if (onSectionDial) cycleSection(d); else cycleTab(d);
+            });
+            nav.addEventListener('pointercancel', function () { tracking = false; });
+        }
 
         /* ── Swipe: mobile-only, bails out of anything with its own
            horizontal scroll (charts, hscroll lists, calendar strips) so it
@@ -3263,7 +3374,8 @@
             setLedgerCollapsed(false);
             ledgerTimer = setTimeout(function () { setLedgerCollapsed(true); }, LEDGER_IDLE_MS);
         }
-        window.mkToggleLedger = function () {
+        window.mkToggleLedger = function (ev) {
+            if (ev) { ev.stopPropagation(); ev.preventDefault(); }
             var collapsed = document.body.classList.contains('mk-ledger-collapsed');
             clearTimeout(ledgerTimer);
             setLedgerCollapsed(!collapsed);
@@ -3273,8 +3385,12 @@
         /* ── Settings › Theme card — the navigation picker lives in the app's
            existing Theme card, alongside its dark/light/custom presets. ── */
         function renderThemeCard() {
-            var sel = $('mkNavSelect');
-            if (sel && sel.value !== state.navStyle) sel.value = state.navStyle;
+            var cards = document.querySelectorAll('.mk-nav-card');
+            for (var i = 0; i < cards.length; i++) {
+                var on = cards[i].getAttribute('data-nav') === state.navStyle;
+                cards[i].classList.toggle('active', on);
+                cards[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+            }
         }
 
         window.mkSetNavStyle = function (style) {
@@ -3339,6 +3455,7 @@
             renderGrit();
             renderThemeCard();
             initSwipe();
+            initArcDials();
             // Touching the ledger keeps it open; the idle timer starts on load.
             var ledger = $('mkNavLedger');
             if (ledger) ledger.addEventListener('pointerdown', function () {
