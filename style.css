@@ -15001,3 +15001,88 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 @media (prefers-reduced-motion: reduce) {
     .grit-week-fill { transition: none; }
 }
+
+/* ── Grit: the shield pool and its activity picker ── */
+.grit-pool {
+    margin-top: 8px;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    padding: 12px 14px;
+}
+.grit-pool.has-shields { border-color: var(--color-accent-blue); }
+.grit-pool-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.grit-pool-count {
+    font: 700 19px Inter, sans-serif;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-text-primary);
+    min-width: 22px;
+}
+.grit-pool-label {
+    flex: 1;
+    min-width: 0;
+    font: 500 12px Inter, sans-serif;
+    color: var(--color-text-secondary);
+}
+.grit-pool-apply {
+    flex-shrink: 0;
+    padding: 8px 14px;
+    border-radius: 9px;
+    border: 1px solid var(--color-accent-blue);
+    background: transparent;
+    color: var(--color-text-primary);
+    font: 600 12px Inter, sans-serif;
+    cursor: pointer;
+    transition: background .16s ease;
+}
+.grit-pool-apply:hover { background: var(--color-hover-overlay-strong); }
+
+.grit-pool-pick { margin-top: 10px; }
+.grit-pool-pick[hidden] { display: none; }
+.grit-pick-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas: 'name cta' 'meta cta';
+    gap: 2px 12px;
+    align-items: center;
+    width: 100%;
+    text-align: left;
+    padding: 10px 12px;
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    background: var(--color-bg-card);
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    transition: border-color .16s ease, background .16s ease;
+}
+.grit-pick-row + .grit-pick-row { margin-top: 6px; }
+.grit-pick-row:hover:not(:disabled) {
+    border-color: var(--color-accent-blue);
+    background: var(--color-hover-overlay-strong);
+}
+.grit-pick-row:disabled { cursor: not-allowed; opacity: 0.45; }
+.grit-pick-name {
+    grid-area: name;
+    font: 600 13px Inter, sans-serif;
+    color: var(--color-text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.grit-pick-meta {
+    grid-area: meta;
+    font: 500 11px Inter, sans-serif;
+    color: var(--color-text-secondary);
+}
+.grit-pick-cta {
+    grid-area: cta;
+    font: 700 12px Inter, sans-serif;
+    color: var(--color-accent-blue);
+    white-space: nowrap;
+}
+.grit-pick-row.is-full .grit-pick-cta { color: var(--color-text-secondary); }

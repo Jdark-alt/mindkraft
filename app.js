@@ -5518,17 +5518,75 @@
         //   getShieldsUsedDisplay()— returns activity.shieldsConsumed
         //
         // SHIELD RULES:
-        //   3 shields per streak. Each missed closed window costs 1 shield.
-        //   Streak survives ≤3 total misses. 4th unshielded miss → streak=0.
-        //   Shields reset automatically on a new streak.
+        //   3 shields per streak, +1 at each of 25/50/75/100 days, +1 per
+        //   shield applied from the Grit pool -- summed, capped at 10.
+        //   Each missed closed window costs 1 shield. The streak survives
+        //   until they run out; the next unshielded miss → streak=0.
+        //   Shields reset automatically on a new streak -- back to the floor,
+        //   which still includes every applied shield.
+        //
+        //   activity.shieldEvents — append-only, the ONLY thing a pooled
+        //   shield purchase writes. Both folds read it via shieldFloorFor();
+        //   nothing anywhere mutates a shield count directly.
         // ══════════════════════════════════════════════════════════════════
 
         const BASE_SHIELDS      = 3;
         const SHIELD_MILESTONES = [25, 50, 75, 100];
-        const SHIELD_ABS_CAP    = 7; // 3 base + 4 milestone bonuses
+        const SHIELD_ABS_CAP    = 10; // 3 base + 4 milestone bonuses + applied, summed
+
+        // == Applied shields (from the Grit pool) =========================
+        // A pooled shield is applied by APPENDING AN EVENT, never by mutating
+        // a count. activity.shieldEvents is append-only:
+        //
+        //     { type: 'shield_applied', id: '<stable unique>', at: 'YYYY-MM-DD' }
+        //
+        // There is no equivalent event for the 25/50/75/100-day grants --
+        // those have never been stored anywhere, they are derived inside the
+        // walk from SHIELD_MILESTONES. So this array is a NEW store, not a
+        // second writer of an existing one.
+        //
+        // Counting is deduplicated by id, so a double-tap, a retried write or
+        // a replayed sync can never fold into two shields.
+        function appliedShieldCount(activity) {
+            var evs = activity && activity.shieldEvents;
+            if (!Array.isArray(evs) || !evs.length) return 0;
+            var seen = Object.create(null), n = 0;
+            for (var i = 0; i < evs.length; i++) {
+                var e = evs[i];
+                if (!e || e.type !== 'shield_applied' || !e.id || seen[e.id]) continue;
+                seen[e.id] = 1; n++;
+            }
+            return n;
+        }
+
+        // The floor every shield walk starts from: base capacity plus whatever
+        // has been applied, clamped so a walk can never begin above the cap.
+        // This is what replaced the bare BASE_SHIELDS at all twelve points in
+        // the two folds -- including the resets, so a broken streak restarts
+        // with its applied shields still in hand. Because the count comes from
+        // the activity's own events rather than from the streak walk, no
+        // retroactive completion can recompute an applied shield away.
+        function shieldFloorFor(activity) {
+            return Math.min(SHIELD_ABS_CAP, BASE_SHIELDS + appliedShieldCount(activity));
+        }
+
+        // Capacity as it stands right now, without re-walking history: the
+        // floor plus one per milestone the live streak has already crossed.
+        // Mirrors what the walks produce, so applying a shield can refresh the
+        // displayed count immediately instead of waiting for the next login.
+        function shieldCapNow(activity) {
+            var cap = shieldFloorFor(activity);
+            var streak = activity.streak || 0;
+            if (streak > 0) {
+                for (var i = 0; i < SHIELD_MILESTONES.length; i++) {
+                    if (streak >= SHIELD_MILESTONES[i]) cap += 1;
+                }
+            }
+            return Math.min(SHIELD_ABS_CAP, cap);
+        }
 
         function getShieldCap(activity) {
-            return activity.shieldCapUsed || BASE_SHIELDS;
+            return activity.shieldCapUsed || shieldFloorFor(activity);
         }
 
         // _getStreakShieldWindow removed. Shield computation is now fully owned
@@ -5690,7 +5748,7 @@
                     // value from history on next login, so they stay in sync.
                     if (SHIELD_MILESTONES.includes(newStreak)) {
                         activity.shieldCapUsed = Math.min(SHIELD_ABS_CAP,
-                            (activity.shieldCapUsed || BASE_SHIELDS) + 1);
+                            (activity.shieldCapUsed || shieldFloorFor(activity)) + 1);
                     }
                 }
             }
@@ -8275,7 +8333,7 @@
                 activity.shieldsConsumed = 0;
                 activity.streakStartWindow = null;
                 activity.streakGrantedDate = null;
-                activity.shieldCapUsed = BASE_SHIELDS;
+                activity.shieldCapUsed = shieldFloorFor(activity);
                 return;
             }
             activity.lastCompleted = userHistory[userHistory.length - 1].date;
@@ -8302,7 +8360,7 @@
                 activity.shieldsConsumed = 0;
                 activity.streakStartWindow = hasTodayCompletion ? todayStr : null;
                 activity.streakGrantedDate = hasTodayCompletion ? todayStr : null;
-                activity.shieldCapUsed = BASE_SHIELDS;
+                activity.shieldCapUsed = shieldFloorFor(activity);
                 activity.bestStreak = Math.max(activity.bestStreak || 0, activity.streak);
                 return;
             }
@@ -8319,7 +8377,7 @@
 
             let streak = 0;
             let shieldsConsumed = 0;
-            let walkCapUsed = BASE_SHIELDS;
+            let walkCapUsed = shieldFloorFor(activity);
             let streakStartWindow = null;
             const MAX_WALK = 400;
 
@@ -8342,7 +8400,7 @@
                     shieldsConsumed++;
                 } else if (streak > 0) {
                     // Unshielded miss — streak breaks. Reset; later hits start fresh.
-                    streak = 0; shieldsConsumed = 0; walkCapUsed = BASE_SHIELDS;
+                    streak = 0; shieldsConsumed = 0; walkCapUsed = shieldFloorFor(activity);
                     streakStartWindow = null;
                 }
                 // streak===0 + miss: no active streak to protect, skip silently.
@@ -8354,7 +8412,7 @@
                 if (streak === 0) {
                     // Fresh streak that begins today.
                     shieldsConsumed = 0;
-                    walkCapUsed = BASE_SHIELDS;
+                    walkCapUsed = shieldFloorFor(activity);
                     streakStartWindow = todayWindow;
                 }
                 streak++;
@@ -8367,7 +8425,7 @@
             activity.bestStreak = Math.max(activity.bestStreak || 0, streak);
             activity.streakStartWindow = streakStartWindow ? toLocalDateStr(streakStartWindow) : null;
             activity.streakGrantedDate = hasTodayCompletion ? todayStr : null;
-            activity.shieldCapUsed = streak > 0 ? walkCapUsed : BASE_SHIELDS;
+            activity.shieldCapUsed = streak > 0 ? walkCapUsed : shieldFloorFor(activity);
         }
 
         function recomputeChallengeProgress(activityId) {
@@ -11057,10 +11115,13 @@
         // 0→1 transition.
         //
         // SHIELD RULES:
-        //   3 base shields per streak; +1 at each milestone (25/50/75/100), cap 7.
+        //   Base capacity is shieldFloorFor(activity) — 3, plus one per shield
+        //   applied from the Grit pool. +1 more at each milestone
+        //   (25/50/75/100). The sum is capped at SHIELD_ABS_CAP (10).
         //   Each missed closed window costs 1 shield. Unshielded miss → streak=0.
-        //   Shields reset to 3 automatically when a new streak begins (the walk
-        //   finds no consumed shields in a fresh run).
+        //   Shields reset to the floor automatically when a new streak begins
+        //   (the walk finds no consumed shields in a fresh run) — applied
+        //   shields are part of the floor, so they survive the reset.
         //   completeActivity and undoActivity NEVER touch shieldsConsumed.
         //
         // Returns true if any field was mutated (caller saves to Firestore).
@@ -11101,7 +11162,7 @@
                 if (lcWindow) {
                     const healHist = (activity.completionHistory || [])
                         .filter(e => !e.isPenalty && (e.xp || 0) > 0);
-                    let cur = lcWindow, shieldsLeft = BASE_SHIELDS, oldestHit = lcWindow;
+                    let cur = lcWindow, shieldsLeft = shieldFloorFor(activity), oldestHit = lcWindow;
                     for (let i = 0; i < 400; i++) {
                         const winEnd = getNextCycleWindowStart(activity, cur);
                         if (!winEnd) break;
@@ -11124,7 +11185,7 @@
 
             let streak = 0;
             let shieldsConsumed = 0;
-            let walkCapUsed = BASE_SHIELDS;
+            let walkCapUsed = shieldFloorFor(activity);
             let streakStartWindow = null;
             const MAX_WALK = 400;
 
@@ -11158,7 +11219,7 @@
                     } else if (streak > 0) {
                         // Unshielded miss — streak breaks. Reset so any later
                         // segment in the same walk starts fresh with full shields.
-                        streak = 0; shieldsConsumed = 0; walkCapUsed = BASE_SHIELDS;
+                        streak = 0; shieldsConsumed = 0; walkCapUsed = shieldFloorFor(activity);
                         streakStartWindow = null;
                     }
                     // streak===0 + miss: no active streak to protect, skip.
@@ -11189,7 +11250,7 @@
             activity.bestStreak      = Math.max(activity.bestStreak || 0, finalStreak);
             if (finalStreak === 0) {
                 activity.streakStartWindow = null;
-                activity.shieldCapUsed     = BASE_SHIELDS;
+                activity.shieldCapUsed     = shieldFloorFor(activity);
             } else {
                 // Always re-stamp from the walk — handles mid-walk resets where
                 // an earlier segment broke and a later one anchored elsewhere.
@@ -19113,22 +19174,27 @@
         const GRIT_BOOST_PER_MONTH  = 1;      // §5.2 calendar-month cap
         const GRIT_RATIO_CAP        = 1.30;   // §3.5
 
-        // §3.5 — weekly bonus curve, [ratio, grit], linearly interpolated
-        // between anchors and clamped at both ends.
+        // §3.5 / rate card §1.2 — weekly bonus curve, [ratio, grit], linearly
+        // interpolated between anchors and rounded to whole Grit.
         //
-        // ⚠ PROVISIONAL. `mindkraft-grit-rate-card.md` was not supplied with
-        // the spec, so these anchors are a placeholder shaped to the spec's
-        // intent (a real reward at target, a meaningful but not runaway
-        // overshoot bonus). Replace this array with the rate card's curve —
-        // it is the only place the numbers appear.
+        // Below 20% the payout is a hard zero, NOT an interpolation down to
+        // nothing: the rate card lists "Below 20% → 0" as its own row, so 19%
+        // pays nothing and 20% pays 30. The cliff is deliberate — it is the
+        // floor that makes the bonus mean "you showed up this week".
+        const GRIT_WEEKLY_MIN_RATIO = 0.20;
         const GRIT_WEEKLY_CURVE = [
-            [0.00,   0],
-            [0.50,   5],
-            [0.70,  12],
-            [0.85,  22],
-            [1.00,  40],
-            [1.15,  55],
-            [1.30,  70]
+            [0.20,  30],
+            [0.30,  36],
+            [0.40,  42],
+            [0.50,  48],
+            [0.60,  54],
+            [0.70,  60],
+            [0.80,  65],
+            [0.90,  70],
+            [1.00,  75],
+            [1.10,  83],
+            [1.20,  91],
+            [1.30, 100]
         ];
 
         // ── State access ──────────────────────────────────────────────────
@@ -19459,6 +19525,7 @@
         function gritCurve(ratio) {
             var c = GRIT_WEEKLY_CURVE;
             if (!c.length) return 0;
+            if (ratio < GRIT_WEEKLY_MIN_RATIO) return 0;   // the cliff, not a ramp
             if (ratio <= c[0][0]) return Math.round(c[0][1]);
             for (var i = 1; i < c.length; i++) {
                 if (ratio <= c[i][0]) {
@@ -19857,13 +19924,8 @@
         }
 
         // §5.1 — Streak shield, 40 Grit, uncapped. Buys into the pool.
-        //
-        // NOTE: purchase and placement are deliberately separate here, and
-        // placement is not built in this phase. The live streak system derives
-        // shield capacity (shieldCapUsed) from completionHistory on every
-        // login, so a shield written into an activity today is erased by the
-        // next derivation pass. The pool is the durable half; drawing from it
-        // lands with the shield-logic rework.
+        // Purchase and placement stay separate decisions: this only fills the
+        // pool. gritApplyShield() below moves one onto an activity.
         window.gritBuyShield = async function () {
             var res = await gritPurchase(GRIT_SHIELD_COST, 'shield_purchase',
                 function (g) { g.shieldPool = (g.shieldPool || 0) + 1; },
@@ -19909,6 +19971,86 @@
                       res.ok ? 'green' : 'red');
             gritRenderRewards();
             return res.ok;
+        };
+
+        // ── Applying a pooled shield to an activity ───────────────────────
+        // The mechanism is one appended event; the two shield folds already
+        // read it through shieldFloorFor(). Nothing about the existing streak
+        // grant, the consumption rule, or the backdating reconciliation is
+        // touched — this adds an event type and moves the cap, nothing else.
+        //
+        // Shields only do anything on an activity whose streak can break, so
+        // occasional activities and perform-mode negatives are not offered:
+        // neither accrues a streak for a shield to protect.
+        function gritShieldEligible(a) {
+            return !!a && !a.archived && !a.deleted &&
+                   !gritIsOccasional(a) && !gritIsPunitive(a);
+        }
+        window.gritShieldEligible = gritShieldEligible;
+
+        function gritShieldEventId() {
+            return 'sa-' + Date.now().toString(36) + '-' +
+                   Math.random().toString(36).slice(2, 9);
+        }
+
+        // The pool decrement and the event append are ONE write to
+        // users/{uid} — they are both fields of the same document, so a single
+        // setDoc makes "both or neither" a property of Firestore rather than a
+        // sequence we have to unwind. If the write fails, the in-memory pool
+        // and the event are both rolled back and nothing was spent.
+        let _gritApplyLock = false;
+        window.gritApplyShield = async function (activityId) {
+            var g = gritState();
+            if (!g) return { ok: false, message: 'Not signed in.' };
+            if (_gritApplyLock) return { ok: false, message: 'Hold on — that is still going through.' };
+
+            var a = gritFindActivity(activityId);
+            if (!a) return { ok: false, message: 'That activity no longer exists.' };
+            if (!gritShieldEligible(a)) {
+                return { ok: false, message: (a.name || 'That activity') + ' does not keep a streak, so a shield has nothing to protect.' };
+            }
+            if ((g.shieldPool || 0) <= 0) {
+                return { ok: false, message: 'No shields in your pool. Buy one for ' + GRIT_SHIELD_COST + ' Grit.' };
+            }
+            if (shieldCapNow(a) >= SHIELD_ABS_CAP) {
+                return { ok: false, message: (a.name || 'That activity') + ' is already at ' + SHIELD_ABS_CAP + ' shields — the maximum.' };
+            }
+
+            _gritApplyLock = true;
+            var prevPool = g.shieldPool;
+            var prevCap  = a.shieldCapUsed;
+            var hadArray = Array.isArray(a.shieldEvents);
+            var ev = { type: 'shield_applied', id: gritShieldEventId(), at: toLocalDateStr(new Date()) };
+            try {
+                if (!hadArray) a.shieldEvents = [];
+                a.shieldEvents.push(ev);
+                g.shieldPool = prevPool - 1;
+                // Refresh the stored capacity so the count is right on screen
+                // immediately; the next login walk derives the same number.
+                a.shieldCapUsed = shieldCapNow(a);
+
+                var saved = await gritPersist();
+                if (!saved) {
+                    // Neither half happened. Put everything back exactly.
+                    var at = a.shieldEvents.indexOf(ev);
+                    if (at !== -1) a.shieldEvents.splice(at, 1);
+                    if (!hadArray) delete a.shieldEvents;
+                    g.shieldPool = prevPool;
+                    a.shieldCapUsed = prevCap;
+                    gritLedgerWrite(0, g.balance, 'correction', {
+                        note: 'shield apply failed to persist; pool restored',
+                        activityId: a.id, activityTitle: a.name
+                    });
+                    gritRefreshUI();
+                    return { ok: false, message: 'Could not save that. Your shield is still in the pool.' };
+                }
+                gritFlushLedger();
+                try { updateDashboard(); } catch (e) {}
+                gritRefreshUI();
+                return { ok: true, cap: shieldCapNow(a), title: a.name };
+            } finally {
+                _gritApplyLock = false;
+            }
         };
 
         // Read by predictCompletionXP. Exactly ×2, never more, and never on a
@@ -20130,16 +20272,31 @@
             var boostsLeft = gritBoostsLeftThisMonth();
             html += '<h4 class="grit-h">Shop</h4><div class="grit-shop">';
 
+            var pool = g.shieldPool || 0;
             html += '<div class="grit-item' + (g.balance < GRIT_SHIELD_COST ? ' is-poor' : '') + '">' +
                       '<div class="grit-item-main">' +
                         '<div class="grit-item-name">🛡 Streak shield</div>' +
-                        '<div class="grit-item-sub">Goes into your shield pool. ' +
-                          'You hold ' + (g.shieldPool || 0) + '. Spending one on an activity ' +
-                          'arrives with the shield rework.</div>' +
+                        '<div class="grit-item-sub">Absorbs one missed window before your ' +
+                          'streak breaks. Bought into your pool, then placed on whichever ' +
+                          'activity you want protected.</div>' +
                       '</div>' +
                       '<button type="button" class="grit-buy" id="gritBuyShieldBtn"' +
                         (g.balance < GRIT_SHIELD_COST ? ' disabled' : '') + '>' +
                         GRIT_SHIELD_COST + '</button>' +
+                    '</div>';
+
+            // ── The pool: hold it, then place it ─────────────────────────
+            html += '<div class="grit-pool' + (pool > 0 ? ' has-shields' : '') + '">' +
+                      '<div class="grit-pool-row">' +
+                        '<span class="grit-pool-count">' + pool + '</span>' +
+                        '<span class="grit-pool-label">' +
+                          (pool === 1 ? 'shield in your pool' : 'shields in your pool') +
+                        '</span>' +
+                        (pool > 0
+                          ? '<button type="button" class="grit-pool-apply" id="gritApplyOpenBtn">Place one</button>'
+                          : '') +
+                      '</div>' +
+                      (pool > 0 ? '<div class="grit-pool-pick" id="gritApplyPick" hidden></div>' : '') +
                     '</div>';
 
             var boostBlocked = g.balance < GRIT_BOOST_COST || boostsLeft <= 0 || !!g.pendingBoost;
@@ -20185,6 +20342,15 @@
                 sb.disabled = true;                      // §5.4 — no double-tap
                 window.gritBuyShield().finally(function () { gritRenderRewards(); });
             });
+            var ao = document.getElementById('gritApplyOpenBtn');
+            if (ao) ao.addEventListener('click', function () {
+                var pick = document.getElementById('gritApplyPick');
+                if (!pick) return;
+                if (!pick.hidden) { pick.hidden = true; ao.textContent = 'Place one'; return; }
+                gritRenderShieldPicker(pick);
+                pick.hidden = false;
+                ao.textContent = 'Cancel';
+            });
             var bb = document.getElementById('gritBuyBoostBtn');
             if (bb) bb.addEventListener('click', function () {
                 bb.disabled = true;
@@ -20197,6 +20363,46 @@
         let _gritLogCache = null;
         let _gritLogCacheAt = 0;
         const GRIT_LOG_CACHE_MS = 30000;
+
+        // Lists every activity a shield can actually protect, with its current
+        // shield count, and refuses the ones already at the cap in place
+        // rather than after the tap.
+        function gritRenderShieldPicker(host) {
+            var eligible = gritAllActivities().filter(gritShieldEligible);
+            if (!eligible.length) {
+                host.innerHTML = '<div class="grit-empty">No activity here keeps a streak yet. ' +
+                    'Shields protect daily, weekly and custom-frequency activities.</div>';
+                return;
+            }
+            eligible.sort(function (a, b) { return (b.streak || 0) - (a.streak || 0); });
+            host.innerHTML = eligible.map(function (a) {
+                var cap  = shieldCapNow(a);
+                var full = cap >= SHIELD_ABS_CAP;
+                var used = getShieldsUsedDisplay(a);
+                return '<button type="button" class="grit-pick-row' + (full ? ' is-full' : '') + '"' +
+                         ' data-act="' + gritEsc(a.id) + '"' + (full ? ' disabled' : '') + '>' +
+                         '<span class="grit-pick-name">' + gritEsc(a.name || 'Activity') + '</span>' +
+                         '<span class="grit-pick-meta">' +
+                           (a.streak ? (a.streak + '-day streak · ') : '') +
+                           cap + '/' + SHIELD_ABS_CAP + ' shields' +
+                           (used ? ' · ' + used + ' used' : '') +
+                         '</span>' +
+                         '<span class="grit-pick-cta">' + (full ? 'Full' : '🛡 +1') + '</span>' +
+                       '</button>';
+            }).join('');
+
+            host.querySelectorAll('.grit-pick-row').forEach(function (btn) {
+                btn.addEventListener('click', async function () {
+                    // Disabled between click and write resolution (spec §6).
+                    host.querySelectorAll('.grit-pick-row').forEach(function (b) { b.disabled = true; });
+                    var res = await window.gritApplyShield(btn.getAttribute('data-act'));
+                    showToast(res.ok
+                        ? '🛡 Shield placed on ' + res.title + ' — now ' + res.cap + ' of ' + SHIELD_ABS_CAP
+                        : res.message, res.ok ? 'green' : 'red');
+                    gritRenderRewards(true);
+                });
+            });
+        }
 
         async function gritRenderLog() {
             var el = document.getElementById('gritLog');
