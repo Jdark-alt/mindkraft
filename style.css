@@ -14726,3 +14726,278 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
     .modal:not(:has(.modal-footer)) .modal-body { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
     .retro-picker-modal .retro-picker-scroll { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   GRIT — the Rewards tab (More › Rewards)
+   Tokens only, so both themes follow the app's own palette.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.grit-root {
+    padding: 4px 0 96px;
+    max-width: 620px;
+    margin: 0 auto;
+}
+
+/* ── Balance header ── */
+.grit-head {
+    text-align: center;
+    padding: 18px 16px 22px;
+}
+.grit-bal-label {
+    font: 700 9.5px Inter, sans-serif;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--color-text-secondary);
+}
+.grit-bal-num {
+    font: 700 clamp(40px, 12vw, 56px)/1 Inter, sans-serif;
+    letter-spacing: -0.03em;
+    color: var(--color-text-primary);
+    margin: 8px 0 6px;
+    font-variant-numeric: tabular-nums;
+}
+.grit-bal-sub {
+    font: 500 11.5px Inter, sans-serif;
+    color: var(--color-text-secondary);
+}
+
+/* ── Weekly bar ── */
+.grit-week {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: var(--color-bg-card);
+    border: 1px solid var(--color-border);
+    border-radius: 14px;
+    padding: 14px 16px 15px;
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+    transition: border-color .18s ease, background .18s ease;
+}
+.grit-week:hover { background: var(--color-hover-overlay-strong); }
+.grit-week-top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+.grit-week-title {
+    font: 700 10px Inter, sans-serif;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-text-secondary);
+}
+.grit-week-amt {
+    font: 700 15px Inter, sans-serif;
+    color: var(--color-text-primary);
+    font-variant-numeric: tabular-nums;
+}
+.grit-week-amt.is-target { color: var(--color-accent-xp-positive); }
+
+/* The track runs to the 1.30 ratio cap; the notch marks 100% of target. */
+.grit-week-track {
+    position: relative;
+    height: 10px;
+    border-radius: 999px;
+    background: var(--color-progress-track);
+    overflow: hidden;
+}
+.grit-week-fill {
+    display: block;
+    height: 100%;
+    min-width: 10px;
+    border-radius: 999px;
+    transition: width .45s cubic-bezier(.22,.61,.36,1), background .45s ease;
+}
+.grit-week-target {
+    position: absolute;
+    top: -1px;
+    bottom: -1px;
+    width: 2px;
+    background: var(--color-text-primary);
+    opacity: 0.35;
+    transform: translateX(-1px);
+}
+.grit-week-note {
+    margin-top: 9px;
+    font: 500 11.5px/1.5 Inter, sans-serif;
+    color: var(--color-text-secondary);
+}
+
+/* ── Weekly breakdown ── */
+.grit-breakdown {
+    margin-top: 8px;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    padding: 6px 14px 12px;
+}
+.grit-breakdown[hidden] { display: none; }
+.grit-bd-head,
+.grit-bd-row {
+    display: grid;
+    grid-template-columns: 1fr 44px 52px;
+    gap: 8px;
+    align-items: center;
+    padding: 7px 0;
+}
+.grit-bd-head {
+    font: 700 9px Inter, sans-serif;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--color-text-secondary);
+    border-bottom: 1px solid var(--color-border);
+}
+.grit-bd-head span:not(:first-child),
+.grit-bd-done, .grit-bd-quota { text-align: right; }
+.grit-bd-row + .grit-bd-row { border-top: 1px solid var(--color-border); }
+.grit-bd-name {
+    font: 500 12.5px Inter, sans-serif;
+    color: var(--color-text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.grit-bd-done, .grit-bd-quota {
+    font: 600 12.5px Inter, sans-serif;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-text-secondary);
+}
+.grit-bd-done { color: var(--color-text-primary); }
+.grit-bd-foot {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--color-border);
+    font: 500 11.5px/1.55 Inter, sans-serif;
+    color: var(--color-text-secondary);
+}
+.grit-bd-foot strong { color: var(--color-text-primary); }
+
+/* ── Section heading ── */
+.grit-h {
+    font: 700 10px Inter, sans-serif;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--color-text-secondary);
+    margin: 26px 0 10px;
+}
+
+/* ── Shop ── */
+.grit-shop { display: flex; flex-direction: column; gap: 8px; }
+.grit-item {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: var(--color-bg-card);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    padding: 13px 14px;
+}
+.grit-item.is-poor { opacity: 0.55; }
+.grit-item-main { flex: 1; min-width: 0; }
+.grit-item-name {
+    font: 600 13.5px Inter, sans-serif;
+    color: var(--color-text-primary);
+    margin-bottom: 3px;
+}
+.grit-item-sub {
+    font: 500 11.5px/1.5 Inter, sans-serif;
+    color: var(--color-text-secondary);
+}
+.grit-buy {
+    flex-shrink: 0;
+    min-width: 58px;
+    padding: 9px 12px;
+    border-radius: 9px;
+    border: 1px solid var(--color-border);
+    background: var(--color-input-bg);
+    color: var(--color-text-primary);
+    font: 700 13px Inter, sans-serif;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+    transition: background .16s ease, border-color .16s ease;
+}
+.grit-buy::before {
+    content: '◆ ';
+    color: #f5c563;
+    font-size: 10px;
+}
+.grit-buy:hover:not(:disabled) {
+    background: var(--color-hover-overlay-strong);
+    border-color: var(--color-accent-blue);
+}
+.grit-buy:disabled { cursor: not-allowed; opacity: 0.5; }
+
+/* ── Explainer ── */
+.grit-explain {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+}
+.grit-explain li {
+    padding: 11px 14px 11px 32px;
+    position: relative;
+    font: 500 12.5px/1.55 Inter, sans-serif;
+    color: var(--color-text-secondary);
+}
+.grit-explain li + li { border-top: 1px solid var(--color-border); }
+.grit-explain li::before {
+    content: '◆';
+    position: absolute;
+    left: 14px;
+    top: 11px;
+    font-size: 9px;
+    color: #f5c563;
+}
+
+/* ── Recent activity ── */
+.grit-log {
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    overflow: hidden;
+}
+.grit-log-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 10px;
+    align-items: baseline;
+    padding: 10px 14px;
+}
+.grit-log-row + .grit-log-row { border-top: 1px solid var(--color-border); }
+.grit-log-what {
+    font: 500 12.5px Inter, sans-serif;
+    color: var(--color-text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.grit-log-when {
+    font: 500 10.5px Inter, sans-serif;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+}
+.grit-log-amt {
+    font: 700 12.5px Inter, sans-serif;
+    font-variant-numeric: tabular-nums;
+    min-width: 34px;
+    text-align: right;
+}
+.grit-log-amt.is-up   { color: var(--color-accent-xp-positive); }
+.grit-log-amt.is-down { color: var(--color-accent-rose); }
+
+.grit-empty {
+    padding: 18px 14px;
+    text-align: center;
+    font: 500 12px/1.55 Inter, sans-serif;
+    color: var(--color-text-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .grit-week-fill { transition: none; }
+}

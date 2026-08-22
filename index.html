@@ -1726,42 +1726,13 @@
                 </div>
             </div>
             <div id="mkEmptyMoreRewards" class="tab-content">
-                <div class="empty-state mk-empty-page">
-                    <div class="empty-state-icon">🎁</div>
-                    <p>Rewards live here. Nothing to show yet.</p>
-                </div>
+                <!-- Rendered by gritRenderRewards() in app.js. Left empty here
+                     so there is exactly one source of truth for the markup. -->
+                <div id="gritRewardsRoot" class="grit-root"></div>
             </div>
 
         </div>
 
-    </div>
-
-    <!-- ══ Grit sheet (v5 nav) — new feature, self-contained, reuses .pl-modal ══ -->
-    <div id="mkGritModal" class="modal-overlay" onclick="if(event.target===this) mkCloseGrit()">
-        <div class="modal pl-modal">
-            <div class="modal-header pl-modal-header">
-                <div>
-                    <div class="pl-modal-eyebrow">Wallet</div>
-                    <h3 class="modal-title">Grit</h3>
-                </div>
-                <button class="pl-modal-close" onclick="mkCloseGrit()" aria-label="Close">✕</button>
-            </div>
-            <div class="modal-body pl-modal-body">
-                <div class="mk-grit-balance-row">
-                    <div style="flex:1;">
-                        <div style="font:700 9.5px Inter,sans-serif;letter-spacing:0.16em;text-transform:uppercase;color:var(--color-text-secondary);">Balance</div>
-                        <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f5c563" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.6 20.4 11 12 21.4 3.6 11 Z"/><path d="M7.6 11h8.8" opacity="0.6"/></svg>
-                            <span class="mk-grit-balance-num" id="mkGritModalVal">0</span>
-                        </div>
-                    </div>
-                </div>
-                <div>
-                    <div class="mk-kicker">Spend</div>
-                    <div class="mk-grit-spend-list" id="mkGritSpendList"></div>
-                </div>
-            </div>
-        </div>
     </div>
 
     <!-- Search Overlay -->
@@ -3015,22 +2986,13 @@
             ] }
         ];
 
-        var GRIT_SPEND = [
-            { name: 'Streak shield', sub: 'Protects one activity for a day', cost: 40 },
-            { name: 'Gift a shield', sub: 'Send a shield to a friend', cost: 60 },
-            { name: 'Start a friend challenge', sub: 'Invite a friend to a head-to-head', cost: 25 },
-            { name: 'Generate a map branch', sub: 'New tech-tree branch from your history', cost: 100 }
-        ];
-
         var state = { t: 2, s: 0, mem: [0, 0, 0, 0], navStyle: 'plate',
-                      spin: -2 * STEP, subSpin: 0, grit: 1240 };
+                      spin: -2 * STEP, subSpin: 0 };
         var ledgerTimer = null;
 
         try {
             var savedStyle = localStorage.getItem('mk_nav_style');
             if (savedStyle && NAV_STYLES.indexOf(savedStyle) !== -1) state.navStyle = savedStyle;
-            var savedGrit = parseInt(localStorage.getItem('mk_grit_balance'), 10);
-            if (!isNaN(savedGrit)) state.grit = savedGrit;
         } catch (e) {}
 
         function $(id) { return document.getElementById(id); }
@@ -3044,6 +3006,10 @@
             for (var i = 0; i < nodes.length; i++) nodes[i].classList.remove('active');
             var el = $(elId);
             if (el) el.classList.add('active');
+            /* Rewards is the only one of these pages with live content. */
+            if (elId === 'mkEmptyMoreRewards' && typeof window.gritOpenRewards === 'function') {
+                window.gritOpenRewards();
+            }
             return el;
         }
 
@@ -3297,10 +3263,13 @@
             placeAction(action);
         }
 
+        /* The header chip mirrors the persisted Grit balance. app.js owns the
+           number and calls back through window.mkRenderGrit on every change. */
         function renderGrit() {
-            var v = $('mkGritVal'); if (v) v.textContent = state.grit.toLocaleString();
-            var m = $('mkGritModalVal'); if (m) m.textContent = state.grit.toLocaleString();
+            var n = (typeof window.gritBalance === 'function') ? window.gritBalance() : 0;
+            var v = $('mkGritVal'); if (v) v.textContent = (n || 0).toLocaleString();
         }
+        window.mkRenderGrit = renderGrit;
 
         /* ── Navigation actions ── */
         /* Shortest signed step from `from` to `to` around a ring of `n`. */
@@ -3466,48 +3435,10 @@
             renderNav();
         };
 
-        /* ── Grit sheet (new, self-contained — see commit message for scope note) ── */
-        function renderGritSpend() {
-            var list = $('mkGritSpendList');
-            if (!list) return;
-            list.innerHTML = '';
-            GRIT_SPEND.forEach(function (item, i) {
-                var btn = document.createElement('button');
-                btn.type = 'button';
-                btn.className = 'mk-grit-spend-row';
-                btn.disabled = state.grit < item.cost;
-                btn.innerHTML =
-                    '<span style="flex:1;min-width:0;">' +
-                        '<span class="mk-grit-spend-name"></span>' +
-                        '<span class="mk-grit-spend-sub"></span>' +
-                    '</span>' +
-                    '<span class="mk-grit-spend-cost">' +
-                        '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#f5c563" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.6 20.4 11 12 21.4 3.6 11 Z"/></svg>' +
-                        item.cost +
-                    '</span>';
-                btn.querySelector('.mk-grit-spend-name').textContent = item.name;
-                btn.querySelector('.mk-grit-spend-sub').textContent = item.sub;
-                btn.addEventListener('click', function () { spendGrit(i); });
-                list.appendChild(btn);
-            });
-        }
-        function spendGrit(i) {
-            var item = GRIT_SPEND[i];
-            if (!item || state.grit < item.cost) return;
-            state.grit -= item.cost;
-            try { localStorage.setItem('mk_grit_balance', String(state.grit)); } catch (e) {}
-            renderGrit();
-            renderGritSpend();
-        }
-        window.mkOpenGrit = function () {
-            renderGritSpend();
-            var modal = $('mkGritModal');
-            if (modal) modal.classList.add('active');
-        };
-        window.mkCloseGrit = function () {
-            var modal = $('mkGritModal');
-            if (modal) modal.classList.remove('active');
-        };
+        /* The header chip is now a shortcut to More › Rewards, which is the
+           home of the whole currency system — balance, weekly progress, shop
+           and history in one place instead of a second half-copy in a sheet. */
+        window.mkOpenGrit = function () { window.mkGoSub(3, 1); };
 
         /* ══════════════════════════════════════════════════════════════
            Bottom sheets — every .modal-overlay dialog docks to the bottom

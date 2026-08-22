@@ -1,6 +1,6 @@
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
         import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js';
-        import { getFirestore, doc, getDoc, getDocFromCache, setDoc, addDoc, updateDoc, deleteDoc, collection, query, where, getDocs, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
+        import { getFirestore, doc, getDoc, getDocFromCache, setDoc, addDoc, updateDoc, deleteDoc, collection, query, where, getDocs, onSnapshot, writeBatch, orderBy, limit, documentId } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
         import { getAnalytics, logEvent } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-analytics.js';
         import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-functions.js';
 
@@ -5621,8 +5621,11 @@
             const shouldGrantStreak   = !isOcc && (isCust ? cycleWasEmpty : !alreadyGrantedToday);
             const newStreak           = isOcc ? 0 : (shouldGrantStreak ? currentStreak + 1 : currentStreak);
             const multiplier          = isOcc ? 1 : calculateConsistencyMultiplier(newStreak);
-            const earnedXP            = Math.floor((activity.baseXP || 0) * multiplier);
-            return { currentStreak, todayStr, shouldGrantStreak, newStreak, multiplier, earnedXP };
+            // Grit's armed double-XP boost (§5.2). Exactly x2, never more, and
+            // consumed by gritOnCompletion() once the completion lands.
+            const gritBoosted         = (typeof gritIsBoostArmed === 'function') && gritIsBoostArmed(activity);
+            const earnedXP            = Math.floor((activity.baseXP || 0) * multiplier) * (gritBoosted ? 2 : 1);
+            return { currentStreak, todayStr, shouldGrantStreak, newStreak, multiplier, earnedXP, gritBoosted };
         }
 
         window.completeActivity = async function(dimIndex, pathIndex, actIndex) {
@@ -5694,6 +5697,9 @@
             activity.completionCount = (activity.completionCount || 0) + 1;
             activity.totalXP = (activity.totalXP || 0) + earnedXP;
             recordCompletion(activity, activity.isNegative ? -earnedXP : earnedXP);
+            // Grit: +1 drip, week numerator, cadence bonus, streak milestones
+            // and boost consumption — one call, same beat as the XP above.
+            try { gritOnCompletion(activity); } catch (e) { console.warn('Grit completion hook failed', e); }
 
             // Apply XP to the parent dimension's level track
             const _dimForAct = window.userData.dimensions[dimIndex];
@@ -6027,6 +6033,7 @@
             if (foundActivity.completionHistory.length > 365) foundActivity.completionHistory.shift();
 
             await applyRetroactiveRecalculation(foundActivity, foundDi, xp);
+            try { gritOnRetroComplete(foundActivity, dateStr); } catch (e) { console.warn('Grit retro hook failed', e); }
             if (typeof renderHistoryEdit === 'function') renderHistoryEdit();
             renderActivityHistory(true);
             showToast(`✓ Logged ${foundActivity.name} for ${dateStr} (+${xp} XP)`, 'blue');
@@ -6080,6 +6087,12 @@
             // Normal entry: stored xp is positive → delta is negative (deduct from total).
             // Penalty entry: stored xp is negative → delta is positive (restore the deduction).
             await applyRetroactiveRecalculation(foundActivity, foundDi, -deletedXP);
+            // Grit: a deleted completion inside the current week leaves the
+            // numerator, mirroring the add. Grit already paid is never clawed
+            // back — no path in this system takes Grit away.
+            if (!isPenaltyEntry) {
+                try { gritOnRetroDelete(foundActivity, entryDateStr); } catch (e) { console.warn('Grit retro-delete hook failed', e); }
+            }
             if (typeof renderHistoryEdit === 'function') renderHistoryEdit();
             renderActivityHistory(true);
             showToast(`↩ Removed entry for ${entryDateStr}`, 'blue');
@@ -11203,6 +11216,10 @@
                     })));
             // Tech Tree mastery rides the same recompute pass.
             if (typeof evaluateTechTreeMastery === 'function' && evaluateTechTreeMastery()) anyChanged = true;
+            // Grit rides it too: localStorage migration, week rollover + weekly
+            // bonus, and the marker-guarded streak/mastery sweeps. Runs after
+            // the streak walk above so it reads settled streaks.
+            try { if (gritOnLogin()) anyChanged = true; } catch (e) { console.warn('Grit login pass failed', e); }
             if (anyChanged) {
                 try { await saveUserData(); } catch(e) { console.warn('processStreakPauses save failed', e); }
             }
@@ -15898,6 +15915,12 @@
                     try { showToast('🏅 Mastered: ' + act.name, 'green'); } catch (err) {}
                 }
             });
+            // Grit's mastery payout (§4.4) rides this pass. Placed inside the
+            // evaluator rather than at its call sites because this function
+            // runs on login, after every completion AND on every render — the
+            // award is marker-guarded (§8.5), so running it three times pays
+            // exactly once.
+            try { if (gritCheckMastery()) changed = true; } catch (err) { console.warn('Grit mastery hook failed', err); }
             // Guarantee migration has run before evaluating (this pass also
             // runs on the login path). Persist if migration just happened.
             var wasV3 = window.userData.techTree && window.userData.techTree.schemaVersion === 3;
@@ -19046,3 +19069,1191 @@
                 // Deliberately not re-armed: the next back press exits.
             });
         })();
+
+
+        // ════════════════════════════════════════════════════════════════════
+        // ══ GRIT CURRENCY SYSTEM ════════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════════
+        //
+        // Self-contained. Everything below is namespaced `grit*` and reaches
+        // the rest of the app through four surgical hook points only:
+        //
+        //   predictCompletionXP()  — reads the armed XP boost (×2)
+        //   completeActivity()     — one call to gritOnCompletion()
+        //   retroactiveComplete()  — one call to gritOnRetroComplete()
+        //   retroactiveDelete()    — one call to gritOnRetroDelete()
+        //   processStreakPauses()  — one call to gritOnLogin()
+        //
+        // Balance and state live in `userData.grit` (rides the existing
+        // saveUserData full-document write). The ledger lives in the
+        // `users/{uid}/gritLedger` SUBCOLLECTION so saveUserData's setDoc
+        // can never clobber it and it never bloats the user document.
+        //
+        // NOTHING here touches the tech tree's unsealing, modes, quests or
+        // social features (§8.12). It reads `techTreeMasteredAt` — a value
+        // the tech tree already writes — and nothing else.
+        // ════════════════════════════════════════════════════════════════════
+
+        // ── Rate card ─────────────────────────────────────────────────────
+        // Single source of truth for every number in the system.
+        const GRIT_SCHEMA_VERSION   = 1;
+        const GRIT_DRIP             = 1;      // §4.1 per completion
+        const GRIT_CADENCE_BONUS    = 5;      // §4.2 occasional on-rhythm
+        const GRIT_CADENCE_MIN_PRIOR = 4;     // §4.2 prior completions required
+        const GRIT_CADENCE_SAMPLE   = 6;      // §4.2 last N completions for the median
+        const GRIT_CADENCE_LO       = 0.5;    // §4.2 window around the median
+        const GRIT_CADENCE_HI       = 1.5;
+        const GRIT_STREAK_TIERS     = [       // §4.3 [days, grit]
+            [7, 10], [14, 20], [30, 40], [60, 60], [100, 100]
+        ];
+        const GRIT_MASTERY_FLOOR    = 40;     // §4.4 1 per required rep, clamped
+        const GRIT_MASTERY_CAP      = 120;
+        const GRIT_SHIELD_COST      = 40;     // §5.1 uncapped
+        const GRIT_BOOST_COST       = 50;     // §5.2
+        const GRIT_BOOST_PER_MONTH  = 1;      // §5.2 calendar-month cap
+        const GRIT_RATIO_CAP        = 1.30;   // §3.5
+
+        // §3.5 — weekly bonus curve, [ratio, grit], linearly interpolated
+        // between anchors and clamped at both ends.
+        //
+        // ⚠ PROVISIONAL. `mindkraft-grit-rate-card.md` was not supplied with
+        // the spec, so these anchors are a placeholder shaped to the spec's
+        // intent (a real reward at target, a meaningful but not runaway
+        // overshoot bonus). Replace this array with the rate card's curve —
+        // it is the only place the numbers appear.
+        const GRIT_WEEKLY_CURVE = [
+            [0.00,   0],
+            [0.50,   5],
+            [0.70,  12],
+            [0.85,  22],
+            [1.00,  40],
+            [1.15,  55],
+            [1.30,  70]
+        ];
+
+        // ── State access ──────────────────────────────────────────────────
+        // Returns the live grit object, creating it on first touch. Never
+        // returns null: callers that run before sign-in get a throwaway that
+        // is discarded when userData loads.
+        function gritState() {
+            if (!window.userData) return null;
+            var g = window.userData.grit;
+            if (!g || typeof g !== 'object') {
+                g = window.userData.grit = {
+                    schemaVersion: GRIT_SCHEMA_VERSION,
+                    balance: 0, lifetimeEarned: 0, lifetimeSpent: 0,
+                    shieldPool: 0,
+                    week: null,
+                    awarded: {},
+                    boostPurchases: [],
+                    cadence: {},
+                    pendingBoost: null
+                };
+            }
+            if (g.schemaVersion !== GRIT_SCHEMA_VERSION) g.schemaVersion = GRIT_SCHEMA_VERSION;
+            if (typeof g.balance !== 'number' || !isFinite(g.balance)) g.balance = 0;
+            if (typeof g.lifetimeEarned !== 'number') g.lifetimeEarned = 0;
+            if (typeof g.lifetimeSpent !== 'number') g.lifetimeSpent = 0;
+            if (typeof g.shieldPool !== 'number') g.shieldPool = 0;
+            if (!g.awarded || typeof g.awarded !== 'object') g.awarded = {};
+            if (!Array.isArray(g.boostPurchases)) g.boostPurchases = [];
+            if (!g.cadence || typeof g.cadence !== 'object') g.cadence = {};
+            return g;
+        }
+
+        function gritBalance() { var g = gritState(); return g ? g.balance : 0; }
+        window.gritBalance = gritBalance;
+
+        // ── Ledger (users/{uid}/gritLedger) ───────────────────────────────
+        // Append-only. Never mutated, never deleted. Entry ids are
+        // timestamp-prefixed so `orderBy(documentId(), 'desc')` pages newest
+        // first with no composite index.
+        let _gritLedgerBuffer = [];
+        let _gritLedgerTimer  = null;
+        let _gritLedgerSeq    = 0;
+
+        function gritLedgerId(atISO) {
+            // 2026-08-22T09:14:07.221Z → 20260822T091407221 + seq + rand,
+            // so ids sort chronologically and never collide inside one ms.
+            var stamp = String(atISO).replace(/[-:.]/g, '').replace('Z', '');
+            _gritLedgerSeq = (_gritLedgerSeq + 1) % 1000;
+            return stamp + '-' + String(_gritLedgerSeq).padStart(3, '0') + '-' +
+                   Math.random().toString(36).slice(2, 7);
+        }
+
+        // Buffers an entry. §2.2: the per-completion drip fires constantly, so
+        // we never write a document per tap — the balance in userData updates
+        // immediately and the ledger catches up on a debounce, on tab blur,
+        // and on unload.
+        function gritLedgerWrite(delta, balanceAfter, reason, meta) {
+            var at = new Date().toISOString();
+            var entry = {
+                at: at, delta: delta, balanceAfter: balanceAfter, reason: reason,
+                meta: meta || {}
+            };
+            _gritLedgerBuffer.push({ id: gritLedgerId(at), data: entry });
+            clearTimeout(_gritLedgerTimer);
+            _gritLedgerTimer = setTimeout(function () { gritFlushLedger(); }, 5000);
+            return entry;
+        }
+
+        async function gritFlushLedger() {
+            clearTimeout(_gritLedgerTimer);
+            _gritLedgerTimer = null;
+            if (!_gritLedgerBuffer.length) return;
+            if (!canPersistUserData('gritLedger')) return;   // keep buffered; retry later
+            var pending = _gritLedgerBuffer;
+            _gritLedgerBuffer = [];
+            try {
+                var uid = window.currentUser.uid;
+                // Firestore caps a batch at 500 writes.
+                for (var i = 0; i < pending.length; i += 400) {
+                    var slice = pending.slice(i, i + 400);
+                    var batch = writeBatch(db);
+                    slice.forEach(function (e) {
+                        batch.set(doc(db, 'users', uid, 'gritLedger', e.id), e.data);
+                    });
+                    await batch.commit();
+                }
+                _gritLogCache = null;
+            } catch (err) {
+                // Put them back — the ledger is append-only and must not lose
+                // entries. Balance is already correct in userData either way.
+                console.warn('Grit ledger flush failed, re-buffering:', err && err.message);
+                _gritLedgerBuffer = pending.concat(_gritLedgerBuffer);
+            }
+        }
+
+        async function gritReadLedger(max) {
+            if (!canPersistUserData('gritLedgerRead')) return [];
+            try {
+                var col = collection(db, 'users', window.currentUser.uid, 'gritLedger');
+                var snap = await getDocs(query(col, orderBy(documentId(), 'desc'), limit(max || 20)));
+                var out = [];
+                snap.forEach(function (d) { out.push(d.data()); });
+                return out;
+            } catch (err) {
+                console.warn('Grit ledger read failed:', err && err.message);
+                return [];
+            }
+        }
+
+        // ── Balance arithmetic ────────────────────────────────────────────
+        // §8.4 the balance never goes negative; §8.6 every change writes a
+        // ledger entry with an attributable reason.
+        function gritApplyDelta(delta, reason, meta) {
+            var g = gritState();
+            if (!g) return 0;
+            delta = Math.round(delta || 0);
+            if (!delta) return g.balance;
+
+            var raw = g.balance + delta;
+            if (raw < 0) {
+                // Should be unreachable — every spend path checks first. If we
+                // get here the arithmetic is wrong somewhere, so clamp and say
+                // so in the ledger rather than silently carrying a negative.
+                var shortfall = -raw;
+                var applied = delta + shortfall;          // what actually moved
+                console.warn('Grit: clamped a negative balance (' + raw + ') from ' + reason);
+                g.balance = 0;
+                if (delta < 0) g.lifetimeSpent += -applied;
+                gritLedgerWrite(applied, 0, reason, meta || {});
+                // The correction carries delta 0 on purpose: nothing was
+                // credited, so summing every delta in the ledger still lands
+                // exactly on the balance. It is a note in the record of a
+                // clamp that happened, with the arithmetic that caused it.
+                gritLedgerWrite(0, 0, 'correction', {
+                    note: 'clamped to zero', attemptedFrom: reason,
+                    attemptedDelta: delta, shortfall: shortfall
+                });
+                gritRefreshUI();
+                return 0;
+            }
+
+            g.balance = raw;
+            if (delta > 0) g.lifetimeEarned += delta; else g.lifetimeSpent += -delta;
+            gritLedgerWrite(delta, g.balance, reason, meta || {});
+            gritRefreshUI();
+            return g.balance;
+        }
+
+        // Persists userData and reports success honestly. §5.3 requires
+        // persistence to precede the grant, so purchases need a save they can
+        // actually check — saveUserData() swallows its error and alerts.
+        async function gritPersist() {
+            if (!canPersistUserData('gritPersist')) return false;
+            try {
+                await setDoc(doc(db, 'users', window.currentUser.uid), window.userData);
+                return true;
+            } catch (err) {
+                console.error('Grit persist failed:', err);
+                return false;
+            }
+        }
+
+        // ── Dates ─────────────────────────────────────────────────────────
+        // All Grit dates are local YYYY-MM-DD via the app's existing
+        // toLocalDateStr(). completionHistory stores full ISO timestamps, so
+        // every comparison goes through this pair.
+        function gritDayOf(isoOrDate) {
+            return toLocalDateStr(isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate));
+        }
+
+        // Monday 00:00 local of the week containing `d` (§3.1).
+        function gritWeekAnchorOf(d) {
+            var dt = d ? new Date(d.getTime()) : new Date();
+            dt.setHours(0, 0, 0, 0);
+            dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7));   // 0=Sun → back 6
+            return dt;
+        }
+        function gritWeekAnchorStr(d) { return toLocalDateStr(gritWeekAnchorOf(d)); }
+
+        function gritDaysBetween(aISO, bISO) {
+            return (new Date(bISO).getTime() - new Date(aISO).getTime()) / 86400000;
+        }
+
+        // ── Activity classification ───────────────────────────────────────
+        function gritAllActivities() {
+            var out = [];
+            ((window.userData && window.userData.dimensions) || []).forEach(function (dim) {
+                (dim.paths || []).forEach(function (path) {
+                    (path.activities || []).forEach(function (act) { out.push(act); });
+                });
+            });
+            return out;
+        }
+
+        function gritFindActivity(id) {
+            var hit = null;
+            gritAllActivities().some(function (a) { if (a.id === id) { hit = a; return true; } return false; });
+            return hit;
+        }
+
+        function gritIsOccasional(a) {
+            return a.frequency === 'occasional' || a.frequency === 'one-time' || !a.frequency;
+        }
+
+        // A perform-mode negative habit costs XP when done. Putting one in the
+        // denominator would pay the user to do the thing they are trying to
+        // stop, so it is excluded from BOTH the quota and the drip. Skip-mode
+        // negatives (isSkipNegative) pay positive XP when performed and are
+        // treated as ordinary activities.
+        function gritIsPunitive(a) {
+            return !!(a.isNegative && !a.isSkipNegative);
+        }
+
+        function gritIsCountable(a) {
+            return !!a && !a.archived && !a.deleted && !gritIsPunitive(a);
+        }
+
+        // §3.2 — lookback window for liveness, in days.
+        //   daily / weekly → 7; anything longer → its own cycle length.
+        function gritLookbackDays(a) {
+            switch (a.frequency) {
+                case 'daily':    return 7;
+                case 'weekly':   return 7;
+                case 'biweekly': return 14;
+                case 'monthly':  return 30;
+                case 'custom':
+                    if (a.customSubtype === 'days') return 7;   // day-pinned: weekly window
+                    return Math.max(7, a.customDays || 1);
+                default:         return 7;
+            }
+        }
+
+        // §3.3 — weekly quota units this activity contributes.
+        //   daily 7 · weekly 1 · biweekly 0.5 · monthly 7/30
+        //   custom cycle: 7 × timesPerCycle ÷ customDays
+        //   custom day-pinned: 1 per required completion, NOT one per eligible
+        //     day — pinning narrows WHEN, not HOW MUCH
+        //   occasional / one-time / no frequency: 0, always (§8.8)
+        function gritQuotaUnits(a) {
+            if (!gritIsCountable(a)) return 0;
+            if (gritIsOccasional(a)) return 0;
+            switch (a.frequency) {
+                case 'daily':    return 7;
+                case 'weekly':   return 1;
+                case 'biweekly': return 7 / 14;
+                case 'monthly':  return 7 / 30;
+                case 'custom': {
+                    var n = Math.max(1, a.timesPerCycle || 1);
+                    if (a.customSubtype === 'days') {
+                        // No eligible day pinned → nothing is owed this week.
+                        if (!a.scheduledDays || !a.scheduledDays.length) return 0;
+                        return n;
+                    }
+                    var d = Math.max(1, a.customDays || 1);
+                    return 7 * n / d;
+                }
+                default: return 0;
+            }
+        }
+
+        // §3.2 — at least one completion inside the lookback window, counted
+        // backward from the week anchor. No dormant flag, no user toggle: an
+        // activity you stopped doing quietly leaves the denominator.
+        function gritIsLive(a, refDate) {
+            var backMs = refDate.getTime() - gritLookbackDays(a) * 86400000;
+            var refMs  = refDate.getTime();
+            var hist = a.completionHistory || [];
+            // Scanned newest-first but WITHOUT an early exit on the first
+            // too-old entry. completionHistory is kept sorted everywhere it is
+            // written, but liveness decides whether an activity is in the
+            // denominator at all — too load-bearing to rest on an ordering
+            // invariant maintained somewhere else. 365 entries at most.
+            for (var i = hist.length - 1; i >= 0; i--) {
+                var e = hist[i];
+                if (!e || e.isPenalty || (e.xp || 0) <= 0) continue;
+                var t = new Date(e.date).getTime();
+                if (t >= backMs && t < refMs) return true;
+            }
+            return false;
+        }
+
+        // Builds the frozen denominator for the week starting `anchorDate`.
+        function gritBuildWeekQuota(anchorDate) {
+            var contributors = [];
+            var quota = 0;
+            gritAllActivities().forEach(function (a) {
+                if (!gritIsCountable(a)) return;
+                var units = gritQuotaUnits(a);
+                if (units <= 0) return;
+                if (!gritIsLive(a, anchorDate)) return;
+                quota += units;
+                contributors.push({
+                    activityId: a.id,
+                    title: a.name || 'Activity',
+                    quotaUnits: Math.round(units * 100) / 100
+                });
+            });
+            return { quota: Math.round(quota * 100) / 100, contributors: contributors };
+        }
+
+        // ── The weekly quota engine (§3) ──────────────────────────────────
+
+        function gritNewWeek(anchorStr) {
+            // Liveness is measured backward from the moment the week actually
+            // opens. On a Monday-morning open that is the anchor, exactly as
+            // §3.2 describes. When the week is opened LATE — a cold start on a
+            // Wednesday, a first run after deploy, a user returning mid-week —
+            // the anchor is already in the past, and measuring from it would
+            // ignore everything they have done since Monday and hand them an
+            // empty denominator for a week they were plainly active in. The
+            // reference is therefore the later of the anchor and now.
+            var anchorDate = new Date(anchorStr + 'T00:00:00');
+            var now = new Date();
+            var built = gritBuildWeekQuota(now > anchorDate ? now : anchorDate);
+            return {
+                anchor: anchorStr,
+                quota: built.quota,
+                completions: 0,
+                byActivity: {},          // numerator split, so §3.4 deletions
+                                         // can be subtracted from it
+                contributors: built.contributors,
+                reconciledAt: null
+            };
+        }
+
+        // §3.5 — payout curve, linearly interpolated between anchors and
+        // rounded to whole Grit.
+        function gritCurve(ratio) {
+            var c = GRIT_WEEKLY_CURVE;
+            if (!c.length) return 0;
+            if (ratio <= c[0][0]) return Math.round(c[0][1]);
+            for (var i = 1; i < c.length; i++) {
+                if (ratio <= c[i][0]) {
+                    var span = c[i][0] - c[i - 1][0];
+                    var f = span > 0 ? (ratio - c[i - 1][0]) / span : 0;
+                    return Math.round(c[i - 1][1] + f * (c[i][1] - c[i - 1][1]));
+                }
+            }
+            return Math.round(c[c.length - 1][1]);
+        }
+
+        // §3.5 — ratio = min(completions / quota, 1.30). A zero denominator
+        // is NOT a divide-by-zero and NOT a payout: it is "nothing has a
+        // frequency set", which the UI says plainly (§8.9).
+        function gritWeekRatio(week) {
+            if (!week || !week.quota || week.quota <= 0) return null;
+            return Math.min(week.completions / week.quota, GRIT_RATIO_CAP);
+        }
+
+        function gritProjectedBonus(week) {
+            var r = gritWeekRatio(week);
+            return r === null ? 0 : gritCurve(r);
+        }
+
+        // §3.4 — activities deleted mid-week leave the denominator immediately
+        // and take their completions out of the numerator with them. Done
+        // lazily (on every week touch and every render) rather than by hooking
+        // the several delete paths, so no deletion route can miss it.
+        function gritReconcileContributors(g) {
+            var w = g.week;
+            if (!w || !Array.isArray(w.contributors)) return false;
+            var changed = false;
+            var kept = [];
+            w.contributors.forEach(function (c) {
+                if (gritFindActivity(c.activityId)) { kept.push(c); return; }
+                w.quota = Math.max(0, Math.round((w.quota - c.quotaUnits) * 100) / 100);
+                changed = true;
+            });
+            if (changed) w.contributors = kept;
+
+            // Numerator: drop the completions of activities that no longer
+            // exist. deleteOnComplete activities are excluded — they are
+            // *meant* to vanish on completion and their completion was real.
+            var by = w.byActivity || (w.byActivity = {});
+            Object.keys(by).forEach(function (id) {
+                if (by[id] && by[id].keepOnDelete) return;
+                if (gritFindActivity(id)) return;
+                var n = (typeof by[id] === 'number') ? by[id] : (by[id].n || 0);
+                if (n > 0) { w.completions = Math.max(0, w.completions - n); changed = true; }
+                delete by[id];
+            });
+            return changed;
+        }
+
+        function gritBumpNumerator(g, activity, delta) {
+            var w = g.week;
+            if (!w) return;
+            w.completions = Math.max(0, w.completions + delta);
+            var by = w.byActivity || (w.byActivity = {});
+            var cur = by[activity.id];
+            var rec = (cur && typeof cur === 'object') ? cur : { n: (typeof cur === 'number' ? cur : 0) };
+            rec.n = Math.max(0, (rec.n || 0) + delta);
+            // An occasional activity with deleteOnComplete removes itself the
+            // instant it is completed. Mark the tally so the reconcile pass
+            // above doesn't then take the completion back.
+            if (activity.deleteOnComplete) rec.keepOnDelete = true;
+            if (rec.n === 0 && !rec.keepOnDelete) delete by[activity.id]; else by[activity.id] = rec;
+        }
+
+        // §3.6 — rollover. Called on login and before every write that touches
+        // the week. Returns true when anything changed.
+        let _gritEnsuring = false;
+        function gritEnsureWeek(opts) {
+            var g = gritState();
+            if (!g || _gritEnsuring) return false;
+            _gritEnsuring = true;
+            try { return gritEnsureWeekInner(g); } finally { _gritEnsuring = false; }
+        }
+
+        function gritEnsureWeekInner(g) {
+            var nowAnchor = gritWeekAnchorStr(new Date());
+            var changed = false;
+
+            if (!g.week || !g.week.anchor) {
+                g.week = gritNewWeek(nowAnchor);
+                return true;
+            }
+
+            if (g.week.anchor === nowAnchor) {
+                return gritReconcileContributors(g) || changed;
+            }
+
+            // ── A boundary has passed ─────────────────────────────────────
+            // The stored week is the most recent week the app actually
+            // observed. §3.6: reconcile that one and only that one. If the
+            // user was away for a month, the weeks in between were never
+            // observed, have no frozen denominator and no completions — they
+            // pay nothing and are not reconstructed.
+            var closed = g.week;
+            gritReconcileContributors(g);
+            var marker = 'weekly:' + closed.anchor;
+            if (!g.awarded[marker]) {
+                g.awarded[marker] = true;
+                var ratio = gritWeekRatio(closed);
+                var payout = ratio === null ? 0 : gritCurve(ratio);
+                closed.reconciledAt = new Date().toISOString();
+                if (payout > 0) {
+                    gritApplyDelta(payout, 'weekly_bonus', {
+                        ratio: Math.round(ratio * 1000) / 1000,
+                        quota: closed.quota,
+                        completions: closed.completions,
+                        anchor: closed.anchor
+                    });
+                    gritBurstAdd('Weekly consistency (' + Math.round(ratio * 100) + '% of target)', payout);
+                }
+                g.lastClosedWeek = {
+                    anchor: closed.anchor, quota: closed.quota,
+                    completions: closed.completions,
+                    ratio: ratio, payout: payout
+                };
+            }
+
+            // §3.6.3–4 — rebuild the denominator against current activities,
+            // reset the numerator, advance straight to the current Monday.
+            g.week = gritNewWeek(nowAnchor);
+            return true;
+        }
+
+        // ── Earn: idempotency ─────────────────────────────────────────────
+        // §8.5 — every award path is idempotent by explicit marker, never by
+        // assuming single execution. Mastery and streak evaluation each run on
+        // login, after every completion AND on every render.
+        function gritAwardOnce(marker, amount, reason, meta, toastLabel) {
+            var g = gritState();
+            if (!g || g.awarded[marker]) return false;
+            g.awarded[marker] = true;
+            gritApplyDelta(amount, reason, meta);
+            if (toastLabel) gritBurstAdd(toastLabel, amount);
+            return true;
+        }
+
+        // ── Earn: streak milestones (§4.3) ────────────────────────────────
+        // Awards every unpaid tier at or below the current streak, so a
+        // retroactive edit that jumps a streak from 5 to 31 pays 7, 14 and 30
+        // once each. A rebuilt streak never re-pays: the marker lives for the
+        // life of the activity (§4.3).
+        function gritCheckStreakMilestones(activity) {
+            if (!gritIsCountable(activity) || gritIsOccasional(activity)) return false;
+            var streak = activity.streak || 0;
+            if (streak <= 0) return false;
+            var any = false;
+            GRIT_STREAK_TIERS.forEach(function (tier) {
+                if (streak < tier[0]) return;
+                var paid = gritAwardOnce(
+                    'streak:' + activity.id + ':' + tier[0], tier[1], 'streak_milestone',
+                    { activityId: activity.id, activityTitle: activity.name, streakDays: tier[0] },
+                    tier[0] + '-day streak on ' + (activity.name || 'activity')
+                );
+                if (paid) any = true;
+            });
+            return any;
+        }
+
+        // ── Earn: mastery (§4.4) ──────────────────────────────────────────
+        // 1 Grit per required rep, floored at 40 and capped at 120. The
+        // required rep count is techTreeMastery.count — the same figure
+        // ttMasteryProgress() measures against. The tech-tree node that
+        // resolves alongside mastery pays nothing extra: one event, one payout.
+        function gritMasteryReps(activity) {
+            var th = activity.techTreeMastery ||
+                     (typeof ttMasteryDefaultFor === 'function'
+                        ? ttMasteryDefaultFor(activity.frequency) : null);
+            return Math.max(1, (th && th.count) || 1);
+        }
+
+        function gritCheckMastery() {
+            var g = gritState();
+            if (!g) return false;
+            var any = false;
+            gritAllActivities().forEach(function (a) {
+                if (!a.techTreeMasteredAt) return;
+                if (g.awarded['mastery:' + a.id]) return;
+                var reps = gritMasteryReps(a);
+                var pay = Math.min(GRIT_MASTERY_CAP, Math.max(GRIT_MASTERY_FLOOR, reps));
+                if (gritAwardOnce('mastery:' + a.id, pay, 'mastery',
+                        { activityId: a.id, activityTitle: a.name, masteryReps: reps },
+                        'Mastered ' + (a.name || 'activity'))) any = true;
+            });
+            return any;
+        }
+
+        // ── Earn: occasional cadence bonus (§4.2) ─────────────────────────
+        // +5 when an occasional activity lands inside its established rhythm.
+        // Needs ≥4 PRIOR completions before it activates, so a rhythm can't be
+        // faked quickly; gaps are fractional days, so completing something
+        // twice in one day falls below the 50% floor and pays nothing.
+        function gritMedian(nums) {
+            if (!nums.length) return 0;
+            var s = nums.slice().sort(function (a, b) { return a - b; });
+            var m = Math.floor(s.length / 2);
+            return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+        }
+
+        function gritCheckCadence(activity, thisCompletionISO) {
+            var g = gritState();
+            if (!g || !gritIsOccasional(activity) || !gritIsCountable(activity)) return 0;
+
+            // Prior completions only — this one is already in history.
+            var hist = (activity.completionHistory || [])
+                .filter(function (e) { return !e.isPenalty && (e.xp || 0) > 0; })
+                .map(function (e) { return e.date; })
+                .sort();
+            var idx = hist.lastIndexOf(thisCompletionISO);
+            var prior = idx === -1 ? hist.slice(0, -1) : hist.slice(0, idx);
+            if (prior.length < GRIT_CADENCE_MIN_PRIOR) return 0;
+
+            var sample = prior.slice(-GRIT_CADENCE_SAMPLE);
+            var gaps = [];
+            for (var i = 1; i < sample.length; i++) gaps.push(gritDaysBetween(sample[i - 1], sample[i]));
+            if (!gaps.length) return 0;
+            var median = gritMedian(gaps);
+
+            var currentGap = gritDaysBetween(prior[prior.length - 1], thisCompletionISO);
+            var onRhythm = median > 0 &&
+                currentGap >= median * GRIT_CADENCE_LO &&
+                currentGap <= median * GRIT_CADENCE_HI;
+
+            // §4.2 — refresh the stored cadence after every completion,
+            // whether or not the bonus paid.
+            var allGaps = [];
+            var full = prior.concat([thisCompletionISO]).slice(-(GRIT_CADENCE_SAMPLE + 1));
+            for (var j = 1; j < full.length; j++) allGaps.push(gritDaysBetween(full[j - 1], full[j]));
+            g.cadence[activity.id] = {
+                medianGapDays: Math.round(gritMedian(allGaps) * 10) / 10,
+                sampleCount: full.length
+            };
+
+            if (!onRhythm) return 0;
+            gritApplyDelta(GRIT_CADENCE_BONUS, 'cadence_bonus', {
+                activityId: activity.id, activityTitle: activity.name,
+                medianGapDays: Math.round(median * 10) / 10,
+                gapDays: Math.round(currentGap * 10) / 10
+            });
+            return GRIT_CADENCE_BONUS;
+        }
+
+        // ── Earn: the completion drip (§4.1) ──────────────────────────────
+        // The single hook completeActivity() calls, in the same beat as XP.
+        function gritOnCompletion(activity) {
+            var g = gritState();
+            if (!g || !activity) return;
+            if (!gritIsCountable(activity)) return;   // perform-mode negatives earn nothing
+
+            gritEnsureWeek();
+
+            gritApplyDelta(GRIT_DRIP, 'completion',
+                { activityId: activity.id, activityTitle: activity.name });
+            gritBumpNumerator(g, activity, +1);
+            gritBurstAdd(activity.name || 'Completion', GRIT_DRIP);
+
+            var tail = (activity.completionHistory || [])
+                .filter(function (e) { return e && !e.isPenalty && (e.xp || 0) > 0; }).slice(-1)[0];
+            var cad = gritCheckCadence(activity,
+                tail ? tail.date : (activity.lastCompleted || new Date().toISOString()));
+            if (cad) gritBurstAdd('On rhythm — ' + (activity.name || 'activity'), cad);
+
+            gritCheckStreakMilestones(activity);
+            gritConsumeBoost(activity);
+            // Deliberately NOT flushed here. Mastery is evaluated by the tech
+            // tree a few milliseconds after completeActivity returns, so the
+            // burst's own debounce is what lets a completion that also crosses
+            // a streak threshold AND completes a mastery read as one toast
+            // instead of three (§6.2).
+            gritRefreshUI();
+        }
+
+        // §4.1 — a backdated completion pays its drip either way. Landing it
+        // inside the CURRENT week also feeds the numerator; landing it in a
+        // CLOSED week does not retroactively move that week's ratio and never
+        // triggers a re-reconcile. Backdating stays free and unlimited (§8.3).
+        function gritOnRetroComplete(activity, dateStr) {
+            var g = gritState();
+            if (!g || !activity || !gritIsCountable(activity)) return;
+            gritEnsureWeek();
+            gritApplyDelta(GRIT_DRIP, 'completion',
+                { activityId: activity.id, activityTitle: activity.name, backdatedTo: dateStr });
+            if (g.week && dateStr >= g.week.anchor) gritBumpNumerator(g, activity, +1);
+            gritBurstAdd((activity.name || 'Completion') + ' (' + dateStr + ')', GRIT_DRIP);
+            gritCheckStreakMilestones(activity);
+            gritRefreshUI();
+        }
+
+        // Deleting a completion inside the current week takes it back out of
+        // the numerator, mirroring the add. The drip already paid is NOT
+        // reclaimed — no spec path claws Grit back, and doing so would make
+        // history editing feel punitive.
+        function gritOnRetroDelete(activity, dateStr) {
+            var g = gritState();
+            if (!g || !activity || !g.week) return;
+            if (dateStr >= g.week.anchor) gritBumpNumerator(g, activity, -1);
+            gritRefreshUI();
+        }
+
+        // ── Login pass ────────────────────────────────────────────────────
+        // Rides processStreakPauses(), which has already recomputed every
+        // streak from history by the time this runs. Returns true when
+        // anything changed so the caller's single write picks it up.
+        function gritOnLogin() {
+            var g = gritState();
+            if (!g) return false;
+            var changed = false;
+            if (gritMigrateLocalBalance()) changed = true;
+            if (gritEnsureWeek()) changed = true;
+            gritAllActivities().forEach(function (a) {
+                if (gritCheckStreakMilestones(a)) changed = true;
+            });
+            if (gritCheckMastery()) changed = true;
+            gritFlushBurst();
+            gritRefreshUI();
+            return changed;
+        }
+
+        // §1.1 — one-time migration off the placeholder's localStorage key.
+        // Firestore wins if both exist; the key is dropped either way.
+        function gritMigrateLocalBalance() {
+            var g = gritState();
+            if (!g) return false;
+            var raw = null;
+            try { raw = localStorage.getItem('mk_grit_balance'); } catch (e) { return false; }
+            if (raw === null) return false;
+            var seeded = false;
+            var n = parseInt(raw, 10);
+            if (!g.awarded['migration'] && !isNaN(n) && n > 0 && g.balance === 0 &&
+                g.lifetimeEarned === 0 && g.lifetimeSpent === 0) {
+                g.awarded['migration'] = true;
+                gritApplyDelta(n, 'migration', { note: 'seeded from local placeholder balance' });
+                seeded = true;
+            }
+            try { localStorage.removeItem('mk_grit_balance'); } catch (e) {}
+            return seeded;
+        }
+
+        // ── Spend (§5) ────────────────────────────────────────────────────
+        // Every purchase: check against the PERSISTED balance, refuse cleanly
+        // rather than ever going negative, decrement → ledger → persist →
+        // THEN grant, and roll the whole thing back if the write fails.
+        // Double-tap is blocked by _gritPurchaseLock plus the caller
+        // disabling the button until the write resolves.
+        let _gritPurchaseLock = false;
+
+        function gritMonthKey(d) {
+            var dt = d || new Date();
+            return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0');
+        }
+
+        // §5.2 — remaining boost allowance this calendar month.
+        function gritBoostsLeftThisMonth() {
+            var g = gritState();
+            if (!g) return 0;
+            var mk = gritMonthKey();
+            var used = g.boostPurchases.filter(function (p) { return p && p.month === mk; }).length;
+            return Math.max(0, GRIT_BOOST_PER_MONTH - used);
+        }
+
+        async function gritPurchase(cost, reason, grant, revert, meta) {
+            var g = gritState();
+            if (!g) return { ok: false, message: 'Not signed in.' };
+            if (_gritPurchaseLock) return { ok: false, message: 'Hold on — a purchase is still going through.' };
+            if (g.balance < cost) {
+                return { ok: false, message: 'You need ' + (cost - g.balance) + ' more Grit for that.' };
+            }
+            _gritPurchaseLock = true;
+
+            var before = { balance: g.balance, lifetimeSpent: g.lifetimeSpent };
+            var bufferMark = _gritLedgerBuffer.length;
+            try {
+                gritApplyDelta(-cost, reason, meta || {});
+                grant(g);
+                var saved = await gritPersist();
+                if (!saved) {
+                    // §5.3 — persistence precedes the grant. It didn't land,
+                    // so nothing happened: unwind state and the ledger entry.
+                    revert(g);
+                    g.balance = before.balance;
+                    g.lifetimeSpent = before.lifetimeSpent;
+                    _gritLedgerBuffer.length = bufferMark;
+                    gritRefreshUI();
+                    return { ok: false, message: 'Could not save that purchase. Nothing was spent.' };
+                }
+                gritFlushLedger();
+                gritRefreshUI();
+                return { ok: true };
+            } finally {
+                _gritPurchaseLock = false;
+            }
+        }
+
+        // §5.1 — Streak shield, 40 Grit, uncapped. Buys into the pool.
+        //
+        // NOTE: purchase and placement are deliberately separate here, and
+        // placement is not built in this phase. The live streak system derives
+        // shield capacity (shieldCapUsed) from completionHistory on every
+        // login, so a shield written into an activity today is erased by the
+        // next derivation pass. The pool is the durable half; drawing from it
+        // lands with the shield-logic rework.
+        window.gritBuyShield = async function () {
+            var res = await gritPurchase(GRIT_SHIELD_COST, 'shield_purchase',
+                function (g) { g.shieldPool = (g.shieldPool || 0) + 1; },
+                function (g) { g.shieldPool = Math.max(0, (g.shieldPool || 0) - 1); },
+                { item: 'streak_shield' });
+            showToast(res.ok ? '🛡 Shield added to your pool — 40 Grit' : res.message,
+                      res.ok ? 'green' : 'red');
+            gritRenderRewards();
+            return res.ok;
+        };
+
+        // §5.2 — Double XP on the next completion, 50 Grit, once per calendar
+        // month. Armed, not assigned: buy it, then tap whichever completion
+        // you want doubled.
+        window.gritBuyBoost = async function () {
+            var g = gritState();
+            if (!g) return false;
+            if (g.pendingBoost) {
+                showToast('You already have a double-XP boost armed.', 'olive');
+                return false;
+            }
+            if (gritBoostsLeftThisMonth() <= 0) {
+                showToast('Double XP is limited to once a calendar month.', 'red');
+                return false;
+            }
+            var mk = gritMonthKey();
+            var res = await gritPurchase(GRIT_BOOST_COST, 'xp_boost_purchase',
+                function (gg) {
+                    gg.pendingBoost = { activityId: null, purchasedAt: new Date().toISOString() };
+                    gg.boostPurchases.push({ month: mk, at: new Date().toISOString() });
+                    if (gg.boostPurchases.length > 24) gg.boostPurchases = gg.boostPurchases.slice(-24);
+                },
+                function (gg) {
+                    gg.pendingBoost = null;
+                    for (var i = gg.boostPurchases.length - 1; i >= 0; i--) {
+                        if (gg.boostPurchases[i] && gg.boostPurchases[i].month === mk) {
+                            gg.boostPurchases.splice(i, 1); break;
+                        }
+                    }
+                },
+                { item: 'xp_boost', month: mk });
+            showToast(res.ok ? '⚡ Double XP armed — your next completion counts twice' : res.message,
+                      res.ok ? 'green' : 'red');
+            gritRenderRewards();
+            return res.ok;
+        };
+
+        // Read by predictCompletionXP. Exactly ×2, never more, and never on a
+        // perform-mode negative (doubling a penalty is not a reward).
+        function gritIsBoostArmed(activity) {
+            var g = window.userData && window.userData.grit;
+            if (!g || !g.pendingBoost) return false;
+            if (!activity || !gritIsCountable(activity)) return false;
+            if (g.pendingBoost.activityId && g.pendingBoost.activityId !== activity.id) return false;
+            return true;
+        }
+        window.gritIsBoostArmed = gritIsBoostArmed;
+
+        function gritConsumeBoost(activity) {
+            var g = gritState();
+            if (!g || !gritIsBoostArmed(activity)) return false;
+            g.pendingBoost = null;
+            gritBurstNote('⚡ Double XP spent on ' + (activity.name || 'that completion'));
+            return true;
+        }
+
+        // ── Award feedback (§6.2) ─────────────────────────────────────────
+        // One attributed toast per beat, not one per award: a completion that
+        // also crosses a streak threshold reads as a single line. Awards are
+        // collected across the whole tick (completion → streak → mastery, each
+        // fired from a different place) and flushed together.
+        let _gritBurst = [];
+        let _gritBurstNotes = [];
+        let _gritBurstTimer = null;
+
+        function gritBurstAdd(label, amount) {
+            _gritBurst.push({ label: label, amount: amount });
+            clearTimeout(_gritBurstTimer);
+            _gritBurstTimer = setTimeout(gritFlushBurst, 120);
+        }
+        function gritBurstNote(text) {
+            _gritBurstNotes.push(text);
+            clearTimeout(_gritBurstTimer);
+            _gritBurstTimer = setTimeout(gritFlushBurst, 120);
+        }
+
+        function gritFlushBurst() {
+            clearTimeout(_gritBurstTimer);
+            _gritBurstTimer = null;
+            var items = _gritBurst; _gritBurst = [];
+            var notes = _gritBurstNotes; _gritBurstNotes = [];
+            notes.forEach(function (n) { try { showToast(n, 'blue'); } catch (e) {} });
+            if (!items.length) return;
+            var total = items.reduce(function (s, i) { return s + i.amount; }, 0);
+            if (total <= 0) return;
+            var msg;
+            if (items.length === 1) {
+                msg = items[0].label + ' — +' + total + ' Grit';
+            } else {
+                var top = items.slice().sort(function (a, b) { return b.amount - a.amount; });
+                var named = top.slice(0, 3);
+                var rest = top.length - named.length;
+                msg = named.map(function (i) { return i.label + ' +' + i.amount; }).join(' · ') +
+                      (rest > 0 ? ' · and ' + rest + ' more' : '') +
+                      ' — +' + total + ' Grit';
+            }
+            try { showToast('◆ ' + msg, 'green'); } catch (e) {}
+        }
+
+        // ── UI plumbing ───────────────────────────────────────────────────
+        function gritRefreshUI() {
+            try { if (typeof window.mkRenderGrit === 'function') window.mkRenderGrit(); } catch (e) {}
+            gritRenderRewards();
+        }
+        window.gritRefreshUI = gritRefreshUI;
+
+        function gritFillColor(ratio) {
+            if (ratio === null) return 'var(--color-progress-track)';
+            var t = Math.max(0, Math.min(1, ratio));      // 0 → target
+            // Hue travels the SHORT way round the wheel — 356° up through
+            // 0/amber to 96° green. Interpolating 356 → 96 directly runs
+            // backwards through blue, which is not a progress colour.
+            var hue = (356 + 100 * t) % 360;              // red → amber → green
+            var sat = 58 + 6 * t;
+            var lit = 46 + 6 * t;
+            if (ratio > 1) { hue = 96; sat = 62; lit = 52; }   // overshoot: hold green
+            return 'hsl(' + hue.toFixed(0) + ' ' + sat.toFixed(0) + '% ' + lit.toFixed(0) + '%)';
+        }
+
+        function gritEsc(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        // Human phrasing for a ledger row (§6.1 "Recent activity").
+        function gritLedgerPhrase(e) {
+            var m = e.meta || {};
+            var title = m.activityTitle || 'an activity';
+            switch (e.reason) {
+                case 'completion':       return m.backdatedTo
+                                            ? 'Logged ' + title + ' for ' + m.backdatedTo
+                                            : 'Completed ' + title;
+                case 'cadence_bonus':    return 'On rhythm — ' + title;
+                case 'weekly_bonus':     return 'Weekly bonus — ' +
+                                            (m.ratio != null ? Math.round(m.ratio * 100) + '% of target' : 'consistency');
+                case 'streak_milestone': return m.streakDays + '-day streak on ' + title;
+                case 'mastery':          return 'Mastered ' + title;
+                case 'shield_purchase':  return 'Bought a streak shield';
+                case 'xp_boost_purchase':return 'Bought double XP';
+                case 'migration':        return 'Balance carried over';
+                case 'correction':       return 'Balance correction';
+                default:                 return e.reason;
+            }
+        }
+
+        function gritRelTime(iso) {
+            var mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+            if (mins < 1)    return 'just now';
+            if (mins < 60)   return mins + 'm ago';
+            var h = Math.round(mins / 60);
+            if (h < 24)      return h + 'h ago';
+            var d = Math.round(h / 24);
+            return d < 7 ? d + 'd ago' : gritDayOf(iso);
+        }
+
+        // ── The Rewards tab (§6) ──────────────────────────────────────────
+        // Lives under More, adjacent to Analytics. The home of the whole
+        // currency system: balance, the live weekly bar, the frozen breakdown,
+        // the shop, the explainer and recent history.
+        let _gritRewardsBusy = false;
+
+        function gritRewardsVisible() {
+            var el = document.getElementById('mkEmptyMoreRewards');
+            return !!(el && el.classList.contains('active'));
+        }
+
+        let _gritRendering = false;
+        function gritRenderRewards(force) {
+            var host = document.getElementById('gritRewardsRoot');
+            if (!host || _gritRendering) return;
+            if (!force && !gritRewardsVisible()) return;
+            _gritRendering = true;
+            try { gritRenderRewardsInner(host, force); } finally { _gritRendering = false; }
+        }
+
+        function gritRenderRewardsInner(host, force) {
+            var g = gritState();
+            if (!g) { host.innerHTML = '<div class="grit-empty">Sign in to see your Grit.</div>'; return; }
+            gritEnsureWeek();
+
+            var w = g.week || gritNewWeek(gritWeekAnchorStr(new Date()));
+            var ratio = gritWeekRatio(w);
+            var pct = ratio === null ? 0 : Math.min(1, ratio / GRIT_RATIO_CAP);
+            var projected = gritProjectedBonus(w);
+            var atTarget = ratio !== null && ratio >= 1;
+
+            var html = '';
+
+            // ── Balance header + the live weekly bar ──────────────────────
+            html += '<div class="grit-head">' +
+                      '<div class="grit-bal-label">Grit balance</div>' +
+                      '<div class="grit-bal-num">' + (g.balance || 0).toLocaleString() + '</div>' +
+                      '<div class="grit-bal-sub">' +
+                        (g.lifetimeEarned || 0).toLocaleString() + ' earned · ' +
+                        (g.lifetimeSpent || 0).toLocaleString() + ' spent' +
+                      '</div>' +
+                    '</div>';
+
+            html += '<button type="button" class="grit-week" id="gritWeekBar" ' +
+                        'aria-expanded="false" aria-controls="gritBreakdown">';
+            if (ratio === null) {
+                html += '<div class="grit-week-top">' +
+                          '<span class="grit-week-title">This week</span>' +
+                          '<span class="grit-week-amt">No bonus</span>' +
+                        '</div>' +
+                        '<div class="grit-week-track"><span class="grit-week-fill" style="width:0%"></span></div>' +
+                        '<div class="grit-week-note">None of your activities have a frequency set, ' +
+                          'so there is no weekly target to measure against — and no weekly bonus. ' +
+                          'Give an activity a frequency and it starts counting next Monday.</div>';
+            } else {
+                html += '<div class="grit-week-top">' +
+                          '<span class="grit-week-title">This week</span>' +
+                          '<span class="grit-week-amt' + (atTarget ? ' is-target' : '') + '">+' + projected + ' Grit</span>' +
+                        '</div>' +
+                        '<div class="grit-week-track' + (atTarget ? ' is-target' : '') + '">' +
+                          '<span class="grit-week-fill" style="width:' + (pct * 100).toFixed(1) + '%;' +
+                            'background:' + gritFillColor(ratio) + '"></span>' +
+                          '<span class="grit-week-target" style="left:' + (100 / GRIT_RATIO_CAP).toFixed(1) + '%"></span>' +
+                        '</div>' +
+                        '<div class="grit-week-note">' +
+                          w.completions + ' of ' + (Math.round(w.quota * 10) / 10) + ' — ' +
+                          Math.round(ratio * 100) + '% of target. Tap for the breakdown.' +
+                        '</div>';
+            }
+            html += '</button>';
+
+            // ── Weekly breakdown (frozen contributors) ────────────────────
+            html += '<div class="grit-breakdown" id="gritBreakdown" hidden>';
+            if (!w.contributors || !w.contributors.length) {
+                html += '<div class="grit-empty">Nothing is in this week\'s target. ' +
+                        'Activities join the denominator on the Monday after you start doing them.</div>';
+            } else {
+                html += '<div class="grit-bd-head"><span>Activity</span><span>Done</span><span>Target</span></div>';
+                w.contributors.forEach(function (c) {
+                    var rec = (w.byActivity || {})[c.activityId];
+                    var done = rec == null ? 0 : (typeof rec === 'number' ? rec : (rec.n || 0));
+                    html += '<div class="grit-bd-row">' +
+                              '<span class="grit-bd-name">' + gritEsc(c.title) + '</span>' +
+                              '<span class="grit-bd-done">' + done + '</span>' +
+                              '<span class="grit-bd-quota">' + (Math.round(c.quotaUnits * 10) / 10) + '</span>' +
+                            '</div>';
+                });
+                html += '<div class="grit-bd-foot">' +
+                          (ratio === null
+                            ? 'No target set, so no bonus this week.'
+                            : 'At ' + Math.round(ratio * 100) + '% of target you are on track for ' +
+                              '<strong>+' + projected + ' Grit</strong> when the week closes on Sunday.') +
+                        '</div>';
+            }
+            html += '</div>';
+
+            // ── Shop ─────────────────────────────────────────────────────
+            var boostsLeft = gritBoostsLeftThisMonth();
+            html += '<h4 class="grit-h">Shop</h4><div class="grit-shop">';
+
+            html += '<div class="grit-item' + (g.balance < GRIT_SHIELD_COST ? ' is-poor' : '') + '">' +
+                      '<div class="grit-item-main">' +
+                        '<div class="grit-item-name">🛡 Streak shield</div>' +
+                        '<div class="grit-item-sub">Goes into your shield pool. ' +
+                          'You hold ' + (g.shieldPool || 0) + '. Spending one on an activity ' +
+                          'arrives with the shield rework.</div>' +
+                      '</div>' +
+                      '<button type="button" class="grit-buy" id="gritBuyShieldBtn"' +
+                        (g.balance < GRIT_SHIELD_COST ? ' disabled' : '') + '>' +
+                        GRIT_SHIELD_COST + '</button>' +
+                    '</div>';
+
+            var boostBlocked = g.balance < GRIT_BOOST_COST || boostsLeft <= 0 || !!g.pendingBoost;
+            html += '<div class="grit-item' + (boostBlocked ? ' is-poor' : '') + '">' +
+                      '<div class="grit-item-main">' +
+                        '<div class="grit-item-name">⚡ Double XP</div>' +
+                        '<div class="grit-item-sub">' +
+                          (g.pendingBoost
+                            ? 'Armed — your next completion counts twice.'
+                            : 'Arms a ×2 on the next completion you choose. ' +
+                              boostsLeft + ' of ' + GRIT_BOOST_PER_MONTH + ' left this month.') +
+                        '</div>' +
+                      '</div>' +
+                      '<button type="button" class="grit-buy" id="gritBuyBoostBtn"' +
+                        (boostBlocked ? ' disabled' : '') + '>' +
+                        GRIT_BOOST_COST + '</button>' +
+                    '</div>';
+            html += '</div>';
+
+            // ── How Grit works ───────────────────────────────────────────
+            html += '<h4 class="grit-h">How Grit works</h4>' +
+                    '<ul class="grit-explain">' +
+                      '<li>You earn 1 Grit every time you complete an activity.</li>' +
+                      '<li>Each week, you earn a bonus based on what fraction of your frequency targets you hit.</li>' +
+                      '<li>Streaks and mastery pay out separately as you reach them.</li>' +
+                    '</ul>';
+
+            // ── Recent activity ──────────────────────────────────────────
+            html += '<h4 class="grit-h">Recent activity</h4>' +
+                    '<div class="grit-log" id="gritLog"><div class="grit-empty">Loading…</div></div>';
+
+            host.innerHTML = html;
+
+            var bar = document.getElementById('gritWeekBar');
+            var bd  = document.getElementById('gritBreakdown');
+            if (bar && bd) bar.addEventListener('click', function () {
+                var open = !bd.hidden;
+                bd.hidden = open;
+                bar.setAttribute('aria-expanded', String(!open));
+            });
+            var sb = document.getElementById('gritBuyShieldBtn');
+            if (sb) sb.addEventListener('click', function () {
+                sb.disabled = true;                      // §5.4 — no double-tap
+                window.gritBuyShield().finally(function () { gritRenderRewards(); });
+            });
+            var bb = document.getElementById('gritBuyBoostBtn');
+            if (bb) bb.addEventListener('click', function () {
+                bb.disabled = true;
+                window.gritBuyBoost().finally(function () { gritRenderRewards(); });
+            });
+
+            gritRenderLog();
+        }
+
+        let _gritLogCache = null;
+        let _gritLogCacheAt = 0;
+        const GRIT_LOG_CACHE_MS = 30000;
+
+        async function gritRenderLog() {
+            var el = document.getElementById('gritLog');
+            if (!el || _gritRewardsBusy) return;
+            _gritRewardsBusy = true;
+            try {
+                var stored;
+                if (_gritLogCache && (Date.now() - _gritLogCacheAt) < GRIT_LOG_CACHE_MS) {
+                    stored = _gritLogCache;
+                } else {
+                    stored = await gritReadLedger(20);
+                    _gritLogCache = stored;
+                    _gritLogCacheAt = Date.now();
+                }
+                // Entries still sitting in the write buffer are real and already
+                // reflected in the balance — show them rather than a gap.
+                var pending = _gritLedgerBuffer.map(function (b) { return b.data; }).reverse();
+                var rows = pending.concat(stored).slice(0, 20);
+                var live = document.getElementById('gritLog');
+                if (!live) return;
+                if (!rows.length) {
+                    live.innerHTML = '<div class="grit-empty">Nothing yet. Complete an activity to start earning.</div>';
+                    return;
+                }
+                live.innerHTML = rows.map(function (e) {
+                    var sign = e.delta > 0 ? '+' : '';
+                    return '<div class="grit-log-row">' +
+                             '<span class="grit-log-what">' + gritEsc(gritLedgerPhrase(e)) + '</span>' +
+                             '<span class="grit-log-when">' + gritEsc(gritRelTime(e.at)) + '</span>' +
+                             '<span class="grit-log-amt ' + (e.delta > 0 ? 'is-up' : 'is-down') + '">' +
+                               sign + e.delta + '</span>' +
+                           '</div>';
+                }).join('');
+            } finally {
+                _gritRewardsBusy = false;
+            }
+        }
+
+        // Called by the v5 nav when it activates More › Rewards.
+        window.gritOpenRewards = function () {
+            var host = document.getElementById('gritRewardsRoot');
+            if (!host) return;
+            try { if (typeof window.mkRenderGrit === 'function') window.mkRenderGrit(); } catch (e) {}
+            gritRenderRewards(true);
+        };
+        window.gritRenderRewards = gritRenderRewards;
+
+        // ── Ledger durability ─────────────────────────────────────────────
+        // The buffer must not die with the tab. Flush on blur and on unload;
+        // `visibilitychange` is the reliable one on mobile, where `unload`
+        // frequently never fires.
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'hidden') gritFlushLedger();
+        });
+        window.addEventListener('pagehide', function () { gritFlushLedger(); });
+        window.addEventListener('blur', function () { gritFlushLedger(); });
+
+        // ════════════════════════════════════════════════════════════════════
+        // ══ END GRIT CURRENCY SYSTEM ════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════════
