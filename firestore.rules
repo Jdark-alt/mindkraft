@@ -112,103 +112,101 @@ service cloud.firestore {
     // ══════════════════════════════════════════════════════════════════
     match /challenges/{challengeId} {
 
-      function auth()  { return request.auth.uid; }
-      function prev()  { return resource.data; }
-      function next()  { return request.resource.data; }
-      function foe()   { return prev().participants[0] == auth()
-                              ? prev().participants[1] : prev().participants[0]; }
+      // Firestore caps a single rule evaluation at 1000 expressions, and a
+      // DENIED write is the expensive case: it evaluates every branch before
+      // it can conclude. So this block is written for that budget —
+      // `diff().affectedKeys()` instead of field-by-field comparison, and a
+      // cheap status discriminator in front of every transition so only one
+      // heavy branch ever runs. An earlier version of these rules blew the
+      // ceiling, which denies the write with a limit error rather than a rule
+      // decision — indistinguishable from a real refusal, and it would
+      // eventually have bitten a legitimate write.
+
+      function auth()    { return request.auth.uid; }
+      function prev()    { return resource.data; }
+      function next()    { return request.resource.data; }
+      function changed() { return next().diff(prev()).affectedKeys(); }
       function otherThan(u) { return prev().participants[0] == u
                                    ? prev().participants[1] : prev().participants[0]; }
 
       // Terms both sides agreed to. None of it moves once the document
-      // exists; startedAt and endsAt are writable exactly once, on accept.
-      function frozen() {
-        return next().createdBy    == prev().createdBy
-            && next().opponent     == prev().opponent
-            && next().participants == prev().participants
-            && next().requirements == prev().requirements
-            && next().stake        == prev().stake
-            && next().durationDays == prev().durationDays
-            && next().createdAt    == prev().createdAt
-            && next().expiresAt    == prev().expiresAt
-            && next().name         == prev().name
-            && next().bonusXP      == prev().bonusXP
-            && next().names        == prev().names
-            && (prev().startedAt == null || next().startedAt == prev().startedAt)
-            && (prev().endsAt    == null || next().endsAt    == prev().endsAt);
+      // exists; startedAt and endsAt are writable exactly once, on accept,
+      // while they are both still null.
+      function termsFrozen() {
+        return !changed().hasAny(['createdBy', 'opponent', 'participants', 'requirements',
+                                  'stake', 'durationDays', 'createdAt', 'expiresAt',
+                                  'name', 'bonusXP', 'names', 'mode', 'schemaVersion'])
+            && (prev().startedAt == null || !changed().hasAny(['startedAt', 'endsAt']));
       }
 
-      // A participant may only ever touch their own slot of every per-user
-      // map. This is the rule that keeps one side out of the other's
-      // progress, mapping and payout claim.
-      function foeKeysIntact() {
-        return next().progress[foe()]      == prev().progress[foe()]
-            && next().mapping[foe()]       == prev().mapping[foe()]
-            && next().totals[foe()]        == prev().totals[foe()]
-            && next().payoutClaimed[foe()] == prev().payoutClaimed[foe()]
-            && next().seen[foe()]          == prev().seen[foe()];
+      // The rule that keeps one participant out of the other's half of the
+      // document. Every per-user map may gain or change exactly one key: the
+      // caller's own. This is what makes progress, mapping and the payout
+      // claim untouchable from the other side.
+      function ownKeysOnly() {
+        return next().progress.diff(prev().progress).affectedKeys().hasOnly([auth()])
+            && next().mapping.diff(prev().mapping).affectedKeys().hasOnly([auth()])
+            && next().totals.diff(prev().totals).affectedKeys().hasOnly([auth()])
+            && next().payoutClaimed.diff(prev().payoutClaimed).affectedKeys().hasOnly([auth()])
+            && next().seen.diff(prev().seen).affectedKeys().hasOnly([auth()]);
       }
 
-      // Every terminal transition zeroes the pot and records exactly that
-      // pot across the two payout slots. Grit is neither created nor
-      // destroyed by a resolution.
-      function payoutConserved() {
+      // Every terminal transition zeroes the pot and records exactly that pot
+      // across the two payout slots. Grit is neither created nor destroyed by
+      // a resolution.
+      function potConserved() {
         return next().pot == 0
-            && next().payout[prev().participants[0]]
-             + next().payout[prev().participants[1]] == prev().pot
             && next().payout[prev().participants[0]] >= 0
-            && next().payout[prev().participants[1]] >= 0;
+            && next().payout[prev().participants[1]] >= 0
+            && next().payout[prev().participants[0]]
+             + next().payout[prev().participants[1]] == prev().pot;
       }
 
-      function claimsIntact() { return next().payoutClaimed == prev().payoutClaimed; }
+      // ── Status unchanged ──────────────────────────────────────────
+      function markSeen() { return changed().hasOnly(['seen']); }
 
-      // ── Playing: progress, totals and `seen` ──────────────────────
       function play() {
-        return next().status     == prev().status
-            && next().pot        == prev().pot
-            && next().payout     == prev().payout
-            && next().winner     == prev().winner
-            && next().outcome    == prev().outcome
-            && next().resolvedAt == prev().resolvedAt
-            && next().mapping    == prev().mapping
-            && claimsIntact()
-            // counters only move while the contest is actually running
-            && (prev().status == 'active'
-                || (next().progress == prev().progress && next().totals == prev().totals));
+        return prev().status == 'active'
+            && !changed().hasAny(['pot', 'payout', 'winner', 'outcome',
+                                  'resolvedAt', 'mapping', 'payoutClaimed']);
       }
 
-      // ── Accept: the opponent stakes and the clock starts ──────────
+      // Claiming your own payout: false → true, and nothing else moves. That
+      // flag is what makes the claim idempotent however many times a client
+      // retries it.
+      function claim() {
+        return prev().status != 'pending'
+            && prev().status != 'active'
+            && !changed().hasAny(['pot', 'payout', 'winner', 'outcome',
+                                  'resolvedAt', 'mapping', 'progress', 'totals'])
+            && prev().payoutClaimed[auth()] == false
+            && next().payoutClaimed[auth()] == true;
+      }
+
+      // ── Transitions ───────────────────────────────────────────────
       function accept() {
-        return prev().status == 'pending'
-            && auth() == prev().opponent
-            && next().status == 'active'
+        return auth() == prev().opponent
             && next().pot == prev().stake * 2
             && next().startedAt is number
             && next().endsAt == next().startedAt + prev().durationDays * 86400000
             && next().winner == null
             && next().outcome == null
             && next().resolvedAt == null
-            && next().payout   == prev().payout
-            && next().progress == prev().progress
-            && next().totals   == prev().totals
-            && claimsIntact()
-            // every requirement must be mapped before the stake is taken
+            && !changed().hasAny(['payout', 'payoutClaimed', 'progress', 'totals'])
+            // every requirement mapped before the stake is taken
             && next().mapping[auth()].size() == prev().requirements.size();
       }
 
-      // ── Decline / withdraw / expire: identical refund ─────────────
-      // Only the challenger has paid while a challenge is pending —
-      // escrow happens at invite — so the whole pot is owed back to them.
+      // Decline, withdraw and expire refund identically. Only the challenger
+      // has paid while a challenge is pending — escrow happens at invite — so
+      // the whole pot is owed back to them, and the decliner cannot redirect
+      // it to themselves.
       function endPending() {
-        return prev().status == 'pending'
-            && next().winner == null
+        return next().winner == null
             && next().resolvedAt is number
-            && payoutConserved()
+            && potConserved()
             && next().payout[prev().createdBy] == prev().pot
-            && next().mapping  == prev().mapping
-            && next().progress == prev().progress
-            && next().totals   == prev().totals
-            && claimsIntact()
+            && !changed().hasAny(['mapping', 'progress', 'totals', 'payoutClaimed'])
             && (
                  (next().status == 'declined'
                     && next().outcome == 'declined_refund'
@@ -222,17 +220,13 @@ service cloud.firestore {
                );
       }
 
-      // ── Resolve an active challenge ───────────────────────────────
       // Whoever's client gets here first wins the race; the loser's write
-      // fails the `prev().status == 'active'` guard and is a no-op, so two
-      // clients resolving at once cannot double-pay.
+      // fails the status discriminator and is a no-op, so two clients
+      // resolving at once cannot double-pay.
       function resolveActive() {
-        return prev().status == 'active'
-            && next().status == 'resolved'
-            && next().resolvedAt is number
-            && next().mapping == prev().mapping
-            && payoutConserved()
-            && claimsIntact()
+        return next().resolvedAt is number
+            && !changed().hasAny(['mapping', 'payoutClaimed'])
+            && potConserved()
             && (
                  // Level at the deadline — both stakes go home whole.
                  (next().winner == null
@@ -240,11 +234,10 @@ service cloud.firestore {
                     && next().payout[prev().participants[0]]
                     == next().payout[prev().participants[1]])
 
-                 // Forfeit. You may only ever forfeit YOURSELF: the winner
-                 // has to be the other side, so this cannot be used to
-                 // declare a win.
+                 // Forfeit. You may only ever forfeit YOURSELF: the winner has
+                 // to be the other side, so this cannot buy a win.
               || (next().outcome == 'forfeit'
-                    && next().winner == foe()
+                    && next().winner == otherThan(auth())
                     && next().payout[next().winner] == prev().pot)
 
                  // Won on the counters. The winner must not be behind.
@@ -253,25 +246,6 @@ service cloud.firestore {
                     && next().payout[next().winner] == prev().pot
                     && next().totals[next().winner] >= next().totals[otherThan(next().winner)])
                );
-      }
-
-      // ── Claim your own payout ─────────────────────────────────────
-      // The only key in payoutClaimed a user may write, and only from
-      // false to true. That flag is what makes the claim idempotent no
-      // matter how many times a client retries it.
-      function claim() {
-        return prev().status in ['resolved', 'expired', 'declined', 'cancelled']
-            && next().status     == prev().status
-            && next().pot        == prev().pot
-            && next().payout     == prev().payout
-            && next().winner     == prev().winner
-            && next().outcome    == prev().outcome
-            && next().resolvedAt == prev().resolvedAt
-            && next().mapping    == prev().mapping
-            && next().progress   == prev().progress
-            && next().totals     == prev().totals
-            && prev().payoutClaimed[auth()] == false
-            && next().payoutClaimed[auth()] == true;
       }
 
       allow read: if request.auth != null
@@ -312,20 +286,31 @@ service cloud.firestore {
                     // You may only wager against someone on your own friends
                     // list. get() reads the challenger's OWN document and
                     // grants nobody any read access; .get('friends', []) so an
-                    // account that predates the field is denied rather than
+                    // account predating the field is denied rather than
                     // erroring.
                     && next().opponent in
                        get(/databases/$(database)/documents/users/$(auth()))
                          .data.get('friends', []);
 
+      // One cheap status discriminator in front of each branch, so a denial
+      // never has to evaluate all of them.
       allow update: if request.auth != null
                     && auth() in prev().participants
-                    && frozen()
-                    && foeKeysIntact()
-                    && (play() || accept() || endPending() || resolveActive() || claim());
+                    && termsFrozen()
+                    && ownKeysOnly()
+                    && (
+                         (next().status == prev().status
+                            && (markSeen() || play() || claim()))
+                      || (prev().status == 'pending' && next().status == 'active'
+                            && accept())
+                      || (prev().status == 'pending' && next().status != 'active'
+                            && endPending())
+                      || (prev().status == 'active' && next().status == 'resolved'
+                            && resolveActive())
+                       );
 
-      // Escrowed Grit must never be strandable by deleting the document
-      // that records it.
+      // Escrowed Grit must never be strandable by deleting the document that
+      // records it.
       allow delete: if false;
     }
 
