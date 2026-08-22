@@ -15643,7 +15643,10 @@
                     vision: '', goalText: '', goalTextUpdatedAt: null,
                     pendingRequest: null, rejections: [], lastExpandAt: null,
                     loadBudget: { current: 0, updatedAt: null },
-                    questPatches: [], introSeen: false
+                    questPatches: [], introSeen: false,
+                    // v5 (§3.2) — the reveal loop's tree-level state.
+                    lastRegenAt: null, masteriesSinceRegen: 0,
+                    revealMigratedAt: null, viewMode: 'sky'
                 };
             }
             var tt = window.userData.techTree;
@@ -15657,6 +15660,11 @@
             if (!Array.isArray(tt.questPatches)) tt.questPatches = [];
             if (!tt.loadBudget) tt.loadBudget = { current: 0, updatedAt: null };
             if (!tt.status) tt.status = tt.nodes.length ? 'ready' : 'empty';
+            // v5 (§9 step 2). Idempotent, and marked by revealMigratedAt
+            // rather than schemaVersion — the generation worker rewrites
+            // schemaVersion on every result, so keying the one-time generous
+            // pass off it would hand out free reveals forever.
+            ttEnsureRevealFields(tt);
             return tt;
         }
 
@@ -16068,11 +16076,26 @@
         // Mastery is the ONLY key that opens a node — fusions included. A
         // fusion with two sources stays locked until BOTH are genuinely
         // mastered; merely doing an activity is never enough.
-        function ttPrereqMet(pr, node, tt) {
+        function ttPrereqMet(pr, node, tt, _seen) {
             if (pr.type === 'node_mastered') {
                 var target = tt.nodes.find(function(n) { return n.id === pr.nodeId; });
                 if (!target) return true;                    // dangling ref — don't brick the branch
-                if (target.lifecycle === 'archived') return false;
+                // v5 §5.4 / §10.5 — an archived node is TRANSPARENT, not a
+                // wall. Before v5 this returned false, so rejecting one node
+                // locked everything behind it forever and anyone who had paid
+                // to reveal a child had bought a dead end. Now the check falls
+                // through to the rejected node's own prerequisites, which is
+                // exactly "the nearest non-archived ancestor". ttRejectNode
+                // rewrites the data to match; this covers every other way a
+                // node gets archived (goal retirement, an orphaned anchor).
+                if (target.lifecycle === 'archived') {
+                    _seen = _seen || {};
+                    if (_seen[target.id]) return true;       // cycle — don't brick the branch
+                    _seen[target.id] = true;
+                    return (target.prerequisites || []).every(function (up) {
+                        return ttPrereqMet(up, target, tt, _seen);
+                    });
+                }
                 return !!target.resolvedAt;
             }
             if (pr.type === 'activity_mastered') {
@@ -16614,11 +16637,21 @@
                 var r = ttGlyphRadius(n);
                 var flash = (window._ttFlashNodeId === n.id) ? ' tt-flash' : '';
                 var dimmed = st === 'locked' ? ' tt-node-dim' : '';
-                var out = '<g class="tt-node' + flash + dimmed + '" onclick="ttOpenNode(\'' + n.id + '\')" style="cursor:pointer">';
+                // v5 §4.1 — a silhouette carries role (glyph), dimension
+                // (desaturated colour), which goal it serves (edge thread)
+                // and depth (position). Nothing else. A tap on one opens the
+                // purchase sheet, not the node.
+                var sil = ttIsSilhouette(n);
+                var handler = sil ? 'ttOpenRevealSheet' : 'ttOpenNode';
+                var out = '<g class="tt-node' + flash + dimmed + (sil ? ' tt-silhouette' : '') +
+                          '" onclick="' + handler + '(\'' + n.id + '\')" style="cursor:pointer">';
                 out += ttGlyph(n, p.x, p.y, color, defs);
-                var lblCls = st === 'resolved' ? 'tt-wn-t tt-wn-gold' : 'tt-wn-t';
-                out += '<text x="' + p.x + '" y="' + (p.y + r + 13) + '" text-anchor="middle" class="' + lblCls + '">' + escapeHtml(ttShort(n.title, 18)) + '</text>';
-                out += '<text x="' + p.x + '" y="' + (p.y + r + 24) + '" text-anchor="middle" class="tt-wn-s">' + escapeHtml(ttShort(ttNodeSublabel(n, tt), 22)) + '</text>';
+                // Sky is label-free (§8.1): the contrast between explored and
+                // unexplored territory is the whole point of this screen, and
+                // text dilutes it. Words live in Branch.
+                if (sil) {
+                    out += '<circle cx="' + p.x + '" cy="' + (p.y + r + 9) + '" r="1.6" class="tt-sil-dot"/>';
+                }
                 out += '</g>';
                 return out;
             }
@@ -16719,18 +16752,29 @@
                 }).join('') + '</div>';
             }
             // State legend strip (one line, tiny).
-            html += '<div class="tt-state-legend"><span class="tt-sl-doing">◐</span> doing · <span class="tt-sl-gold">●</span> mastered · <span class="tt-sl-open">◌</span> open — tap · 🔒 locked</div>';
+            html += '<div class="tt-state-legend"><span class="tt-sl-doing">◐</span> doing · <span class="tt-sl-gold">●</span> mastered · <span class="tt-sl-open">◌</span> open — tap · 🔒 locked · <span class="tt-sl-dark">◍</span> unrevealed</div>';
             // First-run hint only (§5.5) — persisted behind introSeen.
             if (!tt.introSeen) {
                 html += '<div class="tt-first-hint">Tap any node to review it — accept what you want, ignore the rest. Locked nodes show what opens them.</div>';
                 tt.introSeen = true;
                 debouncedSaveUserData();
             }
-            html += '<div class="tt-web-scroll">' + ttBuildWebSVG(ttWebLayout()) + '</div>';
-            var availCount = tt.nodes.filter(function(n) { return n.lifecycle === 'available'; }).length;
+            // v5 §8 — how much is still dark, then the view the user chose.
+            html += ttDarkStripHtml(tt);
+            html += ttViewToggleHtml();
+            if (ttViewMode() === 'branch') {
+                html += ttBranchHtml(tt);
+            } else {
+                html += '<div class="tt-web-scroll" onscroll="window._ttSkyScroll=this.scrollLeft">'
+                     +  ttBuildWebSVG(ttWebLayout()) + '</div>';
+            }
+            var availCount = tt.nodes.filter(function(n) { return n.lifecycle === 'available' && !ttIsSilhouette(n); }).length;
+            var _rg = ttRegenStatus();
             html += '<div class="tt-map-actions">'
                 + '<button class="tt-tb-btn" onclick="ttOpenAvailableList()">' + ttIcon('spark', 12) + '<span>Open' + (availCount ? ' · ' + availCount : '') + '</span></button>'
                 + '<button class="tt-tb-btn" onclick="ttOpenCustomNodeForm()">' + ttIcon('edit', 12) + '<span>Add your own</span></button>'
+                + '<button class="tt-tb-btn' + (_rg.masteryMet && _rg.affordable ? ' tt-tb-ready' : '') + '" onclick="ttOpenRegenSheet()">'
+                + ttIcon('refresh', 12) + '<span>Regenerate</span></button>'
                 + '</div>';
             // Quest-patch proposals — cards, never silent writes (§6.1).
             (tt.questPatches || []).filter(function(q) { return q.status === 'pending'; }).forEach(function(q) {
@@ -16807,8 +16851,10 @@
                     + '<span class="tt-seg-name">' + escapeHtml(n.title) + '<span class="tt-avail-sub">' + escapeHtml(tlabel + ' · ' + where) + '</span></span>'
                     + badge + '</button>';
             }
-            var avail = tt.nodes.filter(function(n) { return n.lifecycle === 'available'; });
-            var locked = tt.nodes.filter(function(n) { return n.lifecycle === 'locked'; });
+            var avail = tt.nodes.filter(function(n) { return n.lifecycle === 'available' && !ttIsSilhouette(n); });
+            // Silhouettes are excluded from both lists — a title in a
+            // roster is the same leak as a title on the map (§10.9).
+            var locked = tt.nodes.filter(function(n) { return n.lifecycle === 'locked' && !ttIsSilhouette(n); });
             var html = '<div class="tt-sheet-body"><div class="tt-sheet-kicker">On the web</div><h3 class="tt-sheet-title">Open to accept</h3>';
             if (avail.length) html += '<div class="tt-seg-list">' + avail.map(function(n) { return rowFor(n, false); }).join('') + '</div>';
             else html += '<p class="tt-muted" style="margin-top:12px;">Nothing open right now — resolve a node to open new ones.</p>';
@@ -16823,6 +16869,10 @@
             var tt = ensureTechTree();
             var node = tt.nodes.find(function(n) { return n.id === nodeId; });
             if (!node) return;
+            // v5 §10.9 — an unrevealed node leaks nothing. Every route into
+            // the node sheet passes through here, so this one guard is what
+            // guarantees it, whatever calls it.
+            if (ttIsSilhouette(node)) { ttOpenRevealSheet(nodeId); return; }
             var color = ttNodeColor(node);
             var state = ttNodeState(node);
             var pl = node.payload || {};
@@ -16876,6 +16926,11 @@
             if (!goals.length && node.role !== 'wildcard' && ttActiveGoals().length) {
                 actions += '<button class="tt-btn tt-btn-ghost" onclick="ttAttachToGoal(\'' + node.id + '\')">' + ttIcon('branch', 13) + '<span>Attach to a goal</span></button>';
             }
+            // §8.3 — the Sky → Branch jump, scrolled to this node. Sky opens
+            // the sheet directly (§8.1); this is the way into the lineage
+            // around it without hunting for it in the column.
+            actions += '<button class="tt-btn tt-btn-ghost" onclick="ttCloseSheet();ttSetView(\'branch\',\'' + node.id + '\')">'
+                     + ttIcon('branch', 13) + '<span>See it in the branch</span></button>';
             html += '<div class="tt-sheet-actions">' + actions + '</div></div>';
             ttShowSheet(html);
         };
@@ -17315,6 +17370,13 @@
             var node = tt.nodes.find(function(n) { return n.id === nodeId; });
             if (!node) return;
             node.lifecycle = 'archived';
+            // §5.4 — rejecting must never strand what is behind it. The
+            // rejected node's own prerequisites take its place in every
+            // child, so each child falls back to the nearest non-archived
+            // ancestor and stays both revealable and, eventually, adoptable.
+            // Rejection does not refund the reveal: the user got the
+            // information, which is what they paid for.
+            ttRepointChildrenOf(node, tt);
             // Negative signal (with role, so the model learns "this user
             // rejects wildcards") survives regenerate. FIFO cap 40.
             tt.rejections = (tt.rejections || []).concat([{ nodeTitle: node.title, role: node.role || 'suggestion', reason: 'not_me', at: new Date().toISOString() }]).slice(-40);
@@ -20165,6 +20227,9 @@
                                             (m.ratio != null ? Math.round(m.ratio * 100) + '% of target' : 'consistency');
                 case 'streak_milestone': return m.streakDays + '-day streak on ' + title;
                 case 'mastery':          return 'Mastered ' + title;
+                case 'node_reveal':      return 'Revealed ' + (m.nodeTitle
+                                            ? '"' + m.nodeTitle + '" on your map' : 'a node on your map');
+                case 'tree_regen':       return 'Regenerated your map';
                 case 'shield_purchase':  return 'Bought a streak shield';
                 case 'xp_boost_purchase':return 'Bought double XP';
                 case 'migration':        return 'Balance carried over';
@@ -20474,6 +20539,591 @@
         // ════════════════════════════════════════════════════════════════════
         // ══ END GRIT CURRENCY SYSTEM ════════════════════════════════════════
         // ════════════════════════════════════════════════════════════════════
+
+
+        // ════════════════════════════════════════════════════════════════════
+        // ══ TECH TREE v5 — THE REVEAL LOOP ══════════════════════════════════
+        // ════════════════════════════════════════════════════════════════════
+        //
+        // v4 generated a map you read once. v5 makes it a place you come back
+        // to, because most of it is dark and Grit is what turns the lights on.
+        //
+        // The whole tree is visible from the first day — every node, as a
+        // silhouette. Shape, dimension colour, goal thread and position are
+        // all there. Titles and descriptions are not. Revealing a node tells
+        // you what it is; adopting it still requires mastering its
+        // prerequisite.
+        //
+        //   Grit buys information.  Mastery buys access.
+        //
+        // Those are separate currencies for separate things, and conflating
+        // them was the mistake v4 made. A user can reveal five nodes deep
+        // without having mastered anything — they simply cannot adopt them
+        // yet. Adoption itself is free and always has been.
+        //
+        // Reveal state is orthogonal to lifecycle. `lifecycle` tracks
+        // progression (locked → available → active → resolved); `revealed`
+        // tracks information. Neither is derived from the other, and nothing
+        // here overloads one to mean the other.
+        //
+        // Everything below is client-written and lives inside
+        // userData.techTree, which is safe under saveUserData()'s full
+        // document overwrite. Any future SERVER-side reveal would have to
+        // move to a subcollection instead — see §3.3.
+        // ════════════════════════════════════════════════════════════════════
+
+        const TT_REVEAL_COST  = 40;    // §5.2 flat, every node past tier 1
+        const TT_REGEN_COST   = 200;   // §6
+        const TT_REGEN_MASTERIES = 1;  // §6 the gate that actually matters
+
+        // §3.1/§10.2 — which nodes are born revealed. The spec defines tier 1
+        // as "empty prerequisites[]", which in this generator's output means
+        // the anchors (the user's own activities) and the wildcard. The
+        // roadmap's first tier hangs off an anchor via an
+        // `activity_mastered` prerequisite, so it costs like everything else.
+        //
+        // If reveals ever feel too punishing on a fresh map, flipping this to
+        // 'tier' frees the whole first roadmap rank instead. It is one
+        // constant precisely so that is a one-line decision.
+        const TT_FREE_TIER_RULE = 'no-prerequisites';   // | 'tier'
+
+        function ttIsFreeTier(node, tt) {
+            if (TT_FREE_TIER_RULE === 'tier') {
+                if (node._tier == null && tt) ttComputeTiers((tt.nodes || []).filter(function (n) {
+                    return n.lifecycle !== 'archived';
+                }));
+                return (node._tier || 1) <= 1;
+            }
+            return !(node.prerequisites || []).length;
+        }
+
+        // ── Migration (§9 step 2) ─────────────────────────────────────────
+        // Runs exactly once per tree, marked by revealMigratedAt rather than
+        // schemaVersion: the generation worker writes schemaVersion 3 on
+        // every result, so keying off it would re-run the generous pass after
+        // every generation and hand out free reveals forever.
+        //
+        // The one-time pass is deliberately generous — every node whose
+        // prerequisites are already met is marked revealed, because the user
+        // can already read those and charging retroactively for what they can
+        // see would be a theft. Nodes arriving AFTER migration follow §3.1:
+        // free only if they have no prerequisites at all.
+        function ttEnsureRevealFields(tt) {
+            if (!tt || !Array.isArray(tt.nodes)) return false;
+            var changed = false;
+            var firstPass = !tt.revealMigratedAt;
+
+            if (tt.lastRegenAt === undefined)       { tt.lastRegenAt = null; changed = true; }
+            if (typeof tt.masteriesSinceRegen !== 'number') { tt.masteriesSinceRegen = 0; changed = true; }
+
+            tt.nodes.forEach(function (n) {
+                if (!n) return;
+                if (typeof n.revealCost !== 'number') { n.revealCost = TT_REVEAL_COST; changed = true; }
+                if (n.revealedAt === undefined)       { n.revealedAt = null; changed = true; }
+                if (typeof n.revealed !== 'boolean') {
+                    n.revealed = firstPass ? ttNodeUnlocked(n, tt) : ttIsFreeTier(n, tt);
+                    // Anything the user has already accepted or finished is
+                    // theirs and is never dark, whichever pass we are in.
+                    if (n.lifecycle === 'active' || n.resolvedAt || n.source === 'user') n.revealed = true;
+                    if (n.revealed && !n.revealedAt) n.revealedAt = n.createdAt || new Date().toISOString();
+                    changed = true;
+                }
+            });
+
+            if (firstPass) { tt.revealMigratedAt = new Date().toISOString(); changed = true; }
+            if (ttSyncMasteryGate(tt)) changed = true;
+            return changed;
+        }
+
+        // §6's gate, DERIVED rather than counted. Mastery is declared in two
+        // places — the evaluation pass, and ttFinishLink's retroactive resolve
+        // when a linked activity already has the history — so an incrementing
+        // counter silently misses the second one and tells a user who just
+        // mastered something that they have not. Reading it off the
+        // activities' own timestamps cannot drift, and self-corrects a
+        // counter that already has.
+        //
+        // A tree that has never been regenerated counts every mastery the
+        // user has ever earned: "since the last regeneration" with no last
+        // regeneration means since the beginning, and they did do the work.
+        function ttSyncMasteryGate(tt) {
+            if (!tt) return false;
+            var since = tt.lastRegenAt ? new Date(tt.lastRegenAt).getTime() : 0;
+            var n = 0;
+            ttAllActivities().forEach(function (e) {
+                var at = e.activity.techTreeMasteredAt;
+                if (at && new Date(at).getTime() > since) n++;
+            });
+            if (tt.masteriesSinceRegen === n) return false;
+            tt.masteriesSinceRegen = n;
+            return true;
+        }
+
+        // ── The three states (§4) ─────────────────────────────────────────
+        // Derived, never stored twice.
+        function ttRevealState(node, tt) {
+            if (!node.revealed) return 'silhouette';
+            return ttNodeUnlocked(node, tt || ensureTechTree()) ? 'adoptable' : 'revealed';
+        }
+        function ttIsSilhouette(node) { return !node.revealed; }
+
+        // §5.1 — a silhouette is revealable only if every node it depends on
+        // is already revealed. Reveal propagates along the edges outward from
+        // the free tier: you cannot buy the leaf of a branch without buying
+        // the branch.
+        //
+        // This is a LINEAGE rule, not a mastery rule. An archived ancestor is
+        // transparent to it — see ttRejectNode, which re-points around the
+        // rejection so a branch is never stranded behind one.
+        function ttRevealBlockers(node, tt) {
+            var out = [];
+            var byId = {}, anchorByAct = {};
+            (tt.nodes || []).forEach(function (n) {
+                byId[n.id] = n;
+                if (n.payload && n.payload.activityId && !anchorByAct[n.payload.activityId]) {
+                    anchorByAct[n.payload.activityId] = n;
+                }
+            });
+            (node.prerequisites || []).forEach(function (pr) {
+                var src = pr.type === 'node_mastered' ? byId[pr.nodeId]
+                        : pr.type === 'activity_mastered' ? anchorByAct[pr.activityId] : null;
+                if (!src || src.id === node.id) return;          // dangling — never brick a branch
+                if (src.lifecycle === 'archived') return;        // rejected — transparent
+                if (!src.revealed) out.push(src);
+            });
+            return out;
+        }
+        function ttRevealable(node, tt) {
+            return ttIsSilhouette(node) && ttRevealBlockers(node, tt).length === 0;
+        }
+
+        function ttRevealCost(node) {
+            return typeof node.revealCost === 'number' ? node.revealCost : TT_REVEAL_COST;
+        }
+
+        function ttDarkCount(tt) {
+            return (tt.nodes || []).filter(function (n) {
+                return n.lifecycle !== 'archived' && ttIsSilhouette(n);
+            }).length;
+        }
+
+        // ── Reveal purchase (§5.3) ────────────────────────────────────────
+
+        window.ttOpenRevealSheet = function (nodeId) {
+            var tt = ensureTechTree();
+            var node = (tt.nodes || []).find(function (n) { return n.id === nodeId; });
+            if (!node) return;
+            if (!ttIsSilhouette(node)) { ttOpenNode(nodeId); return; }
+
+            var cost = ttRevealCost(node);
+            var bal  = gritBalance();
+            var blockers = ttRevealBlockers(node, tt);
+            var goals = ttNodeGoals(node);
+            var goalChips = goals.map(function (g) {
+                return '<span class="tt-mini-chip" style="--gc:' + (g.color || '#888') + '">' +
+                       escapeHtml(g.shortName || 'Goal') + '</span>';
+            }).join('');
+
+            // Everything on this sheet is about the PURCHASE. Nothing about
+            // the node — no title, no teaser, no partial text (§10.9). The
+            // whole value of the transaction is the information.
+            var body = '<div class="tt-sheet-body" id="ttRevealSheetBody">'
+                + '<div class="tt-sheet-kicker tt-reveal-kicker">Unrevealed</div>'
+                + '<div class="tt-reveal-mark">' + ttSilhouettePreview(node) + '</div>'
+                + '<h3 class="tt-sheet-title tt-reveal-title">Something is here</h3>';
+
+            if (blockers.length) {
+                body += '<p class="tt-sheet-desc">Reveal what comes before it first — the map opens outward from what you already know.</p>'
+                     +  '<div class="tt-locked-note">' + ttIcon('lock', 12) + ' '
+                     +  blockers.length + ' node' + (blockers.length === 1 ? '' : 's')
+                     +  ' before this one ' + (blockers.length === 1 ? 'is' : 'are') + ' still dark</div>'
+                     +  '<div class="tt-sheet-actions"><button class="tt-btn tt-btn-ghost" onclick="ttCloseSheet()">Close</button></div>';
+            } else {
+                var short = bal < cost;
+                body += '<p class="tt-sheet-desc">Spend Grit to find out what it is. Revealing tells you what a node '
+                     +  'is — it does not unlock it. Adoption still costs mastery, and adoption is free.</p>'
+                     +  (goalChips ? '<div class="tt-goal-feed">Feeds ' + goalChips + '</div>' : '')
+                     +  '<div class="tt-reveal-price">'
+                     +    '<div><span>Reveal</span><strong>' + cost + ' Grit</strong></div>'
+                     +    '<div><span>Your balance</span><strong class="' + (short ? 'tt-short' : '') + '">' + bal + ' Grit</strong></div>'
+                     +  '</div>'
+                     +  (short
+                          ? '<div class="tt-locked-note tt-short">' + ttIcon('lock', 12) + ' ' +
+                            (cost - bal) + ' Grit short. Keep showing up — the map will wait.</div>'
+                          : '')
+                     +  '<div class="tt-sheet-actions">'
+                     +    '<button class="tt-btn tt-btn-primary" id="ttRevealBtn" onclick="ttConfirmReveal(\'' + node.id + '\')"'
+                     +      (short ? ' disabled' : '') + '>' + ttIcon('spark', 13) + '<span>Reveal · ' + cost + '</span></button>'
+                     +    '<button class="tt-btn tt-btn-ghost" onclick="ttCloseSheet()">Not yet</button>'
+                     +  '</div>';
+            }
+            ttShowSheet(body + '</div>');
+        };
+
+        // The glyph alone, at sheet scale — the same silhouette the map shows,
+        // so the purchase is visibly about THAT node without naming it.
+        function ttSilhouettePreview(node) {
+            var color = ttNodeColor(node);
+            var defs = [];
+            var g = ttGlyph(node, 30, 30, color, defs);
+            return '<svg width="60" height="60" viewBox="0 0 60 60" class="tt-sil-preview">'
+                 + '<defs>' + defs.join('') + '</defs><g class="tt-silhouette">' + g + '</g></svg>';
+        }
+
+        window.ttConfirmReveal = async function (nodeId) {
+            var tt = ensureTechTree();
+            var node = (tt.nodes || []).find(function (n) { return n.id === nodeId; });
+            if (!node || !ttIsSilhouette(node)) return;
+            if (!ttRevealable(node, tt)) { showToast('Reveal what comes before it first', 'olive'); return; }
+
+            var cost = ttRevealCost(node);
+            if (gritBalance() < cost) {
+                showToast('You are ' + (cost - gritBalance()) + ' Grit short of that reveal', 'red');
+                return;
+            }
+
+            // Disable between tap and write resolution (§5.3) — a double tap
+            // must not be able to charge twice.
+            var btn = document.getElementById('ttRevealBtn');
+            if (btn) { btn.disabled = true; btn.innerHTML = '<span>Revealing…</span>'; }
+
+            // §10.4 — persistence precedes the reveal. The debit and the
+            // reveal go into ONE write and the user is shown nothing until it
+            // lands: charge-then-persist-then-grant would leave a window
+            // where a failed second write takes the Grit and gives back
+            // nothing. If the write fails, both halves roll back together.
+            gritApplyDelta(-cost, 'node_reveal', { nodeId: node.id, nodeTitle: node.title });
+            node.revealed   = true;
+            node.revealedAt = new Date().toISOString();
+
+            var ok = await gritPersist();
+            if (!ok) {
+                node.revealed   = false;
+                node.revealedAt = null;
+                gritApplyDelta(cost, 'correction', {
+                    note: 'reveal write failed, stake returned', nodeId: node.id
+                });
+                showToast('Could not save that reveal — your Grit is untouched', 'red');
+                if (btn) { btn.disabled = false; btn.innerHTML = '<span>Reveal · ' + cost + '</span>'; }
+                return;
+            }
+
+            // §8.4 — the emotional beat. Gold flash, then the sheet turns
+            // over in place. Never close and reopen.
+            try { ttGoldFlash(); } catch (e) {}
+            window._ttFlashNodeId = node.id;
+            ttOpenNode(node.id);
+            ttRenderIfVisible();
+        };
+
+        // ── Regeneration (§6) ─────────────────────────────────────────────
+        // The mastery gate matters more than the price. Cost alone is the
+        // wrong lever — it means the most consistent users regenerate most
+        // often, and it rewards hoarding that starves every other sink.
+        // Requiring a mastery means someone who has not done the work cannot
+        // regenerate no matter how rich they are.
+
+        function ttRegenStatus() {
+            var tt = ensureTechTree();
+            var masteries = tt.masteriesSinceRegen || 0;
+            return {
+                masteries: masteries,
+                needed: TT_REGEN_MASTERIES,
+                masteryMet: masteries >= TT_REGEN_MASTERIES,
+                cost: TT_REGEN_COST,
+                balance: gritBalance(),
+                affordable: gritBalance() >= TT_REGEN_COST,
+                pending: !!tt.pendingRequest
+            };
+        }
+
+        window.ttOpenRegenSheet = function () {
+            var s = ttRegenStatus();
+            var tt = ensureTechTree();
+            var dark = ttDarkCount(tt);
+            var keep = (tt.nodes || []).filter(function (n) {
+                return n.lifecycle !== 'archived' && (n.revealed || n.resolvedAt || n.lifecycle === 'active');
+            }).length;
+
+            var body = '<div class="tt-sheet-body">'
+                + '<div class="tt-sheet-kicker" style="color:' + TT_GOLD + '">Regenerate</div>'
+                + '<h3 class="tt-sheet-title">A new frontier</h3>'
+                + '<p class="tt-sheet-desc">The tree is finite. Regenerating replaces what is still dark with a fresh '
+                + 'set of branches grown from where you actually are now — not from the goal you typed months ago.</p>'
+                + '<div class="tt-regen-table">'
+                +   '<div><span>Kept</span><strong>' + keep + ' node' + (keep === 1 ? '' : 's') + '</strong></div>'
+                +   '<div><span>Replaced</span><strong>' + dark + ' silhouette' + (dark === 1 ? '' : 's') + '</strong></div>'
+                +   '<div><span>Cost</span><strong>' + s.cost + ' Grit</strong></div>'
+                +   '<div><span>Your balance</span><strong class="' + (s.affordable ? '' : 'tt-short') + '">' + s.balance + ' Grit</strong></div>'
+                + '</div>'
+                + '<p class="tt-muted">Anything you have adopted, mastered, or paid to reveal is kept. '
+                + 'Regeneration replaces the unexplored frontier, not the journey.</p>';
+
+            if (!s.masteryMet) {
+                body += '<div class="tt-locked-note">' + ttIcon('lock', 12) +
+                        ' Master one activity since your last regeneration first. ' +
+                        'No balance unlocks this — the work does.</div>';
+            } else if (!s.affordable) {
+                body += '<div class="tt-locked-note tt-short">' + ttIcon('lock', 12) + ' ' +
+                        (s.cost - s.balance) + ' Grit short.</div>';
+            }
+
+            body += '<div class="tt-sheet-actions">'
+                 +   '<button class="tt-btn tt-btn-primary" id="ttRegenBtn" onclick="ttConfirmRegen()"'
+                 +     ((s.masteryMet && s.affordable && !s.pending) ? '' : ' disabled') + '>'
+                 +     ttIcon('refresh', 13) + '<span>Regenerate · ' + s.cost + '</span></button>'
+                 +   '<button class="tt-btn tt-btn-ghost" onclick="ttCloseSheet()">Close</button>'
+                 + '</div></div>';
+            ttShowSheet(body);
+        };
+
+        window.ttConfirmRegen = async function () {
+            var s = ttRegenStatus();
+            if (!s.masteryMet || !s.affordable || s.pending) return;
+            var tt = ensureTechTree();
+            var btn = document.getElementById('ttRegenBtn');
+            if (btn) { btn.disabled = true; btn.innerHTML = '<span>Weaving…</span>'; }
+
+            // Same ordering discipline as a reveal: the charge and the
+            // request land in one write, or neither does.
+            gritApplyDelta(-TT_REGEN_COST, 'tree_regen', { nodes: (tt.nodes || []).length });
+            var prevMasteries = tt.masteriesSinceRegen || 0;
+            tt.masteriesSinceRegen = 0;
+            tt.lastRegenAt = new Date().toISOString();
+            tt.loadBudget = { current: ttWeeklyLoad(), updatedAt: new Date().toISOString() };
+            tt.pendingRequest = {
+                requestedAt: new Date().toISOString(), attempts: 0, type: 'generate',
+                payload: { reason: 'regen', keepNodeIds: (tt.nodes || []).filter(function (n) {
+                    return n.revealed || n.resolvedAt || n.lifecycle === 'active';
+                }).map(function (n) { return n.id; }) }
+            };
+            tt.status = 'generating';
+            delete tt.lastError;
+
+            var ok = await gritPersist();
+            if (!ok) {
+                tt.pendingRequest = null;
+                tt.status = 'ready';
+                tt.masteriesSinceRegen = prevMasteries;
+                tt.lastRegenAt = null;
+                gritApplyDelta(TT_REGEN_COST, 'correction', { note: 'regeneration write failed, cost returned' });
+                showToast('Could not start that regeneration — your Grit is untouched', 'red');
+                if (btn) { btn.disabled = false; btn.innerHTML = '<span>Regenerate · ' + TT_REGEN_COST + '</span>'; }
+                return;
+            }
+            ttCloseSheet();
+            ttEnsureListener();
+            renderTechTree();
+            showToast('🕸️ Reweaving the frontier — we\'ll ping you', 'blue');
+        };
+
+        // ── Sky / Branch (§8) ─────────────────────────────────────────────
+        // Sky is the label-free overview: shape, colour, thread, depth, and
+        // nothing else. It is where silhouettes do their work — the contrast
+        // between explored and unexplored territory is the single most
+        // important thing on that screen, and text would dilute it.
+        //
+        // Branch is where words live: one readable column at 360px, titles
+        // for revealed nodes, glyph and a lock affordance with the price for
+        // the rest.
+
+        function ttViewMode() {
+            var tt = ensureTechTree();
+            return tt.viewMode === 'branch' ? 'branch' : 'sky';
+        }
+
+        window.ttSetView = function (mode, focusNodeId) {
+            var tt = ensureTechTree();
+            tt.viewMode = (mode === 'branch') ? 'branch' : 'sky';
+            if (mode === 'branch' && focusNodeId) window._ttBranchFocus = focusNodeId;
+            debouncedSaveUserData();
+            renderTechTree();
+            // §8.3 — entering Branch from a Sky tap scrolls to that node;
+            // returning to Sky preserves scroll position.
+            if (tt.viewMode === 'branch' && window._ttBranchFocus) {
+                var id = window._ttBranchFocus;
+                window._ttBranchFocus = null;
+                requestAnimationFrame(function () {
+                    var el = document.getElementById('ttb-' + id);
+                    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                });
+            } else if (tt.viewMode === 'sky' && window._ttSkyScroll) {
+                requestAnimationFrame(function () {
+                    var sc = document.querySelector('.tt-web-scroll');
+                    if (sc) sc.scrollLeft = window._ttSkyScroll;
+                });
+            }
+        };
+
+        function ttViewToggleHtml() {
+            var m = ttViewMode();
+            return '<div class="tt-viewtoggle" role="tablist">'
+                 +   '<button class="tt-vt-btn' + (m === 'sky' ? ' on' : '') + '" role="tab" onclick="ttSetView(\'sky\')">'
+                 +     ttIcon('map', 12) + '<span>Sky</span></button>'
+                 +   '<button class="tt-vt-btn' + (m === 'branch' ? ' on' : '') + '" role="tab" onclick="ttSetView(\'branch\')">'
+                 +     ttIcon('branch', 12) + '<span>Branch</span></button>'
+                 + '</div>';
+        }
+
+        // How much of the map is still dark — the number that makes the
+        // reveal economy legible at a glance, and that visibly shrinks.
+        function ttDarkStripHtml(tt) {
+            var alive = (tt.nodes || []).filter(function (n) { return n.lifecycle !== 'archived'; });
+            if (!alive.length) return '';
+            var dark = alive.filter(ttIsSilhouette).length;
+            var lit  = alive.length - dark;
+            var pct  = Math.round((lit / alive.length) * 100);
+            var bal  = gritBalance();
+            return '<div class="tt-darkstrip">'
+                 +   '<div class="tt-darkbar"><div class="tt-darkbar-fill" style="width:' + pct + '%"></div></div>'
+                 +   '<div class="tt-darkmeta">'
+                 +     '<span><b>' + lit + '</b> revealed · <b>' + dark + '</b> still dark</span>'
+                 +     '<span class="tt-darkbal">' + bal + ' Grit</span>'
+                 +   '</div>'
+                 + '</div>';
+        }
+
+        // ── Branch view (§8.2) ────────────────────────────────────────────
+        // A single column through the lineages, ordered by tier so a chain
+        // reads top to bottom. Optional goal filter — the threads are the
+        // natural way to slice a web into branches.
+
+        window.ttBranchFilter = function (goalId) {
+            window._ttBranchGoal = goalId || null;
+            renderTechTree();
+        };
+
+        function ttBranchHtml(tt) {
+            var alive = (tt.nodes || []).filter(function (n) { return n.lifecycle !== 'archived'; });
+            if (!alive.length) return '';
+            ttComputeTiers(alive);
+
+            var goals = ttActiveGoals();
+            var filter = window._ttBranchGoal || null;
+            if (filter && !goals.some(function (g) { return g.id === filter; })) filter = window._ttBranchGoal = null;
+
+            var shown = filter
+                ? alive.filter(function (n) { return (n.goalIds || []).indexOf(filter) !== -1; })
+                : alive;
+
+            shown = shown.slice().sort(function (a, b) {
+                if (a._tier !== b._tier) return a._tier - b._tier;
+                return String(a.dimensionId).localeCompare(String(b.dimensionId));
+            });
+
+            var chips = '';
+            if (goals.length > 1) {
+                chips = '<div class="tt-goal-legend tt-branch-filter">'
+                      + '<button class="tt-goal-chip' + (!filter ? ' on' : '') + '" onclick="ttBranchFilter(null)">All</button>'
+                      + goals.map(function (g) {
+                          return '<button class="tt-goal-chip' + (filter === g.id ? ' on' : '') + '" onclick="ttBranchFilter(\'' + g.id + '\')">'
+                               + '<span class="tt-goal-chip-dot" style="background:' + (g.color || '#888') + '"></span>'
+                               + escapeHtml(g.shortName || 'Goal') + '</button>';
+                        }).join('')
+                      + '</div>';
+            }
+
+            var lastTier = null;
+            var rows = shown.map(function (n) {
+                var head = '';
+                if (n._tier !== lastTier) {
+                    lastTier = n._tier;
+                    head = '<div class="tt-branch-tier">Tier ' + n._tier + '</div>';
+                }
+                return head + ttBranchRow(n, tt);
+            }).join('');
+
+            return chips + '<div class="tt-branch">' + rows + '</div>';
+        }
+
+        function ttBranchRow(node, tt) {
+            var color = ttNodeColor(node);
+            var sil   = ttIsSilhouette(node);
+            var state = ttRevealState(node, tt);
+            var defs  = [];
+            var glyph = '<svg width="34" height="34" viewBox="0 0 34 34" class="tt-branch-glyph' + (sil ? ' tt-silhouette' : '') + '">'
+                      + '<defs>' + defs.join('') + '</defs>'
+                      + ttGlyph(node, 17, 17, color, defs) + '</svg>';
+
+            var body;
+            if (sil) {
+                // Glyph and a lock affordance with the cost. Nothing else —
+                // no title, no teaser, no partial text (§10.9).
+                var can = ttRevealable(node, tt);
+                var afford = gritBalance() >= ttRevealCost(node);
+                body = '<span class="tt-branch-name tt-branch-dark">Unrevealed</span>'
+                     + '<span class="tt-branch-sub">' + (can
+                          ? (afford ? 'Tap to reveal' : 'Not enough Grit yet')
+                          : 'Reveal what comes before it') + '</span>';
+                var price = '<span class="tt-branch-price' + (can && afford ? '' : ' tt-branch-price-off') + '">'
+                          + ttIcon('lock', 11) + ttRevealCost(node) + '</span>';
+                return '<button class="tt-branch-row tt-branch-row-dark" id="ttb-' + node.id + '"'
+                     + ' style="--rc:' + color + '" onclick="ttOpenRevealSheet(\'' + node.id + '\')">'
+                     + glyph + '<span class="tt-branch-col">' + body + '</span>' + price + '</button>';
+            }
+
+            // Progression state wins over reveal state here: something the
+            // user has already adopted or mastered is never "open to accept",
+            // however its prerequisites read.
+            var badge = node.resolvedAt
+                ? '<span class="tt-seg-badge tt-seg-gold">mastered</span>'
+                : (node.lifecycle === 'active' ? '<span class="tt-seg-badge">doing</span>'
+                : (state === 'adoptable' ? '<span class="tt-seg-badge tt-seg-open">open</span>'
+                : '<span class="tt-seg-badge tt-seg-locked">' + escapeHtml(ttShort(ttLockReason(node, tt), 26)) + '</span>'));
+
+            body = '<span class="tt-branch-name">' + escapeHtml(node.title) + '</span>'
+                 + '<span class="tt-branch-sub">' + escapeHtml(ttShort(ttNodeSublabel(node, tt), 40)) + '</span>';
+
+            return '<button class="tt-branch-row" id="ttb-' + node.id + '" style="--rc:' + color + '"'
+                 + ' onclick="ttOpenNode(\'' + node.id + '\')">'
+                 + glyph + '<span class="tt-branch-col">' + body + '</span>' + badge + '</button>';
+        }
+
+        // ── Rejection fallback (§5.4) ─────────────────────────────────────
+        // The piece most likely to be skipped and most likely to strand
+        // users. Before v5, rejecting a node archived it and ttPrereqMet
+        // returned false for archived targets forever — every child behind it
+        // was permanently unreachable, and anyone who had paid to reveal one
+        // had bought a dead end.
+        //
+        // Now the rejected node's own prerequisites are spliced into each
+        // child in its place, so a child inherits the nearest non-archived
+        // ancestor. A rejected tier-1 node leaves its children with no
+        // prerequisite at all, which is correct: there is nothing left to
+        // master before them.
+        //
+        // Rejection stays free, and it never refunds the reveal — the user
+        // got the information, which is what they paid for.
+        function ttRepointChildrenOf(node, tt) {
+            var inherited = (node.prerequisites || []).slice();
+            var changed = false;
+            (tt.nodes || []).forEach(function (child) {
+                if (!child || child.id === node.id) return;
+                var prereqs = child.prerequisites || [];
+                if (!prereqs.some(function (pr) { return pr.type === 'node_mastered' && pr.nodeId === node.id; })) return;
+
+                var next = [];
+                prereqs.forEach(function (pr) {
+                    if (pr.type === 'node_mastered' && pr.nodeId === node.id) {
+                        inherited.forEach(function (up) {
+                            var dup = next.some(function (x) {
+                                return x.type === up.type && x.nodeId === up.nodeId && x.activityId === up.activityId;
+                            });
+                            // Never inherit a prerequisite pointing back at
+                            // the child — a rejection must not create a cycle.
+                            if (!dup && !(up.type === 'node_mastered' && up.nodeId === child.id)) {
+                                next.push(Object.assign({}, up));
+                            }
+                        });
+                    } else {
+                        next.push(pr);
+                    }
+                });
+                child.prerequisites = next;
+                changed = true;
+            });
+            return changed;
+        }
 
         // ════════════════════════════════════════════════════════════════════
         // ══ VERSUS CHALLENGES ═══════════════════════════════════════════════

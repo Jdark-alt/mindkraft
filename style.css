@@ -15288,3 +15288,123 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 @media (prefers-reduced-motion: reduce) {
     .vs-stepdot.on { transform: none; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   TECH TREE v5 — THE REVEAL LOOP
+   Additive. Silhouettes, the Sky/Branch toggle, and the reveal sheet.
+   Gold (#f5c563) stays reserved for milestones — here that is the reveal
+   moment itself and a mastered node, nothing else.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ── Silhouette ─────────────────────────────────────────────────────
+   Role via glyph shape, dimension via desaturated colour, goal via the
+   edge thread, depth via position. No text, no teaser, nothing that
+   hints at content — the whole value of a reveal is the information. */
+.tt-silhouette { opacity: 0.42; filter: saturate(0.18); transition: opacity .35s ease, filter .35s ease; }
+.tt-silhouette:hover { opacity: 0.62; }
+.tt-node.tt-silhouette circle,
+.tt-node.tt-silhouette path,
+.tt-node.tt-silhouette polygon,
+.tt-node.tt-silhouette rect { stroke-dasharray: 3 3; }
+.tt-sil-dot { fill: rgba(255,255,255,0.28); }
+.tt-sil-preview { display: block; margin: 0 auto; }
+
+@media (prefers-reduced-motion: reduce) {
+    .tt-silhouette { transition: none; }
+}
+
+/* ── How much is still dark ─────────────────────────────────────────
+   The number the reveal economy hangs on, and the bar that visibly
+   grows every time the user spends. */
+.tt-darkstrip { margin: 10px 0 12px; }
+.tt-darkbar {
+    height: 4px; border-radius: 2px; overflow: hidden;
+    background: rgba(255,255,255,0.06);
+}
+.tt-darkbar-fill {
+    height: 100%; border-radius: 2px;
+    background: linear-gradient(90deg, var(--color-accent-blue), #f5c563);
+    transition: width .5s cubic-bezier(.22,.61,.36,1);
+}
+.tt-darkmeta {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-top: 6px; font-size: 11px; color: #8a8a8a;
+}
+.tt-darkmeta b { color: #d8d8d8; font-weight: 700; }
+.tt-darkbal { color: var(--color-accent-amber); font-weight: 700; }
+
+/* ── Sky / Branch toggle ────────────────────────────────────────────*/
+.tt-viewtoggle {
+    display: inline-flex; gap: 2px; padding: 2px; margin-bottom: 10px;
+    background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 10px;
+}
+.tt-vt-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: inherit; font-size: 11.5px; font-weight: 700;
+    padding: 6px 12px; border-radius: 8px; border: none;
+    background: transparent; color: #8a8a8a; cursor: pointer;
+    transition: background .18s ease, color .18s ease;
+}
+.tt-vt-btn.on { background: rgba(255,255,255,0.08); color: #f0f0f0; }
+
+/* ── Branch: one readable column at 360px ───────────────────────────*/
+.tt-branch { display: flex; flex-direction: column; gap: 6px; }
+.tt-branch-tier {
+    font-size: 9.5px; font-weight: 800; letter-spacing: 0.13em;
+    text-transform: uppercase; color: #6a6a6a;
+    margin: 12px 0 2px; padding-left: 2px;
+}
+.tt-branch-tier:first-child { margin-top: 0; }
+.tt-branch-row {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 9px 11px; border-radius: 11px; cursor: pointer; text-align: left;
+    font-family: inherit; background: #1b1b1b;
+    border: 1px solid rgba(255,255,255,0.06);
+    border-left: 3px solid var(--rc, #555);
+    transition: border-color .18s ease, background .18s ease;
+}
+.tt-branch-row:hover { background: #212121; }
+.tt-branch-glyph { flex-shrink: 0; }
+.tt-branch-col { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.tt-branch-name {
+    font-size: 13px; font-weight: 700; color: #ececec;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tt-branch-sub { font-size: 11px; color: #7f7f7f; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tt-branch-row-dark { border-left-color: rgba(255,255,255,0.1); background: #171717; }
+.tt-branch-dark { color: #6f6f6f; font-style: italic; font-weight: 600; }
+.tt-branch-price {
+    display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
+    font-size: 11px; font-weight: 800; color: var(--color-accent-amber);
+    background: rgba(184,130,66,0.12); border: 1px solid rgba(184,130,66,0.3);
+    border-radius: 6px; padding: 3px 7px;
+}
+.tt-branch-price-off { color: #6a6a6a; background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.08); }
+.tt-branch-filter { margin-bottom: 10px; }
+.tt-goal-chip.on { border-color: rgba(255,255,255,0.3); background: #2a2a2a; }
+.tt-seg-badge.tt-seg-gold { background: rgba(245,197,99,0.16); color: #f5c563; }
+
+/* ── Reveal sheet ───────────────────────────────────────────────────
+   Says nothing about the node. Cost, balance, and the silhouette that
+   is being bought. */
+.tt-reveal-kicker { color: #8a8a8a; text-align: center; }
+.tt-reveal-mark { margin: 14px 0 10px; }
+.tt-reveal-title { text-align: center; color: #b8b8b8; font-style: italic; }
+.tt-reveal-price, .tt-regen-table {
+    border: 1px solid rgba(255,255,255,0.08); border-radius: 10px;
+    padding: 10px 12px; margin: 12px 0 4px;
+}
+.tt-reveal-price > div, .tt-regen-table > div {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 13px; padding: 3px 0; color: #8a8a8a;
+}
+.tt-reveal-price strong, .tt-regen-table strong {
+    color: #f0f0f0; font-variant-numeric: tabular-nums;
+}
+.tt-short { color: var(--color-accent-rose) !important; }
+.tt-tb-ready { border-color: rgba(245,197,99,0.4) !important; color: #f5c563 !important; }
+.tt-sl-dark { color: #6a6a6a; }
+/* At sheet scale the silhouette should read clearly as a SHAPE — it is what
+   the user is buying. Still no saturation, still no text. */
+.tt-sil-preview .tt-silhouette { opacity: 0.85; filter: saturate(0.2); }
