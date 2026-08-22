@@ -975,6 +975,7 @@
                 <!-- Sub-tab pills -->
                 <div class="sub-tabs" id="challengesSubTabs">
                     <button class="sub-tab active" onclick="switchSubTab('challenges','myChallenges')">My Challenges</button>
+                    <button class="sub-tab" id="vsSubTabBtn" onclick="switchSubTab('challenges','versus')">Versus</button>
                     <button class="sub-tab" onclick="switchSubTab('challenges','groupChallenge')">Group Challenge</button>
                 </div>
 
@@ -995,6 +996,11 @@
                     </div>
 
                     <div id="challengesContainer"></div>
+                </div>
+
+                <!-- Versus sub-tab — rendered by vsRenderTab() in app.js -->
+                <div id="challengesSubVersus" class="sub-tab-content" style="display:none;">
+                    <div id="versusContent"></div>
                 </div>
 
                 <!-- Group Challenge sub-tab -->

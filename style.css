@@ -15086,3 +15086,205 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
     white-space: nowrap;
 }
 .grit-pick-row.is-full .grit-pick-cta { color: var(--color-text-secondary); }
+
+/* ══════════════════════════════════════════════════════════════════════
+   VERSUS CHALLENGES
+   Additive only. The cards reuse .ch-card / .ch-bar / .ch-act-row-v2 so
+   the Challenges visual language is unchanged; everything here is the
+   delta described in the spec §8 — opponent bar, stake display, invite,
+   accept and resolved states.
+
+   Token discipline: electric blue (--color-accent-blue) stays
+   interactive-only; gold (#f5c563) appears on the win state only, which
+   is a genuine milestone.
+   ══════════════════════════════════════════════════════════════════════ */
+
+.vs-loading { padding: 40px; text-align: center; color: var(--color-text-secondary); font-size: 13px; }
+
+.vs-cap {
+    font-size: 11px; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--color-text-secondary);
+}
+
+.vs-card { position: relative; }
+
+.vs-ribbon {
+    display: inline-block; margin-bottom: 8px;
+    font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+    padding: 3px 8px; border-radius: 4px;
+    background: rgba(255,255,255,0.06); color: var(--color-text-secondary);
+    border: 1px solid var(--color-border);
+}
+.vs-card-pending .vs-ribbon { color: var(--color-accent-blue); border-color: rgba(74,124,158,0.35); }
+.vs-ribbon.vs-res-won  { color: #f5c563; border-color: rgba(245,197,99,0.4); background: rgba(245,197,99,0.1); }
+.vs-ribbon.vs-res-lost { color: var(--color-accent-rose); border-color: rgba(194,106,122,0.35); }
+.vs-ribbon.vs-res-tie  { color: var(--color-accent-olive); border-color: rgba(122,123,77,0.4); }
+
+.vs-res-won.ch-card { box-shadow: 0 0 0 1px rgba(245,197,99,0.28), 0 4px 14px rgba(0,0,0,0.34); }
+
+/* ── Bars ─────────────────────────────────────────────────────────── */
+/* The user's own bar is primary; the opponent's is deliberately
+   subordinate — same shape, less weight. */
+.vs-barblock { margin: 10px 0 2px; }
+.vs-barhead {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 5px;
+}
+.vs-barname { font-size: 12px; font-weight: 600; color: var(--color-text-primary); }
+.vs-barcount { font-size: 12px; color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
+
+.vs-bar-theirs { opacity: .72; }
+.vs-bar-theirs .vs-barname { font-weight: 500; color: var(--color-text-secondary); }
+.vs-bar-theirs .ch-bar { height: 5px; }
+.vs-bar-theirs .ch-bar-inner { background: var(--color-text-secondary); }
+
+.vs-lead { font-weight: 600; }
+.vs-lead-ahead  { color: var(--color-accent-green); }
+.vs-lead-behind { color: var(--color-accent-rose); }
+.vs-lead-level  { color: var(--color-text-secondary); }
+
+.vs-pot   { color: var(--color-accent-amber); font-weight: 600; }
+.vs-stake { color: var(--color-accent-amber); }
+.vs-expiry { color: var(--color-text-secondary); }
+.vs-grit-moved { color: var(--color-accent-green); font-weight: 600; }
+.vs-grit-lost  { color: var(--color-accent-rose); font-weight: 600; }
+
+.vs-reqline {
+    font-size: 12px; color: var(--color-text-secondary);
+    margin: 8px 0 4px; line-height: 1.5;
+}
+
+/* The integrity rule, stated plainly wherever a wager is agreed to or
+   watched (§4.1) — never something a user discovers by a bar not moving. */
+.vs-liveonly {
+    font-size: 11px; line-height: 1.5; color: var(--color-text-secondary);
+    background: rgba(255,255,255,0.03); border: 1px solid var(--color-border);
+    border-radius: 6px; padding: 7px 9px; margin: 10px 0 2px;
+}
+
+.vs-detail { margin-top: 10px; }
+.vs-breakdown-group { margin-bottom: 12px; }
+.vs-breakdown-head {
+    font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--color-text-secondary); margin-bottom: 6px;
+}
+.vs-act-sub { color: var(--color-text-secondary); font-weight: 400; }
+
+/* ── Buttons ──────────────────────────────────────────────────────── */
+.vs-actions { display: flex; gap: 8px; margin-top: 12px; }
+.vs-btn {
+    font-family: inherit; font-size: 13px; font-weight: 600;
+    padding: 9px 14px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--color-border); background: transparent;
+    color: var(--color-text-primary); transition: filter .15s ease, opacity .15s ease;
+}
+.vs-btn:hover:not(:disabled) { filter: brightness(1.15); }
+.vs-btn:disabled { opacity: .45; cursor: not-allowed; }
+.vs-btn-primary { background: var(--color-accent-blue); border-color: var(--color-accent-blue); color: #fff; }
+.vs-btn-ghost   { color: var(--color-text-secondary); }
+.vs-btn-quiet   { color: var(--color-text-secondary); border-color: transparent; font-weight: 500; font-size: 12px; }
+
+/* ── Badges ───────────────────────────────────────────────────────── */
+.vs-pill-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 16px; height: 16px; padding: 0 4px; margin-left: 6px;
+    border-radius: 8px; background: var(--color-accent-blue); color: #fff;
+    font-size: 10px; font-weight: 700; line-height: 1;
+}
+.nav-tab { position: relative; }
+.vs-nav-dot {
+    position: absolute; top: 6px; right: calc(50% - 16px);
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--color-accent-blue);
+}
+
+/* ── Sheet ────────────────────────────────────────────────────────── */
+.vs-sheet-scrim { display: none; align-items: flex-end; justify-content: center; }
+.vs-sheet-scrim.active { display: flex; }
+.vs-sheet { width: 100%; max-width: 520px; max-height: 88vh; display: flex; flex-direction: column; }
+.vs-sheet .modal-body { overflow-y: auto; }
+
+.vs-note {
+    font-size: 12px; line-height: 1.6; color: var(--color-text-secondary);
+    margin: 10px 0 4px;
+}
+.vs-short { color: var(--color-accent-rose); }
+
+.vs-friend-row, .vs-pick-row {
+    width: 100%; display: flex; justify-content: space-between; align-items: center;
+    gap: 10px; padding: 12px 14px; margin-bottom: 8px;
+    background: var(--color-input-bg); border: 1px solid var(--color-input-border);
+    border-radius: 9px; cursor: pointer; text-align: left;
+    font-family: inherit; font-size: 14px; color: var(--color-text-primary);
+}
+.vs-friend-row:hover, .vs-pick-row:hover { border-color: var(--color-accent-blue); }
+.vs-friend-lvl, .vs-pick-xp { font-size: 12px; color: var(--color-text-secondary); }
+.vs-pick-row.vs-pick-on { border-color: var(--color-accent-blue); background: var(--color-input-bg-focus); }
+.vs-pick-row.vs-pick-locked { opacity: .45; cursor: not-allowed; }
+.vs-pick-why { font-size: 11px; color: var(--color-text-secondary); font-style: italic; }
+.vs-pick-head {
+    font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--color-text-secondary); margin: 16px 0 8px;
+}
+.vs-picklist { max-height: 34vh; overflow-y: auto; }
+.vs-addact { width: 100%; margin-top: 4px; }
+
+/* ── Authoring form ───────────────────────────────────────────────── */
+.vs-reqrow {
+    border: 1px solid var(--color-border); border-radius: 9px;
+    padding: 10px; margin-bottom: 10px;
+}
+.vs-reqrow-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.vs-reqrow-idx {
+    font-size: 10px; font-weight: 700; letter-spacing: .08em;
+    color: var(--color-text-secondary);
+}
+.vs-reqrow-del {
+    background: none; border: none; color: var(--color-text-secondary);
+    font-size: 18px; line-height: 1; cursor: pointer; padding: 0 4px;
+}
+.vs-reqrow-line { display: flex; gap: 8px; margin-top: 8px; }
+.vs-reqrow-line .pl-input { flex: 1; }
+.vs-target-input { flex: 0 0 76px !important; text-align: center; }
+.vs-reqrow-hint { font-size: 11px; color: var(--color-text-secondary); margin-top: 6px; }
+.vs-addreq { width: 100%; }
+
+.vs-two { display: flex; gap: 10px; }
+.vs-two .ay-field { flex: 1; }
+
+.vs-summary {
+    border: 1px solid var(--color-border); border-radius: 9px;
+    padding: 10px 12px; margin-top: 4px;
+}
+.vs-summary > div {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 13px; padding: 3px 0;
+}
+.vs-summary span { color: var(--color-text-secondary); }
+.vs-summary strong { font-variant-numeric: tabular-nums; }
+
+/* ── Accept walkthrough ───────────────────────────────────────────── */
+.vs-stepdots { display: flex; gap: 6px; justify-content: center; margin-bottom: 14px; }
+.vs-stepdot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--color-border);
+}
+.vs-stepdot.done { background: var(--color-accent-green); }
+.vs-stepdot.on   { background: var(--color-accent-blue); transform: scale(1.3); }
+
+.vs-review { border: 1px solid var(--color-border); border-radius: 9px; overflow: hidden; margin-bottom: 12px; }
+.vs-review-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border-bottom: 1px solid var(--color-border); font-size: 13px;
+}
+.vs-review-row:last-child { border-bottom: none; }
+.vs-review-req { flex: 1; }
+.vs-review-act { color: var(--color-text-secondary); }
+.vs-review-edit {
+    background: none; border: none; cursor: pointer; font-family: inherit;
+    font-size: 12px; color: var(--color-accent-blue);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .vs-stepdot.on { transform: none; }
+}

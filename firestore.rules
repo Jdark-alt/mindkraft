@@ -1,0 +1,333 @@
+rules_version = '2';
+
+// ══════════════════════════════════════════════════════════════════════════
+//  Mindkraft — Firestore security rules
+//
+//  This file is the canonical copy of the rules. It is NOT wired into
+//  firebase.json, so `firebase deploy` will not push it; the rules are
+//  managed in the Firebase console. Keep the two in sync by hand.
+//
+//  The versus-challenge block at the bottom is the only cross-account
+//  surface in the app. Everything it allows is scoped to the two
+//  participants named inside the document, and no rule anywhere grants one
+//  participant read access to anything the other owns.
+// ══════════════════════════════════════════════════════════════════════════
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Subcollections are NOT covered by the /users/{uid} rule above —
+    // they must be matched explicitly, which is why this block exists.
+    match /users/{uid}/reminders/{reminderId} {
+      allow read, update, delete: if request.auth != null
+                                  && request.auth.uid == uid;
+
+      // Activity reminders are created by the createActivityReminder
+      // Cloud Function (which bypasses rules) so the 5-per-user cap is
+      // enforced server-side. Only the general singleton is client-created.
+      allow create: if request.auth != null
+                    && request.auth.uid == uid
+                    && reminderId == 'general'
+                    && request.resource.data.type == 'general'
+                    && request.resource.data.localTime is string
+                    && request.resource.data.localTime.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$')
+                    && request.resource.data.active is bool;
+    }
+
+    // Append-only Grit ledger. Entries are never mutated or deleted — a
+    // balance movement that happened stays in the record.
+    match /users/{uid}/gritLedger/{entryId} {
+      allow read, create: if request.auth != null && request.auth.uid == uid;
+      allow update, delete: if false;
+    }
+
+    match /publicProfiles/{uid} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    match /friendRequests/{docId} {
+      allow create: if request.auth != null
+                    && request.resource.data.fromUID == request.auth.uid;
+      allow read, delete: if request.auth != null
+                          && resource.data.toUID == request.auth.uid;
+    }
+
+    match /groupChallenges/{groupId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+                    && request.resource.data.creatorUid == request.auth.uid;
+      allow update: if request.auth != null
+                    && (
+                      request.auth.uid == resource.data.creatorUid
+                      || request.auth.uid in resource.data.members
+                      || request.resource.data.members[request.auth.uid] != null
+                    );
+      allow delete: if request.auth != null
+                    && request.auth.uid == resource.data.creatorUid;
+    }
+
+    match /groupInviteCodes/{code} {
+      allow read, create: if request.auth != null;
+      allow delete: if request.auth != null;
+    }
+
+    match /groupInvitations/{inviteId} {
+      allow read: if request.auth != null
+                  && (resource.data.inviteeUid == request.auth.uid
+                      || resource.data.inviterUid == request.auth.uid);
+      allow create: if request.auth != null
+                    && request.resource.data.inviterUid == request.auth.uid;
+      allow update: if request.auth != null
+                    && resource.data.inviteeUid == request.auth.uid;
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  VERSUS CHALLENGES  —  top-level `challenges`
+    //
+    //  Two accounts read and write one document. The document is the whole
+    //  cross-account surface: counters, the agreed requirement list, each
+    //  side's own mapping, and the escrow bookkeeping. Nothing else.
+    //
+    //  Three things these rules must guarantee, because Grit depends on
+    //  them:
+    //    1. A document is never deleted — escrowed Grit must never be
+    //       strandable by deleting the record of it.
+    //    2. The pot is conserved. Every terminal transition zeroes `pot`
+    //       and records the same number across `payout`.
+    //    3. A participant may write only their own keys — and
+    //       `payoutClaimed[me]` only from false to true, which is what
+    //       makes the payout claim idempotent.
+    //
+    //  What these rules deliberately do NOT prevent: a participant
+    //  inflating their own `progress` counter with a crafted write. That
+    //  is the same trust boundary as the app's completion model generally
+    //  — there is no verification that any completion is real, anywhere in
+    //  Mindkraft, and Grit has no external value. It is a decision, not an
+    //  oversight.
+    // ══════════════════════════════════════════════════════════════════
+    match /challenges/{challengeId} {
+
+      function auth()  { return request.auth.uid; }
+      function prev()  { return resource.data; }
+      function next()  { return request.resource.data; }
+      function foe()   { return prev().participants[0] == auth()
+                              ? prev().participants[1] : prev().participants[0]; }
+      function otherThan(u) { return prev().participants[0] == u
+                                   ? prev().participants[1] : prev().participants[0]; }
+
+      // Terms both sides agreed to. None of it moves once the document
+      // exists; startedAt and endsAt are writable exactly once, on accept.
+      function frozen() {
+        return next().createdBy    == prev().createdBy
+            && next().opponent     == prev().opponent
+            && next().participants == prev().participants
+            && next().requirements == prev().requirements
+            && next().stake        == prev().stake
+            && next().durationDays == prev().durationDays
+            && next().createdAt    == prev().createdAt
+            && next().expiresAt    == prev().expiresAt
+            && next().name         == prev().name
+            && next().bonusXP      == prev().bonusXP
+            && next().names        == prev().names
+            && (prev().startedAt == null || next().startedAt == prev().startedAt)
+            && (prev().endsAt    == null || next().endsAt    == prev().endsAt);
+      }
+
+      // A participant may only ever touch their own slot of every per-user
+      // map. This is the rule that keeps one side out of the other's
+      // progress, mapping and payout claim.
+      function foeKeysIntact() {
+        return next().progress[foe()]      == prev().progress[foe()]
+            && next().mapping[foe()]       == prev().mapping[foe()]
+            && next().totals[foe()]        == prev().totals[foe()]
+            && next().payoutClaimed[foe()] == prev().payoutClaimed[foe()]
+            && next().seen[foe()]          == prev().seen[foe()];
+      }
+
+      // Every terminal transition zeroes the pot and records exactly that
+      // pot across the two payout slots. Grit is neither created nor
+      // destroyed by a resolution.
+      function payoutConserved() {
+        return next().pot == 0
+            && next().payout[prev().participants[0]]
+             + next().payout[prev().participants[1]] == prev().pot
+            && next().payout[prev().participants[0]] >= 0
+            && next().payout[prev().participants[1]] >= 0;
+      }
+
+      function claimsIntact() { return next().payoutClaimed == prev().payoutClaimed; }
+
+      // ── Playing: progress, totals and `seen` ──────────────────────
+      function play() {
+        return next().status     == prev().status
+            && next().pot        == prev().pot
+            && next().payout     == prev().payout
+            && next().winner     == prev().winner
+            && next().outcome    == prev().outcome
+            && next().resolvedAt == prev().resolvedAt
+            && next().mapping    == prev().mapping
+            && claimsIntact()
+            // counters only move while the contest is actually running
+            && (prev().status == 'active'
+                || (next().progress == prev().progress && next().totals == prev().totals));
+      }
+
+      // ── Accept: the opponent stakes and the clock starts ──────────
+      function accept() {
+        return prev().status == 'pending'
+            && auth() == prev().opponent
+            && next().status == 'active'
+            && next().pot == prev().stake * 2
+            && next().startedAt is number
+            && next().endsAt == next().startedAt + prev().durationDays * 86400000
+            && next().winner == null
+            && next().outcome == null
+            && next().resolvedAt == null
+            && next().payout   == prev().payout
+            && next().progress == prev().progress
+            && next().totals   == prev().totals
+            && claimsIntact()
+            // every requirement must be mapped before the stake is taken
+            && next().mapping[auth()].size() == prev().requirements.size();
+      }
+
+      // ── Decline / withdraw / expire: identical refund ─────────────
+      // Only the challenger has paid while a challenge is pending —
+      // escrow happens at invite — so the whole pot is owed back to them.
+      function endPending() {
+        return prev().status == 'pending'
+            && next().winner == null
+            && next().resolvedAt is number
+            && payoutConserved()
+            && next().payout[prev().createdBy] == prev().pot
+            && next().mapping  == prev().mapping
+            && next().progress == prev().progress
+            && next().totals   == prev().totals
+            && claimsIntact()
+            && (
+                 (next().status == 'declined'
+                    && next().outcome == 'declined_refund'
+                    && auth() == prev().opponent)
+              || (next().status == 'cancelled'
+                    && next().outcome == 'cancelled_refund'
+                    && auth() == prev().createdBy)
+              || (next().status == 'expired'
+                    && next().outcome == 'expired_refund'
+                    && request.time.toMillis() > prev().expiresAt)
+               );
+      }
+
+      // ── Resolve an active challenge ───────────────────────────────
+      // Whoever's client gets here first wins the race; the loser's write
+      // fails the `prev().status == 'active'` guard and is a no-op, so two
+      // clients resolving at once cannot double-pay.
+      function resolveActive() {
+        return prev().status == 'active'
+            && next().status == 'resolved'
+            && next().resolvedAt is number
+            && next().mapping == prev().mapping
+            && payoutConserved()
+            && claimsIntact()
+            && (
+                 // Level at the deadline — both stakes go home whole.
+                 (next().winner == null
+                    && next().outcome == 'tie_refund'
+                    && next().payout[prev().participants[0]]
+                    == next().payout[prev().participants[1]])
+
+                 // Forfeit. You may only ever forfeit YOURSELF: the winner
+                 // has to be the other side, so this cannot be used to
+                 // declare a win.
+              || (next().outcome == 'forfeit'
+                    && next().winner == foe()
+                    && next().payout[next().winner] == prev().pot)
+
+                 // Won on the counters. The winner must not be behind.
+              || ((next().outcome == 'completed_first' || next().outcome == 'deadline_lead')
+                    && next().winner in prev().participants
+                    && next().payout[next().winner] == prev().pot
+                    && next().totals[next().winner] >= next().totals[otherThan(next().winner)])
+               );
+      }
+
+      // ── Claim your own payout ─────────────────────────────────────
+      // The only key in payoutClaimed a user may write, and only from
+      // false to true. That flag is what makes the claim idempotent no
+      // matter how many times a client retries it.
+      function claim() {
+        return prev().status in ['resolved', 'expired', 'declined', 'cancelled']
+            && next().status     == prev().status
+            && next().pot        == prev().pot
+            && next().payout     == prev().payout
+            && next().winner     == prev().winner
+            && next().outcome    == prev().outcome
+            && next().resolvedAt == prev().resolvedAt
+            && next().mapping    == prev().mapping
+            && next().progress   == prev().progress
+            && next().totals     == prev().totals
+            && prev().payoutClaimed[auth()] == false
+            && next().payoutClaimed[auth()] == true;
+      }
+
+      allow read: if request.auth != null
+                  && auth() in prev().participants;
+
+      allow create: if request.auth != null
+                    && next().createdBy == auth()
+                    && next().mode == 'versus'
+                    && next().status == 'pending'
+                    && next().participants.size() == 2
+                    && auth() in next().participants
+                    && next().opponent in next().participants
+                    && next().opponent != auth()
+                    // Stake bounds, per the Grit rate card's reserved table.
+                    && next().stake >= 25
+                    && next().stake <= 100
+                    // The pot is real from the moment the invite exists.
+                    && next().pot == next().stake
+                    && next().durationDays >= 1
+                    && next().durationDays <= 90
+                    && next().requirements.size() >= 1
+                    && next().requirements.size() <= 5
+                    && next().expiresAt is number
+                    && next().startedAt == null
+                    && next().endsAt == null
+                    && next().resolvedAt == null
+                    && next().winner == null
+                    && next().outcome == null
+                    && next().totals[auth()] == 0
+                    && next().totals[next().opponent] == 0
+                    && next().payout[auth()] == 0
+                    && next().payout[next().opponent] == 0
+                    && next().payoutClaimed[auth()] == false
+                    && next().payoutClaimed[next().opponent] == false
+                    && next().progress[auth()].size() == 0
+                    && next().progress[next().opponent].size() == 0
+                    && next().mapping[next().opponent].size() == 0
+                    // You may only wager against someone on your own friends
+                    // list. get() reads the challenger's OWN document and
+                    // grants nobody any read access; .get('friends', []) so an
+                    // account that predates the field is denied rather than
+                    // erroring.
+                    && next().opponent in
+                       get(/databases/$(database)/documents/users/$(auth()))
+                         .data.get('friends', []);
+
+      allow update: if request.auth != null
+                    && auth() in prev().participants
+                    && frozen()
+                    && foeKeysIntact()
+                    && (play() || accept() || endPending() || resolveActive() || claim());
+
+      // Escrowed Grit must never be strandable by deleting the document
+      // that records it.
+      allow delete: if false;
+    }
+
+  }
+}

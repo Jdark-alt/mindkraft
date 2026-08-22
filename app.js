@@ -1,6 +1,6 @@
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
         import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js';
-        import { getFirestore, doc, getDoc, getDocFromCache, setDoc, addDoc, updateDoc, deleteDoc, collection, query, where, getDocs, onSnapshot, writeBatch, orderBy, limit } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
+        import { getFirestore, doc, getDoc, getDocFromCache, setDoc, addDoc, updateDoc, deleteDoc, collection, query, where, getDocs, onSnapshot, writeBatch, orderBy, limit, runTransaction, increment } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
         import { getAnalytics, logEvent } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-analytics.js';
         import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-functions.js';
 
@@ -979,6 +979,9 @@
                     handleFriendDeepLink();
                     // Handle deep-link group join (?joinGroup=CODE in URL)
                     handleGroupDeepLink();
+                    // Versus challenges: one fetch that drives the invite badge
+                    // and the lazy expiry / resolution / payout evaluation.
+                    try { vsOnLogin(); } catch (e) { console.warn('Versus login hook failed', e); }
                     // Handle notification tap on a cold start (?reminder=<activityId>)
                     window.mkHandleReminderDeepLink();
                     // Init the restore backup button visibility (async — non-blocking)
@@ -20470,4 +20473,1870 @@
 
         // ════════════════════════════════════════════════════════════════════
         // ══ END GRIT CURRENCY SYSTEM ════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════════
+
+        // ════════════════════════════════════════════════════════════════════
+        // ══ VERSUS CHALLENGES ═══════════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════════
+        //
+        // A wagered two-player contest built on top of the existing Challenges
+        // surface. Solo challenges (window.userData.challenges) are untouched
+        // and keep their own code path — nothing below reads or writes them.
+        //
+        // Placement: a TOP-LEVEL `challenges` collection. Two accounts read and
+        // write the same document; a document under users/{uid} could not be
+        // granted to the other side without widening that user's rules far past
+        // what is safe. The challenge document is the ONLY cross-account
+        // surface: no participant is ever granted read access to the other's
+        // user document, activity list, completion history or Grit balance.
+        // Everything the opponent sees is mirrored into it by its owner, and
+        // that mirror is counters and agreed names only (§2.3).
+        //
+        // Hooks into the rest of the app (all of them wrappers — no core
+        // function is restructured):
+        //   completeActivity()  → vsOnCompletion(activityId)
+        //   undoActivity()      → vsOnUndo(activityId)
+        //   deleteActivity()    → forfeit warning (vsGuardActivityDelete)
+        //   saveActivity()      → picks up an activity created inside the
+        //                         accept walkthrough (same creation path, no fork)
+        //   switchSubTab()      → renders the Versus sub-tab
+        //   login              → vsOnLogin()
+        //
+        // Grit invariant: every Grit that leaves a balance is either escrowed
+        // in a challenge document's `pot` or recorded in `payout` waiting to be
+        // claimed. Nothing evaporates and nothing is created. Balance moves
+        // happen inside runTransaction() so a debit and the pot it funds land
+        // together or not at all.
+        // ════════════════════════════════════════════════════════════════════
+
+        const VS_COL             = 'challenges';
+        const VS_SCHEMA_VERSION  = 2;
+        const VS_STAKE_MIN       = 25;     // §3.1, rate card reserved table
+        const VS_STAKE_MAX       = 100;
+        const VS_STAKE_STEP      = 25;
+        const VS_INVITE_DAYS     = 7;      // §2.2 expiresAt = createdAt + 7d
+        const VS_CACHE_TTL_MS    = 60000;  // §5 re-fetch if the cache is older
+        const VS_MAX_REQS        = 5;
+        const VS_ARCHIVE_DAYS    = 3;      // §8.7 resolved cards linger, then hide
+
+        // §3.1 concurrency cap. There is no free/Pro tier in this codebase —
+        // the only gating pattern that exists is level-based (TAB_UNLOCKS,
+        // getActivityLimit). Rather than invent a paid tier, this is a single
+        // tunable constant, counted over pending + active combined.
+        const VS_MAX_CONCURRENT  = 3;
+
+        const VS_TERMINAL = ['resolved', 'expired', 'declined', 'cancelled'];
+        const VS_ALL_STATUSES = ['pending', 'active'].concat(VS_TERMINAL);
+
+        // ── In-memory read model (§5) ─────────────────────────────────────
+        // One getDocs on login / tab open, cached. No listener is attached in
+        // the list view; exactly one is attached while a detail view is open.
+        let _vsCache      = { at: 0, list: [], uid: null };
+        let _vsFetchInFlight = null;
+        let _vsDetailUnsub   = null;
+        let _vsDetailId      = null;
+        let _vsIndexMissing  = false;   // fall back to the unfiltered query once
+
+        function vsUid() { return (window.currentUser && window.currentUser.uid) || null; }
+        function vsNow() { return Date.now(); }
+
+        function vsOther(ch, uid) {
+            var p = ch.participants || [];
+            return p[0] === uid ? p[1] : p[0];
+        }
+
+        function vsName(ch, uid) {
+            return (ch.names && ch.names[uid]) || 'Opponent';
+        }
+
+        function vsIsTerminal(status) { return VS_TERMINAL.indexOf(status) !== -1; }
+
+        // Sum of every requirement's target — the score a side needs to win
+        // outright, and the denominator for their bar.
+        function vsTargetTotal(ch) {
+            return (ch.requirements || []).reduce(function (s, r) {
+                return s + (r.targetCount || 0);
+            }, 0);
+        }
+
+        function vsProgressOf(ch, uid) {
+            return (ch.progress && ch.progress[uid]) || {};
+        }
+
+        function vsMappingOf(ch, uid) {
+            return (ch.mapping && ch.mapping[uid]) || {};
+        }
+
+        // Capped per requirement (§4.2): excess completions never inflate a
+        // total. The stored counters are already capped on write; this is the
+        // read-side belt to the same braces, and what resolution compares.
+        function vsCappedTotal(ch, uid) {
+            var prog = vsProgressOf(ch, uid);
+            return (ch.requirements || []).reduce(function (s, r) {
+                return s + Math.min(prog[r.reqId] || 0, r.targetCount || 0);
+            }, 0);
+        }
+
+        function vsHasCompleted(ch, uid) {
+            var prog = vsProgressOf(ch, uid);
+            var reqs = ch.requirements || [];
+            if (!reqs.length) return false;
+            return reqs.every(function (r) { return (prog[r.reqId] || 0) >= (r.targetCount || 0); });
+        }
+
+        // Every activity id this user has committed to a live challenge.
+        // §3.3: an activity may be mapped into at most one active challenge at
+        // a time — without it, one completion feeds several wagers.
+        function vsCommittedActivityIds(excludeChallengeId) {
+            var uid = vsUid();
+            var out = new Set();
+            if (!uid) return out;
+            _vsCache.list.forEach(function (ch) {
+                if (ch.id === excludeChallengeId) return;
+                if (ch.status !== 'active' && ch.status !== 'pending') return;
+                var m = vsMappingOf(ch, uid);
+                Object.keys(m).forEach(function (reqId) {
+                    if (m[reqId] && m[reqId].activityId) out.add(m[reqId].activityId);
+                });
+            });
+            return out;
+        }
+
+        // ── Fetch (§5) ────────────────────────────────────────────────────
+
+        async function vsFetch(force) {
+            var uid = vsUid();
+            if (!uid || !canPersistUserData('vsFetch')) return [];
+            if (_vsCache.uid !== uid) { _vsCache = { at: 0, list: [], uid: uid }; }
+            if (!force && _vsCache.at && (vsNow() - _vsCache.at) < VS_CACHE_TTL_MS) {
+                return _vsCache.list;
+            }
+            if (_vsFetchInFlight) return _vsFetchInFlight;
+
+            _vsFetchInFlight = (async function () {
+                var list = [];
+                var col  = collection(db, VS_COL);
+                try {
+                    // participants array-contains + status in — needs the
+                    // composite index declared in firestore.indexes.json.
+                    //
+                    // The status list is every status on purpose. A refund
+                    // owed on a declined or expired invite lives in a terminal
+                    // document, and the side that is owed it is not
+                    // necessarily the side that made the transition — so
+                    // narrowing this filter to the statuses the UI draws would
+                    // leave escrowed Grit unclaimable. Nothing is filtered out
+                    // that anyone could still be owed money from.
+                    var q = _vsIndexMissing
+                        ? query(col, where('participants', 'array-contains', uid))
+                        : query(col, where('participants', 'array-contains', uid),
+                                     where('status', 'in', VS_ALL_STATUSES));
+                    var snap = await getDocs(q);
+                    snap.forEach(function (d) { list.push(Object.assign({ id: d.id }, d.data())); });
+                } catch (err) {
+                    if (!_vsIndexMissing && err && (err.code === 'failed-precondition' ||
+                        /index/i.test(err.message || ''))) {
+                        // The composite index has not been built yet. Fall back
+                        // to the single-field query and filter in memory so the
+                        // feature still works, permanently for this session.
+                        console.warn('Versus: composite index missing, falling back to unfiltered query.');
+                        _vsIndexMissing = true;
+                        _vsFetchInFlight = null;
+                        return vsFetch(true);
+                    }
+                    console.warn('Versus fetch failed:', err && err.message);
+                    return _vsCache.list;
+                }
+                _vsCache = { at: vsNow(), list: list, uid: uid };
+                return list;
+            })();
+
+            try { return await _vsFetchInFlight; }
+            finally { _vsFetchInFlight = null; }
+        }
+
+        function vsCacheReplace(ch) {
+            var i = _vsCache.list.findIndex(function (c) { return c.id === ch.id; });
+            if (i === -1) _vsCache.list.push(ch); else _vsCache.list[i] = ch;
+        }
+
+        function vsCacheGet(id) {
+            return _vsCache.list.find(function (c) { return c.id === id; }) || null;
+        }
+
+        // ── Grit escrow (§3.1, §3.3) ──────────────────────────────────────
+        // The balance lives in userData.grit.balance, which normally rides the
+        // full-document setDoc in saveUserData(). A stake is not allowed to be
+        // that loose: debit and pot must land together. So the debit is a
+        // dotted-path transaction.update on the user document inside the same
+        // runTransaction as the challenge write, and the in-memory balance is
+        // mirrored from the committed value afterwards.
+        //
+        // Callers MUST flush pending in-memory state first (vsFlushBeforeStake)
+        // so a debounced full-document save cannot land on top of the debit.
+
+        async function vsFlushBeforeStake() {
+            try { cancelPendingUserDataSave(); } catch (e) {}
+            await saveUserData();
+        }
+
+        function vsMirrorBalance(newBalance, delta, reason, meta) {
+            var g = gritState();
+            if (!g) return;
+            g.balance = newBalance;
+            if (delta < 0) g.lifetimeSpent  = (g.lifetimeSpent  || 0) + (-delta);
+            else           g.lifetimeEarned = (g.lifetimeEarned || 0) + delta;
+            gritLedgerWrite(delta, newBalance, reason, meta || {});
+            try { gritRefreshUI(); } catch (e) {}
+            debouncedSaveUserData();
+        }
+
+        // Reads the authoritative balance out of the user document inside a
+        // transaction. Returns { ref, balance, spent }.
+        async function vsReadBalance(tx, uid) {
+            var ref  = doc(db, 'users', uid);
+            var snap = await tx.get(ref);
+            if (!snap.exists()) throw new Error('vs/no-user-doc');
+            var g = snap.data().grit || {};
+            return {
+                ref: ref,
+                balance: (typeof g.balance === 'number' && isFinite(g.balance)) ? g.balance : 0,
+                spent:   (typeof g.lifetimeSpent === 'number') ? g.lifetimeSpent : 0,
+                earned:  (typeof g.lifetimeEarned === 'number') ? g.lifetimeEarned : 0
+            };
+        }
+
+        // ── Create (§3.1) ─────────────────────────────────────────────────
+
+        function vsNewId() {
+            return 'vs-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+        }
+
+        function vsCountLive() {
+            var uid = vsUid();
+            return _vsCache.list.filter(function (c) {
+                return (c.status === 'pending' || c.status === 'active') &&
+                       (c.participants || []).indexOf(uid) !== -1;
+            }).length;
+        }
+
+        // opponentUid must be a friend; requirements is
+        // [{ reqId, name, targetCount, activityId, activityName }] — the
+        // activity fields are the CREATOR's own mapping, filled in inline at
+        // authoring time because they are mapping activities they already own.
+        async function vsCreateChallenge(opts) {
+            var uid = vsUid();
+            if (!uid) throw new Error('Not signed in.');
+            if (!canPersistUserData('vsCreate')) throw new Error('Your account is not loaded yet.');
+
+            var opponentUid = opts.opponentUid;
+            if (!opponentUid || opponentUid === uid) throw new Error('Pick a friend to challenge.');
+            if (((window.userData.friends) || []).indexOf(opponentUid) === -1) {
+                throw new Error('You can only challenge someone on your friends list.');
+            }
+
+            var stake = Math.round(opts.stake || 0);
+            if (stake < VS_STAKE_MIN || stake > VS_STAKE_MAX) {
+                throw new Error('Stake must be between ' + VS_STAKE_MIN + ' and ' + VS_STAKE_MAX + ' Grit.');
+            }
+            var durationDays = Math.max(1, Math.round(opts.durationDays || 0));
+            var reqs = (opts.requirements || []).filter(function (r) { return r && r.name && r.activityId; });
+            if (!reqs.length) throw new Error('Add at least one requirement.');
+            if (reqs.length > VS_MAX_REQS) throw new Error('At most ' + VS_MAX_REQS + ' requirements.');
+
+            await vsFetch(true);
+            if (vsCountLive() >= VS_MAX_CONCURRENT) {
+                throw new Error('You already have ' + VS_MAX_CONCURRENT +
+                                ' versus challenges running. Finish one first.');
+            }
+            var committed = vsCommittedActivityIds(null);
+            var clash = reqs.find(function (r) { return committed.has(r.activityId); });
+            if (clash) {
+                throw new Error('"' + clash.activityName + '" is already committed to another challenge.');
+            }
+
+            var myName  = (window.userData.profile && window.userData.profile.username) ||
+                          (window.currentUser && window.currentUser.displayName) || 'You';
+            var oppName = opts.opponentName || 'Opponent';
+
+            var now = vsNow();
+            var id  = vsNewId();
+            var chRef = doc(db, VS_COL, id);
+
+            var mappingMine = {};
+            var payload = {
+                schemaVersion: VS_SCHEMA_VERSION,
+                mode: 'versus',
+                createdBy: uid,
+                opponent: opponentUid,
+                participants: [uid, opponentUid],
+                status: 'pending',
+                name: String(opts.name || '').slice(0, 80),
+                description: String(opts.description || '').slice(0, 300),
+                stake: stake,
+                pot: stake,
+                bonusXP: Math.max(1, Math.round(opts.bonusXP || 1)),
+                durationDays: durationDays,
+                createdAt: now,
+                expiresAt: now + VS_INVITE_DAYS * 86400000,
+                startedAt: null,
+                endsAt: null,
+                resolvedAt: null,
+                requirements: reqs.map(function (r) {
+                    mappingMine[r.reqId] = {
+                        activityId: r.activityId,
+                        activityName: r.activityName   // snapshot at mapping time (§2.2)
+                    };
+                    return { reqId: r.reqId, name: String(r.name).slice(0, 60),
+                             targetCount: Math.max(1, Math.round(r.targetCount || 1)) };
+                }),
+                mapping:       (function () { var m = {}; m[uid] = mappingMine; m[opponentUid] = {}; return m; })(),
+                progress:      (function () { var m = {}; m[uid] = {}; m[opponentUid] = {}; return m; })(),
+                totals:        (function () { var m = {}; m[uid] = 0;  m[opponentUid] = 0;  return m; })(),
+                winner: null,
+                outcome: null,
+                payout:        (function () { var m = {}; m[uid] = 0;  m[opponentUid] = 0;  return m; })(),
+                payoutClaimed: (function () { var m = {}; m[uid] = false; m[opponentUid] = false; return m; })(),
+                seen:          (function () { var m = {}; m[uid] = now; m[opponentUid] = 0; return m; })(),
+                names:         (function () { var m = {}; m[uid] = myName; m[opponentUid] = oppName; return m; })()
+            };
+
+            await vsFlushBeforeStake();
+
+            var committedBalance = null;
+            await runTransaction(db, async function (tx) {
+                var bal = await vsReadBalance(tx, uid);
+                if (bal.balance < stake) {
+                    throw new Error('SHORTFALL:' + (stake - bal.balance));
+                }
+                committedBalance = bal.balance - stake;
+                tx.update(bal.ref, {
+                    'grit.balance': committedBalance,
+                    'grit.lifetimeSpent': bal.spent + stake
+                });
+                tx.set(chRef, payload);
+            });
+
+            vsMirrorBalance(committedBalance, -stake, 'challenge_stake',
+                { challengeId: id, challengeName: payload.name, role: 'creator' });
+
+            vsCacheReplace(Object.assign({ id: id }, payload));
+            return id;
+        }
+
+        // ── Accept / decline / cancel / expire (§3.3, §3.4) ────────────────
+
+        async function vsAcceptChallenge(id, mappingMine) {
+            var uid = vsUid();
+            if (!uid) throw new Error('Not signed in.');
+            if (!canPersistUserData('vsAccept')) throw new Error('Your account is not loaded yet.');
+
+            await vsFetch(true);
+            if (vsCountLive() > VS_MAX_CONCURRENT) {
+                throw new Error('You already have ' + VS_MAX_CONCURRENT +
+                                ' versus challenges running. Finish one first.');
+            }
+            var committed = vsCommittedActivityIds(id);
+            var clashId = Object.keys(mappingMine).find(function (k) {
+                return committed.has(mappingMine[k].activityId);
+            });
+            if (clashId) {
+                throw new Error('"' + mappingMine[clashId].activityName +
+                                '" is already committed to another challenge.');
+            }
+
+            await vsFlushBeforeStake();
+
+            var chRef = doc(db, VS_COL, id);
+            var committedBalance = null, stake = 0, chName = '', started = 0, ends = 0;
+
+            await runTransaction(db, async function (tx) {
+                // Every read must precede every write in a transaction.
+                var chSnap = await tx.get(chRef);
+                if (!chSnap.exists()) throw new Error('This challenge no longer exists.');
+                var ch = chSnap.data();
+                if (ch.status !== 'pending') throw new Error('This challenge is no longer open.');
+                if (ch.opponent !== uid)     throw new Error('This invite is not yours to accept.');
+                if (vsNow() > ch.expiresAt)  throw new Error('This invite has expired.');
+                var missing = (ch.requirements || []).some(function (r) {
+                    return !mappingMine[r.reqId] || !mappingMine[r.reqId].activityId;
+                });
+                if (missing) throw new Error('Every requirement needs an activity before you can accept.');
+
+                var bal = await vsReadBalance(tx, uid);
+                stake = ch.stake;
+                chName = ch.name;
+                if (bal.balance < stake) throw new Error('SHORTFALL:' + (stake - bal.balance));
+
+                started = vsNow();
+                ends    = started + ch.durationDays * 86400000;
+                committedBalance = bal.balance - stake;
+
+                tx.update(bal.ref, {
+                    'grit.balance': committedBalance,
+                    'grit.lifetimeSpent': bal.spent + stake
+                });
+                var patch = {
+                    status: 'active',
+                    pot: stake * 2,
+                    startedAt: started,
+                    endsAt: ends
+                };
+                patch['mapping.' + uid] = mappingMine;
+                patch['seen.' + uid]    = started;
+                tx.update(chRef, patch);
+            });
+
+            vsMirrorBalance(committedBalance, -stake, 'challenge_stake',
+                { challengeId: id, challengeName: chName, role: 'opponent' });
+
+            var cached = vsCacheGet(id);
+            if (cached) {
+                cached.status = 'active';
+                cached.pot = stake * 2;
+                cached.startedAt = started;
+                cached.endsAt = ends;
+                cached.mapping = cached.mapping || {};
+                cached.mapping[uid] = mappingMine;
+            }
+            return true;
+        }
+
+        // Decline, expire and cancel refund identically (§3.4): terminal
+        // status, the pot recorded as owed back to whoever paid it, pot zeroed.
+        // The claim path in §6.4 returns it. Guarded on status == 'pending' so
+        // two clients racing cannot both refund.
+        async function vsTerminatePending(id, nextStatus, outcome) {
+            var uid = vsUid();
+            var chRef = doc(db, VS_COL, id);
+            var didRun = false;
+            await runTransaction(db, async function (tx) {
+                var snap = await tx.get(chRef);
+                if (!snap.exists()) return;
+                var ch = snap.data();
+                if (ch.status !== 'pending') return;   // someone else got here first
+                if ((ch.participants || []).indexOf(uid) === -1) return;
+                if (nextStatus === 'declined'  && ch.opponent  !== uid) return;
+                if (nextStatus === 'cancelled' && ch.createdBy !== uid) return;
+                if (nextStatus === 'expired'   && vsNow() <= ch.expiresAt) return;
+
+                var payout = {};
+                (ch.participants || []).forEach(function (p) { payout[p] = 0; });
+                // Only the challenger has paid while a challenge is pending —
+                // escrow at invite (§3.1) means the pot is exactly one stake.
+                payout[ch.createdBy] = ch.pot;
+
+                tx.update(chRef, {
+                    status: nextStatus,
+                    outcome: outcome,
+                    winner: null,
+                    resolvedAt: vsNow(),
+                    pot: 0,
+                    payout: payout
+                });
+                didRun = true;
+            });
+            if (didRun) { await vsFetch(true); }
+            return didRun;
+        }
+
+        window.vsDecline = async function (id) {
+            if (!confirm('Decline this challenge? Their stake goes back to them.')) return;
+            try {
+                await vsTerminatePending(id, 'declined', 'declined_refund');
+                showToast('Challenge declined.', 'olive');
+                vsRenderTab();
+            } catch (e) { showToast(vsErrText(e), 'red'); }
+        };
+
+        window.vsCancel = async function (id) {
+            if (!confirm('Withdraw this invite? Your stake is returned.')) return;
+            try {
+                await vsTerminatePending(id, 'cancelled', 'cancelled_refund');
+                showToast('Invite withdrawn — your stake is on its way back.', 'olive');
+                await vsRunMaintenance();
+                vsRenderTab();
+            } catch (e) { showToast(vsErrText(e), 'red'); }
+        };
+
+        // ── Resolution (§6) ───────────────────────────────────────────────
+        //
+        // Resolution never moves Grit. The loser's client cannot write to the
+        // winner's balance and is never granted the ability to. It records what
+        // is owed in `payout` and zeroes the pot; each side then claims its own
+        // (§6.4). Every resolving transaction is guarded on the status it
+        // expects, so whichever client gets there first wins the race and the
+        // second is a no-op — two clients resolving at once cannot double-pay.
+
+        function vsBuildResolution(ch, winnerUid, outcome) {
+            var p = ch.participants || [];
+            var payout = {};
+            p.forEach(function (u) { payout[u] = 0; });
+            if (winnerUid) {
+                payout[winnerUid] = ch.pot;
+            } else {
+                // Tie or refund: both stakes go home whole. No coin flip — a
+                // wager where nobody lost should not manufacture a loser.
+                p.forEach(function (u) { payout[u] = Math.round(ch.pot / p.length); });
+            }
+            return {
+                status: 'resolved',
+                winner: winnerUid || null,
+                outcome: outcome,
+                resolvedAt: vsNow(),
+                pot: 0,
+                payout: payout
+            };
+        }
+
+        // Applies one qualifying completion AND resolves in the same
+        // transaction when it crosses the final target (§6.1 rule 1, §6.3).
+        // Returns 'won' | 'progressed' | null.
+        async function vsCommitProgress(id, reqId, delta) {
+            var uid = vsUid();
+            var chRef = doc(db, VS_COL, id);
+            var result = null;
+            await runTransaction(db, async function (tx) {
+                var snap = await tx.get(chRef);
+                if (!snap.exists()) return;
+                var ch = snap.data();
+                if (ch.status !== 'active') return;
+                var now = vsNow();
+                if (now < ch.startedAt || now > ch.endsAt) return;
+
+                var req = (ch.requirements || []).find(function (r) { return r.reqId === reqId; });
+                if (!req) return;
+
+                var prog = Object.assign({}, (ch.progress || {})[uid] || {});
+                var before = prog[reqId] || 0;
+                var after  = Math.max(0, Math.min(req.targetCount, before + delta));
+                if (after === before) return;   // already at target, or already zero
+                prog[reqId] = after;
+
+                var total = (ch.requirements || []).reduce(function (s, r) {
+                    return s + Math.min(prog[r.reqId] || 0, r.targetCount || 0);
+                }, 0);
+
+                var patch = {};
+                patch['progress.' + uid + '.' + reqId] = after;
+                patch['totals.' + uid] = total;
+
+                var complete = (ch.requirements || []).every(function (r) {
+                    return (prog[r.reqId] || 0) >= (r.targetCount || 0);
+                });
+                if (complete && delta > 0) {
+                    Object.assign(patch, vsBuildResolution(ch, uid, 'completed_first'));
+                    result = 'won';
+                } else {
+                    result = 'progressed';
+                }
+                tx.update(chRef, patch);
+            });
+            return result;
+        }
+
+        // §6.1 rules 2 and 3 — evaluated lazily on any client load of an
+        // `active` challenge whose deadline has passed. Guarded on
+        // status == 'active'.
+        async function vsResolveDeadline(id) {
+            var chRef = doc(db, VS_COL, id);
+            var fired = false;
+            await runTransaction(db, async function (tx) {
+                var snap = await tx.get(chRef);
+                if (!snap.exists()) return;
+                var ch = snap.data();
+                if (ch.status !== 'active') return;
+                if (vsNow() <= ch.endsAt) return;
+
+                var p = ch.participants || [];
+                var a = p[0], b = p[1];
+                // Re-derive both totals from the counters rather than trusting
+                // the denormalised value, and re-apply the per-requirement cap.
+                var ta = vsCappedTotal(ch, a), tb = vsCappedTotal(ch, b);
+
+                // A side that quietly reached every target without the
+                // resolving write landing still wins outright.
+                var doneA = vsHasCompleted(ch, a), doneB = vsHasCompleted(ch, b);
+                var patch;
+                if (doneA && !doneB)      patch = vsBuildResolution(ch, a, 'completed_first');
+                else if (doneB && !doneA) patch = vsBuildResolution(ch, b, 'completed_first');
+                else if (ta > tb)         patch = vsBuildResolution(ch, a, 'deadline_lead');
+                else if (tb > ta)         patch = vsBuildResolution(ch, b, 'deadline_lead');
+                else                      patch = vsBuildResolution(ch, null, 'tie_refund');
+
+                // Neither side's denormalised totals are rewritten here: a
+                // participant may only ever write their own keys, and the
+                // comparison above is derived from the counters regardless.
+                tx.update(chRef, patch);
+                fired = true;
+            });
+            return fired;
+        }
+
+        // §6.2 — forfeiting hands the whole pot to the opponent. Reachable by
+        // deleting or unmapping an activity that is committed to a live
+        // challenge, or by explicitly forfeiting.
+        async function vsForfeit(id, reason) {
+            var uid = vsUid();
+            var chRef = doc(db, VS_COL, id);
+            var done = false;
+            await runTransaction(db, async function (tx) {
+                var snap = await tx.get(chRef);
+                if (!snap.exists()) return;
+                var ch = snap.data();
+                if (ch.status !== 'active') return;
+                if ((ch.participants || []).indexOf(uid) === -1) return;
+                var opp = vsOther(ch, uid);
+                var patch = vsBuildResolution(ch, opp, 'forfeit');
+                patch.forfeitedBy = uid;
+                if (reason) patch.forfeitReason = String(reason).slice(0, 80);
+                tx.update(chRef, patch);
+                done = true;
+            });
+            if (done) await vsFetch(true);
+            return done;
+        }
+        window.vsForfeit = vsForfeit;
+
+        // ── Payout claim (§6.4) ───────────────────────────────────────────
+        // Runs automatically on load — no button. `payoutClaimed[myUid]` is the
+        // only key in that map this user may write, and only false → true, so
+        // the claim is idempotent no matter how many times a client retries.
+        async function vsClaimPayout(ch) {
+            var uid = vsUid();
+            if (!uid) return 0;
+            var owed = (ch.payout && ch.payout[uid]) || 0;
+            if (owed <= 0) return 0;
+            if (ch.payoutClaimed && ch.payoutClaimed[uid]) return 0;
+
+            await vsFlushBeforeStake();
+
+            var chRef = doc(db, VS_COL, ch.id);
+            var credited = 0, newBalance = null, reason = 'challenge_payout';
+
+            await runTransaction(db, async function (tx) {
+                var snap = await tx.get(chRef);
+                if (!snap.exists()) return;
+                var live = snap.data();
+                var amount = (live.payout && live.payout[uid]) || 0;
+                if (amount <= 0) return;
+                if (live.payoutClaimed && live.payoutClaimed[uid]) return;
+
+                var bal = await vsReadBalance(tx, uid);
+                newBalance = bal.balance + amount;
+                credited   = amount;
+                reason = (live.winner === uid && live.outcome !== 'tie_refund')
+                       ? 'challenge_payout' : 'challenge_refund';
+
+                tx.update(bal.ref, {
+                    'grit.balance': newBalance,
+                    'grit.lifetimeEarned': bal.earned + amount
+                });
+                var patch = {};
+                patch['payoutClaimed.' + uid] = true;
+                tx.update(chRef, patch);
+            });
+
+            if (credited > 0) {
+                vsMirrorBalance(newBalance, credited, reason,
+                    { challengeId: ch.id, challengeName: ch.name });
+                if (ch.payoutClaimed) ch.payoutClaimed[uid] = true;
+            }
+            return credited;
+        }
+
+        // ── Lazy maintenance (§3.4, §6.3, §6.4) ───────────────────────────
+        // There is no scheduler in this build. Expiry, deadline resolution and
+        // payout claims are all evaluated whenever a client loads the list.
+        // A scheduled Cloud Function that resolves overdue challenges is a
+        // worthwhile hardening pass and is deliberately NOT a dependency here.
+        let _vsMaintaining = false;
+
+        async function vsRunMaintenance() {
+            if (_vsMaintaining) return;
+            _vsMaintaining = true;
+            try {
+                var uid = vsUid();
+                if (!uid) return;
+                var list = await vsFetch(false);
+                var touched = false;
+
+                for (var i = 0; i < list.length; i++) {
+                    var ch = list[i];
+                    try {
+                        if (ch.status === 'pending' && vsNow() > ch.expiresAt) {
+                            if (await vsTerminatePending(ch.id, 'expired', 'expired_refund')) touched = true;
+                        } else if (ch.status === 'active' && vsNow() > ch.endsAt) {
+                            if (await vsResolveDeadline(ch.id)) touched = true;
+                        }
+                    } catch (e) { console.warn('Versus maintenance step failed:', e && e.message); }
+                }
+                if (touched) list = await vsFetch(true);
+
+                for (var j = 0; j < list.length; j++) {
+                    var c = list[j];
+                    if (!vsIsTerminal(c.status)) continue;
+                    try {
+                        var got = await vsClaimPayout(c);
+                        if (got > 0) {
+                            touched = true;
+                            showToast('+' + got + ' Grit returned from "' + c.name + '"', 'olive');
+                        }
+                    } catch (e) { console.warn('Versus claim failed:', e && e.message); }
+                }
+                if (touched) await vsFetch(true);
+                vsAnnounceResults();
+                vsPrune();
+                vsUpdateBadges();
+            } finally {
+                _vsMaintaining = false;
+            }
+        }
+
+        // A terminal challenge that owes this user nothing, or has already paid
+        // them, is dead weight in memory. It stays in Firestore — documents are
+        // never deleted — but there is no reason to carry it in the cache the
+        // completion path walks on every tap.
+        function vsPrune() {
+            var uid = vsUid();
+            if (!uid) return;
+            _vsCache.list = _vsCache.list.filter(function (c) {
+                if (!vsIsTerminal(c.status)) return true;
+                var owed    = (c.payout && c.payout[uid]) || 0;
+                var claimed = !!(c.payoutClaimed && c.payoutClaimed[uid]);
+                if (owed > 0 && !claimed) return true;                 // still owed
+                if (c.status === 'resolved' &&
+                    (vsNow() - (c.resolvedAt || 0)) < VS_ARCHIVE_DAYS * 86400000) return true;
+                return false;
+            });
+        }
+
+        // §6.5 — both sides get told, plainly, on next load. Seen results are
+        // remembered in userData so the message fires once, not every render.
+        function vsAnnounceResults() {
+            var uid = vsUid();
+            if (!uid || !window.userData) return;
+            if (!window.userData.vsSeenResults) window.userData.vsSeenResults = {};
+            var seen = window.userData.vsSeenResults;
+            var changed = false;
+
+            _vsCache.list.forEach(function (ch) {
+                if (ch.status !== 'resolved') return;
+                if (seen[ch.id]) return;
+                seen[ch.id] = true;
+                changed = true;
+                var opp = vsOther(ch, uid);
+                var mine = vsCappedTotal(ch, uid), theirs = vsCappedTotal(ch, opp);
+                var line;
+                if (ch.outcome === 'tie_refund') {
+                    line = '🤝 "' + ch.name + '" ended level — ' + mine + '–' + theirs +
+                           '. Both stakes returned.';
+                } else if (ch.winner === uid) {
+                    line = '🏆 You won "' + ch.name + '" ' + mine + '–' + theirs +
+                           ' · +' + ((ch.payout && ch.payout[uid]) || 0) + ' Grit';
+                } else {
+                    line = '"' + ch.name + '" went to ' + vsName(ch, opp) + ' — ' +
+                           mine + '–' + theirs + '. Your stake is gone.';
+                }
+                showToast(line, ch.winner === uid ? 'olive' : 'red');
+            });
+            if (changed) debouncedSaveUserData();
+        }
+
+        // ── Progress accounting (§4) ──────────────────────────────────────
+        //
+        // A completion counts only when: the challenge is active, now is inside
+        // [startedAt, endsAt], the activity is mapped to a requirement FOR THIS
+        // USER, and the completion is live rather than backdated.
+        //
+        // The fourth rule is why this hooks completeActivity() and nothing
+        // else. completeActivity is the live path; retroactiveComplete() is the
+        // backdating path and is deliberately NOT hooked. Backdating stays free
+        // and unlimited everywhere else — it still awards XP, still feeds
+        // streaks, still counts in analytics. It simply does not move a wager.
+        //
+        // Cost (§4.3): one small write per qualifying completion, only while a
+        // challenge is active, only for mapped activities. The mapping lookup
+        // resolves against the in-memory cache — there is no read on the
+        // completion hot path. A stale cache can miss a challenge accepted
+        // seconds ago; that is acceptable and self-corrects on next refresh.
+
+        function vsLiveMappingsFor(activityId) {
+            var uid = vsUid();
+            var out = [];
+            if (!uid) return out;
+            var now = vsNow();
+            _vsCache.list.forEach(function (ch) {
+                if (ch.status !== 'active') return;
+                if (now < ch.startedAt || now > ch.endsAt) return;
+                var m = vsMappingOf(ch, uid);
+                Object.keys(m).forEach(function (reqId) {
+                    if (m[reqId] && m[reqId].activityId === activityId) {
+                        out.push({ ch: ch, reqId: reqId });
+                    }
+                });
+            });
+            return out;
+        }
+
+        async function vsOnCompletion(activityId) {
+            var hits = vsLiveMappingsFor(activityId);
+            if (!hits.length) return;
+            var uid = vsUid();
+            for (var i = 0; i < hits.length; i++) {
+                var ch = hits[i].ch, reqId = hits[i].reqId;
+                var req = (ch.requirements || []).find(function (r) { return r.reqId === reqId; });
+                if (!req) continue;
+                var cur = (vsProgressOf(ch, uid))[reqId] || 0;
+                if (cur >= req.targetCount) continue;   // capped — no write at all
+                try {
+                    var res = await vsCommitProgress(ch.id, reqId, +1);
+                    if (res) {
+                        // Mirror into the cache so the next completion caps
+                        // correctly without a re-read.
+                        ch.progress = ch.progress || {};
+                        ch.progress[uid] = ch.progress[uid] || {};
+                        ch.progress[uid][reqId] = cur + 1;
+                        ch.totals = ch.totals || {};
+                        ch.totals[uid] = vsCappedTotal(ch, uid);
+                    }
+                    if (res === 'won') {
+                        await vsFetch(true);
+                        showToast('🏆 You finished "' + ch.name + '" first — the pot is yours.', 'olive');
+                        await vsRunMaintenance();
+                    }
+                } catch (e) { console.warn('Versus progress write failed:', e && e.message); }
+            }
+            vsRenderIfVisible();
+        }
+
+        // §4.2 — undo must mirror. undoActivity only ever reverses a completion
+        // made today, which is exactly the set of completions that could have
+        // incremented a challenge, so the symmetry is clean. Clamped at zero.
+        async function vsOnUndo(activityId) {
+            var hits = vsLiveMappingsFor(activityId);
+            if (!hits.length) return;
+            var uid = vsUid();
+            for (var i = 0; i < hits.length; i++) {
+                var ch = hits[i].ch, reqId = hits[i].reqId;
+                var cur = (vsProgressOf(ch, uid))[reqId] || 0;
+                if (cur <= 0) continue;
+                try {
+                    await vsCommitProgress(ch.id, reqId, -1);
+                    ch.progress[uid][reqId] = cur - 1;
+                    ch.totals[uid] = vsCappedTotal(ch, uid);
+                } catch (e) { console.warn('Versus undo write failed:', e && e.message); }
+            }
+            vsRenderIfVisible();
+        }
+
+        // ── Detail listener (§5) ──────────────────────────────────────────
+        // The one place a live socket is warranted: the detail view is the one
+        // place the user is actually looking at the opponent's bar. Never in
+        // the list — several active challenges would otherwise hold several
+        // sockets open for bars nobody is watching.
+        function vsAttachDetail(id) {
+            vsDetachDetail();
+            _vsDetailId = id;
+            try {
+                _vsDetailUnsub = onSnapshot(doc(db, VS_COL, id), function (snap) {
+                    if (!snap.exists()) return;
+                    var ch = Object.assign({ id: snap.id }, snap.data());
+                    vsCacheReplace(ch);
+                    if (_vsDetailId === id) vsRenderDetail(id);
+                }, function (err) { console.warn('Versus detail listener:', err && err.message); });
+            } catch (e) { console.warn('Versus listener attach failed:', e && e.message); }
+        }
+
+        function vsDetachDetail() {
+            if (_vsDetailUnsub) { try { _vsDetailUnsub(); } catch (e) {} }
+            _vsDetailUnsub = null;
+            _vsDetailId = null;
+        }
+
+        function vsErrText(e) {
+            var m = (e && e.message) || String(e);
+            if (m.indexOf('SHORTFALL:') === 0) {
+                return 'You are ' + m.split(':')[1] + ' Grit short of this stake.';
+            }
+            if (/permission|insufficient/i.test(m)) {
+                return 'Firestore rules rejected that write — the versus rules may not be deployed yet.';
+            }
+            return m;
+        }
+
+        // ── UI (§8) ───────────────────────────────────────────────────────
+        // The existing Challenges visual language is kept as-is: ch-card,
+        // ch-bar, ch-act-row-v2 and the design tokens they hang off. The
+        // additions are the opponent's bar (visually subordinate to the user's
+        // own), the per-side breakdown, the stake display, and the invite,
+        // accept and resolved states.
+
+        function vsFmtLeft(ms) {
+            if (ms <= 0) return 'ended';
+            var d = Math.floor(ms / 86400000);
+            if (d >= 1) return d + (d === 1 ? ' day left' : ' days left');
+            var h = Math.floor(ms / 3600000);
+            if (h >= 1) return h + 'h left';
+            return Math.max(1, Math.floor(ms / 60000)) + 'm left';
+        }
+
+        function vsBar(label, current, target, tone) {
+            var pct = target > 0 ? Math.min(100, (current / target) * 100) : 0;
+            return '' +
+                '<div class="vs-barblock ' + tone + '">' +
+                    '<div class="vs-barhead">' +
+                        '<span class="vs-barname">' + escapeHtml(label) + '</span>' +
+                        '<span class="vs-barcount">' + current + '/' + target + '</span>' +
+                    '</div>' +
+                    '<div class="ch-bar"><div class="ch-bar-inner" style="width:' + pct + '%;"></div></div>' +
+                '</div>';
+        }
+
+        function vsBreakdown(ch, uid, heading) {
+            var prog = vsProgressOf(ch, uid), map = vsMappingOf(ch, uid);
+            var rows = (ch.requirements || []).map(function (r) {
+                var target = r.targetCount || 1;
+                var cur    = Math.min(prog[r.reqId] || 0, target);
+                var pct    = Math.min(100, (cur / target) * 100);
+                var done   = cur >= target;
+                var act    = map[r.reqId];
+                var sub    = act ? act.activityName : 'not mapped yet';
+                return '' +
+                    '<div class="ch-act-row-v2">' +
+                        '<div class="ch-act-row-top">' +
+                            '<span class="ch-act-row-name-v2' + (done ? ' done' : '') + '">' +
+                                escapeHtml(r.name) +
+                                '<span class="vs-act-sub"> · ' + escapeHtml(sub) + '</span>' +
+                            '</span>' +
+                            '<span class="ch-act-row-count-v2">' + cur + '/' + target + '</span>' +
+                        '</div>' +
+                        '<div class="ch-act-bar-v2"><div class="ch-act-bar-v2-fill' +
+                            (done ? ' done' : '') + '" style="width:' + pct + '%;"></div></div>' +
+                    '</div>';
+            }).join('');
+            return '<div class="vs-breakdown-group"><div class="vs-breakdown-head">' +
+                   escapeHtml(heading) + '</div>' + rows + '</div>';
+        }
+
+        // ── Cards ─────────────────────────────────────────────────────────
+
+        function vsPendingCard(ch, uid) {
+            var mine    = ch.createdBy === uid;
+            var opp     = vsOther(ch, uid);
+            var left    = vsFmtLeft(ch.expiresAt - vsNow());
+            var reqLine = (ch.requirements || []).map(function (r) {
+                return escapeHtml(r.name) + ' ×' + r.targetCount;
+            }).join(' · ');
+
+            var actions = mine
+                ? '<button class="vs-btn vs-btn-ghost" onclick="vsCancel(\'' + ch.id + '\')">Withdraw</button>'
+                : '<button class="vs-btn vs-btn-primary" onclick="vsOpenAccept(\'' + ch.id + '\')">Accept</button>' +
+                  '<button class="vs-btn vs-btn-ghost" onclick="vsDecline(\'' + ch.id + '\')">Decline</button>';
+
+            return '' +
+            '<div class="ch-card vs-card vs-card-pending">' +
+                '<div class="vs-ribbon">' + (mine ? 'Invite sent' : 'Challenge received') + '</div>' +
+                '<div class="ch-card-head">' +
+                    '<div class="ch-card-titlecol">' +
+                        '<h3 class="ch-card-title">' + escapeHtml(ch.name) + '</h3>' +
+                        (ch.description ? '<div class="ch-subtitle-row"><p class="ch-card-desc">' +
+                            escapeHtml(ch.description) + '</p></div>' : '') +
+                        '<div class="ch-meta">' +
+                            '<span>' + (mine ? 'To ' : 'From ') + escapeHtml(vsName(ch, opp)) + '</span>' +
+                            '<span class="ch-meta-sep">·</span>' +
+                            '<span class="vs-stake">' + ch.stake + ' Grit each</span>' +
+                            '<span class="ch-meta-sep">·</span>' +
+                            '<span>' + ch.durationDays + ' days</span>' +
+                            '<span class="ch-meta-sep">·</span>' +
+                            '<span class="vs-expiry">' + left + '</span>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="vs-reqline">' + reqLine + '</div>' +
+                '<div class="vs-liveonly">Only completions logged on the day they happen count toward this challenge.</div>' +
+                '<div class="vs-actions">' + actions + '</div>' +
+            '</div>';
+        }
+
+        function vsActiveCard(ch, uid) {
+            var opp    = vsOther(ch, uid);
+            var target = vsTargetTotal(ch);
+            var mine   = vsCappedTotal(ch, uid);
+            var theirs = vsCappedTotal(ch, opp);
+            var open   = _vsDetailId === ch.id;
+            var left   = vsFmtLeft(ch.endsAt - vsNow());
+            var leadKey = mine > theirs ? 'ahead' : (mine < theirs ? 'behind' : 'level');
+            var leadTxt = leadKey === 'ahead' ? 'you lead'
+                        : (leadKey === 'behind' ? 'you trail' : 'level');
+
+            return '' +
+            '<div class="ch-card vs-card" data-state="active">' +
+                '<div class="ch-card-head">' +
+                    '<div class="ch-card-titlecol">' +
+                        '<h3 class="ch-card-title">' + escapeHtml(ch.name) + '</h3>' +
+                        (ch.description ? '<div class="ch-subtitle-row"><p class="ch-card-desc">' +
+                            escapeHtml(ch.description) + '</p></div>' : '') +
+                        '<div class="ch-meta">' +
+                            '<span class="vs-pot">Pot ' + ch.pot + ' Grit</span>' +
+                            '<span class="ch-meta-sep">·</span>' +
+                            '<span>' + ch.stake + ' each</span>' +
+                            '<span class="ch-meta-sep">·</span>' +
+                            '<span class="ch-meta-xp">+' + ch.bonusXP + ' XP</span>' +
+                            '<span class="ch-meta-sep">·</span>' +
+                            '<span>' + left + '</span>' +
+                            '<span class="ch-meta-sep">·</span>' +
+                            '<span class="vs-lead vs-lead-' + leadKey + '">' + leadTxt + '</span>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>' +
+                vsBar('You', mine, target, 'vs-bar-mine') +
+                vsBar(vsName(ch, opp), theirs, target, 'vs-bar-theirs') +
+                '<div class="ch-action-row">' +
+                    '<button class="ch-breakdown-btn" type="button" onclick="vsToggleDetail(\'' + ch.id + '\')">' +
+                        '<span>' + (open ? 'Hide breakdown' : 'Breakdown') + '</span>' +
+                        '<svg class="ch-breakdown-chev' + (open ? ' expanded' : '') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>' +
+                    '</button>' +
+                    '<button class="vs-btn vs-btn-quiet" onclick="vsConfirmForfeit(\'' + ch.id + '\')">Forfeit</button>' +
+                '</div>' +
+                (open
+                    ? '<div class="vs-detail" id="vs-detail-' + ch.id + '">' +
+                        vsBreakdown(ch, uid, 'You') +
+                        vsBreakdown(ch, opp, vsName(ch, opp)) +
+                        '<div class="vs-liveonly">Only completions logged on the day they happen count toward this challenge.</div>' +
+                      '</div>'
+                    : '') +
+            '</div>';
+        }
+
+        function vsResolvedCard(ch, uid) {
+            var opp    = vsOther(ch, uid);
+            var target = vsTargetTotal(ch);
+            var mine   = vsCappedTotal(ch, uid);
+            var theirs = vsCappedTotal(ch, opp);
+            var won    = ch.winner === uid;
+            var tie    = !ch.winner;
+            var owed   = (ch.payout && ch.payout[uid]) || 0;
+            var claimed = !!(ch.payoutClaimed && ch.payoutClaimed[uid]);
+
+            var verdict, tone;
+            if (tie) {
+                verdict = 'Level at the deadline — both stakes returned.'; tone = 'vs-res-tie';
+            } else if (won) {
+                verdict = ch.outcome === 'forfeit'
+                    ? escapeHtml(vsName(ch, opp)) + ' forfeited. The pot is yours.'
+                    : (ch.outcome === 'completed_first'
+                        ? 'You finished first.' : 'You were ahead at the deadline.');
+                tone = 'vs-res-won';
+            } else {
+                verdict = ch.outcome === 'forfeit'
+                    ? 'You forfeited. ' + escapeHtml(vsName(ch, opp)) + ' took the pot.'
+                    : (ch.outcome === 'completed_first'
+                        ? escapeHtml(vsName(ch, opp)) + ' finished first.'
+                        : escapeHtml(vsName(ch, opp)) + ' was ahead at the deadline.');
+                tone = 'vs-res-lost';
+            }
+
+            var gritLine = owed > 0
+                ? '<span class="vs-grit-moved">' + (claimed ? '+' + owed + ' Grit banked' : '+' + owed + ' Grit incoming') + '</span>'
+                : '<span class="vs-grit-lost">−' + ch.stake + ' Grit</span>';
+
+            return '' +
+            '<div class="ch-card vs-card ' + tone + '" data-state="completed">' +
+                '<div class="vs-ribbon ' + tone + '">' + (tie ? 'Draw' : (won ? 'Won' : 'Lost')) + '</div>' +
+                '<div class="ch-card-head">' +
+                    '<div class="ch-card-titlecol">' +
+                        '<h3 class="ch-card-title">' + escapeHtml(ch.name) + '</h3>' +
+                        '<div class="ch-meta"><span>' + verdict + '</span>' +
+                            '<span class="ch-meta-sep">·</span>' + gritLine + '</div>' +
+                    '</div>' +
+                '</div>' +
+                vsBar('You', mine, target, 'vs-bar-mine') +
+                vsBar(vsName(ch, opp), theirs, target, 'vs-bar-theirs') +
+            '</div>';
+        }
+
+        // ── Tab render ────────────────────────────────────────────────────
+
+        window.vsRenderTab = async function () {
+            var host = document.getElementById('versusContent');
+            if (!host) return;
+            var uid = vsUid();
+            if (!uid) { host.innerHTML = ''; return; }
+
+            if (!_vsCache.at) {
+                host.innerHTML = '<div class="vs-loading">Loading…</div>';
+            }
+            await vsFetch(false);
+            await vsRunMaintenance();
+            vsPaint();
+        };
+
+        function vsPaint() {
+            var host = document.getElementById('versusContent');
+            if (!host) return;
+            var uid = vsUid();
+            if (!uid) return;
+
+            var list = _vsCache.list.slice();
+            var pending  = list.filter(function (c) { return c.status === 'pending'; });
+            var active   = list.filter(function (c) { return c.status === 'active'; });
+            var resolved = list.filter(function (c) {
+                return c.status === 'resolved' &&
+                       (vsNow() - (c.resolvedAt || 0)) < VS_ARCHIVE_DAYS * 86400000;
+            });
+            pending.sort(function (a, b) { return a.expiresAt - b.expiresAt; });
+            active.sort(function (a, b) { return a.endsAt - b.endsAt; });
+            resolved.sort(function (a, b) { return (b.resolvedAt || 0) - (a.resolvedAt || 0); });
+
+            var live = pending.length + active.length;
+            var html = '' +
+                '<div class="act-toolbar ch-toolbar">' +
+                    '<div class="tool-cluster">' +
+                        '<span class="vs-cap">' + live + ' / ' + VS_MAX_CONCURRENT + ' running</span>' +
+                    '</div>' +
+                    '<button class="act-tb-add-main"' +
+                        (live >= VS_MAX_CONCURRENT ? ' disabled title="You are at the limit"' : '') +
+                        ' onclick="vsOpenCreate()">' +
+                        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>' +
+                        'Challenge a friend' +
+                    '</button>' +
+                '</div>';
+
+            if (!live && !resolved.length) {
+                html += '<div class="ch-empty">' +
+                            '<div class="ch-empty-icon">⚔️</div>' +
+                            '<div class="ch-empty-text">No versus challenges. Stake Grit against a friend — ' +
+                            'first to finish takes the pot, and you can both watch the bars move.</div>' +
+                        '</div>';
+                host.innerHTML = html;
+                return;
+            }
+
+            function section(title, count, body) {
+                return '<div class="ch-section-head"><div class="ch-section-head-left">' +
+                       '<h3 class="ch-section-title">' + title + '</h3>' +
+                       '<span class="ch-section-count">' + count + '</span></div></div>' + body;
+            }
+            if (pending.length) {
+                html += section('Invites', pending.length,
+                    pending.map(function (c) { return vsPendingCard(c, uid); }).join(''));
+            }
+            if (active.length) {
+                html += section('Live', active.length,
+                    active.map(function (c) { return vsActiveCard(c, uid); }).join(''));
+            }
+            if (resolved.length) {
+                html += section('Finished', resolved.length,
+                    resolved.map(function (c) { return vsResolvedCard(c, uid); }).join(''));
+            }
+            host.innerHTML = html;
+            vsMarkSeen(pending.concat(active));
+        }
+
+        function vsRenderIfVisible() {
+            var panel = document.getElementById('challengesSubVersus');
+            if (panel && panel.style.display !== 'none' && window.currentTab === 'challenges') vsPaint();
+            vsUpdateBadges();
+        }
+
+        function vsRenderDetail(id) {
+            // The open card is re-rendered in place by repainting the list;
+            // the listener keeps the opponent's bar live while it is open.
+            vsPaint();
+        }
+
+        window.vsToggleDetail = function (id) {
+            if (_vsDetailId === id) { vsDetachDetail(); }
+            else { vsAttachDetail(id); }
+            vsPaint();
+        };
+
+        // §2.2 `seen` — drives the invite badge. Written at most once per
+        // challenge per session, own key only.
+        let _vsSeenWritten = {};
+        function vsMarkSeen(list) {
+            var uid = vsUid();
+            if (!uid) return;
+            list.forEach(function (ch) {
+                if (_vsSeenWritten[ch.id]) return;
+                if (ch.createdBy === uid && ch.status === 'pending') return;  // nothing new to see
+                _vsSeenWritten[ch.id] = true;
+                var patch = {};
+                patch['seen.' + uid] = vsNow();
+                updateDoc(doc(db, VS_COL, ch.id), patch).catch(function () {});
+                if (ch.seen) ch.seen[uid] = vsNow();
+            });
+            vsUpdateBadges();
+        }
+
+        // ── Badges (§3.2) ─────────────────────────────────────────────────
+        function vsPendingForMe() {
+            var uid = vsUid();
+            return _vsCache.list.filter(function (c) {
+                return c.status === 'pending' && c.opponent === uid && vsNow() < c.expiresAt;
+            }).length;
+        }
+
+        function vsUpdateBadges() {
+            var n = vsPendingForMe();
+            // Sub-tab pill
+            var pill = document.getElementById('vsSubTabBtn');
+            if (pill) {
+                var b = pill.querySelector('.vs-pill-badge');
+                if (n > 0) {
+                    if (!b) { b = document.createElement('span'); b.className = 'vs-pill-badge'; pill.appendChild(b); }
+                    b.textContent = n;
+                } else if (b) { b.remove(); }
+            }
+            // Challenges nav tab
+            document.querySelectorAll('.nav-tab').forEach(function (tab) {
+                var oc = tab.getAttribute('onclick') || '';
+                if (oc.indexOf("switchTab('challenges')") === -1) return;
+                var d = tab.querySelector('.vs-nav-dot');
+                if (n > 0) {
+                    if (!d) { d = document.createElement('span'); d.className = 'vs-nav-dot'; tab.appendChild(d); }
+                } else if (d) { d.remove(); }
+            });
+        }
+
+        // ── Sheet primitive ───────────────────────────────────────────────
+        // One reusable overlay, created on demand, styled with the app's
+        // existing modal tokens. Keeps index.html additions to the sub-tab.
+
+        function vsSheet(innerHtml) {
+            var el = document.getElementById('vsSheet');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'vsSheet';
+                el.className = 'modal-overlay vs-sheet-scrim';
+                el.addEventListener('click', function (ev) { if (ev.target === el) vsCloseSheet(); });
+                document.body.appendChild(el);
+            }
+            el.innerHTML = '<div class="modal pl-modal vs-sheet">' + innerHtml + '</div>';
+            el.classList.add('active');
+            el.style.display = 'flex';
+        }
+
+        window.vsCloseSheet = function () {
+            var el = document.getElementById('vsSheet');
+            if (el) { el.classList.remove('active'); el.style.display = 'none'; el.innerHTML = ''; }
+        };
+
+        function vsSheetHead(eyebrow, title) {
+            return '<div class="modal-header pl-modal-header">' +
+                     '<div><div class="pl-modal-eyebrow">' + escapeHtml(eyebrow) + '</div>' +
+                     '<h3 class="modal-title">' + escapeHtml(title) + '</h3></div>' +
+                     '<button class="pl-modal-close" type="button" onclick="vsCloseSheet()" aria-label="Close">' +
+                     '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+                     '</button></div>';
+        }
+
+        // ── Create flow (§8.4) ────────────────────────────────────────────
+        // Friend picker → the authoring form. The creator maps their own
+        // activities inline, because they already own them.
+
+        let _vsDraft = null;
+        let _vsFriendRows = [];
+
+        window.vsOpenCreate = async function () {
+            await vsFetch(false);
+            if (vsCountLive() >= VS_MAX_CONCURRENT) {
+                showToast('You already have ' + VS_MAX_CONCURRENT + ' versus challenges running.', 'red');
+                return;
+            }
+            var friends = (window.userData.friends || []);
+            vsSheet(vsSheetHead('Versus', 'Pick an opponent') +
+                    '<div class="modal-body pl-modal-body"><div class="vs-loading">Loading friends…</div></div>');
+
+            if (!friends.length) {
+                vsSheet(vsSheetHead('Versus', 'Pick an opponent') +
+                    '<div class="modal-body pl-modal-body">' +
+                    '<p class="vs-note">You need a friend to challenge. Add one from the Friends tab first.</p>' +
+                    '</div>');
+                return;
+            }
+
+            var rows = await Promise.all(friends.map(async function (uid) {
+                try {
+                    var s = await getDoc(doc(db, 'publicProfiles', uid));
+                    return { uid: uid, name: s.exists() ? (s.data().displayName || uid) : uid,
+                             level: s.exists() ? (s.data().level || 1) : null };
+                } catch (e) { return { uid: uid, name: uid, level: null }; }
+            }));
+            // Held in memory and addressed by index — a display name is never
+            // interpolated into an onclick attribute, where an apostrophe
+            // would break out of the handler.
+            _vsFriendRows = rows;
+
+            var body = rows.map(function (r, i) {
+                return '<button class="vs-friend-row" onclick="vsPickOpponent(' + i + ')">' +
+                       '<span class="vs-friend-name">' + escapeHtml(r.name) + '</span>' +
+                       (r.level ? '<span class="vs-friend-lvl">Lv ' + r.level + '</span>' : '') +
+                       '</button>';
+            }).join('');
+
+            vsSheet(vsSheetHead('Versus', 'Pick an opponent') +
+                    '<div class="modal-body pl-modal-body">' + body + '</div>');
+        };
+
+        window.vsPickOpponent = function (i) {
+            var r = _vsFriendRows[i];
+            if (!r) return;
+            _vsDraft = {
+                opponentUid: r.uid,
+                opponentName: r.name || 'Opponent',
+                rows: [],
+                durationDays: 14,
+                stake: VS_STAKE_MIN
+            };
+            vsDraftAddRow();
+            vsRenderCreateForm();
+        };
+
+        function vsDraftAddRow() {
+            if (_vsDraft.rows.length >= VS_MAX_REQS) return;
+            _vsDraft.rows.push({ reqId: 'r' + Math.random().toString(36).slice(2, 8),
+                                 activityId: '', name: '', targetCount: 5 });
+        }
+
+        window.vsAddRow = function () { vsReadCreateForm(); vsDraftAddRow(); vsRenderCreateForm(); };
+        window.vsDelRow = function (i) {
+            vsReadCreateForm();
+            if (_vsDraft.rows.length > 1) _vsDraft.rows.splice(i, 1);
+            vsRenderCreateForm();
+        };
+        window.vsRowChanged = function () { vsReadCreateForm(); vsRenderCreateForm(); };
+
+        function vsReadCreateForm() {
+            if (!_vsDraft) return;
+            var g = function (id) { var e = document.getElementById(id); return e ? e.value : ''; };
+            _vsDraft.name         = g('vsName');
+            _vsDraft.description  = g('vsDesc');
+            _vsDraft.durationDays = Math.max(1, parseInt(g('vsDuration'), 10) || 14);
+            _vsDraft.stake        = parseInt(g('vsStake'), 10) || VS_STAKE_MIN;
+            _vsDraft.rows.forEach(function (r, i) {
+                var a = document.getElementById('vsRowAct' + i);
+                var t = document.getElementById('vsRowTarget' + i);
+                var n = document.getElementById('vsRowName' + i);
+                if (a) r.activityId  = a.value;
+                if (t) r.targetCount = Math.max(1, parseInt(t.value, 10) || 1);
+                if (n) r.name        = n.value;
+            });
+        }
+
+        // Existing bonus-XP behaviour, unchanged (§9.12): 20% of the base XP
+        // the requirements are worth at their targets, floored at 1.
+        function vsDraftBonusXP() {
+            var total = 0;
+            _vsDraft.rows.forEach(function (r) {
+                var a = gritFindActivity(r.activityId);
+                if (a) total += (a.baseXP || 0) * (r.targetCount || 1);
+            });
+            return Math.max(1, Math.round(total * 0.2));
+        }
+
+        function vsRenderCreateForm() {
+            var committed = vsCommittedActivityIds(null);
+            var acts = gritAllActivities();
+            var used  = _vsDraft.rows.map(function (r) { return r.activityId; });
+
+            var rowsHtml = _vsDraft.rows.map(function (r, i) {
+                var opts = '<option value="">Choose one of your activities…</option>' +
+                    acts.map(function (a) {
+                        var lockedElsewhere = committed.has(a.id);
+                        var usedHere = used.indexOf(a.id) !== -1 && r.activityId !== a.id;
+                        if (lockedElsewhere || usedHere) {
+                            return '<option value="' + a.id + '" disabled>' + escapeHtml(a.name) +
+                                   ' — ' + (lockedElsewhere ? 'in another challenge' : 'already used above') +
+                                   '</option>';
+                        }
+                        return '<option value="' + a.id + '"' + (r.activityId === a.id ? ' selected' : '') +
+                               '>' + escapeHtml(a.name) + '</option>';
+                    }).join('');
+                var act = gritFindActivity(r.activityId);
+                var placeholder = act ? act.name : 'What the requirement is called';
+                return '' +
+                '<div class="vs-reqrow">' +
+                    '<div class="vs-reqrow-top">' +
+                        '<span class="vs-reqrow-idx">' + (i + 1) + '</span>' +
+                        (_vsDraft.rows.length > 1
+                            ? '<button type="button" class="vs-reqrow-del" onclick="vsDelRow(' + i + ')" aria-label="Remove">×</button>'
+                            : '') +
+                    '</div>' +
+                    '<select class="pl-input" id="vsRowAct' + i + '" onchange="vsRowChanged()">' + opts + '</select>' +
+                    '<div class="vs-reqrow-line">' +
+                        '<input class="pl-input" id="vsRowName' + i + '" placeholder="' +
+                            escapeHtml(placeholder) + '" value="' + escapeHtml(r.name || '') + '">' +
+                        '<input class="pl-input vs-target-input" id="vsRowTarget' + i +
+                            '" type="number" min="1" max="999" value="' + r.targetCount + '">' +
+                    '</div>' +
+                    '<div class="vs-reqrow-hint">Your opponent maps their own activity to this name.</div>' +
+                '</div>';
+            }).join('');
+
+            var stakeOpts = '';
+            for (var s = VS_STAKE_MIN; s <= VS_STAKE_MAX; s += VS_STAKE_STEP) {
+                stakeOpts += '<option value="' + s + '"' + (_vsDraft.stake === s ? ' selected' : '') +
+                             '>' + s + ' Grit</option>';
+            }
+            var bal = gritBalance();
+            var short = bal < _vsDraft.stake;
+
+            vsSheet(
+                vsSheetHead('Versus · ' + _vsDraft.opponentName, 'Set the terms') +
+                '<div class="modal-body pl-modal-body ay-modal-body">' +
+                    '<div class="ay-field"><label class="pl-field-label" for="vsName">Challenge name</label>' +
+                        '<input class="pl-input" id="vsName" placeholder="e.g. Two weeks of mornings" value="' +
+                        escapeHtml(_vsDraft.name || '') + '"></div>' +
+                    '<div class="ay-field"><label class="pl-field-label" for="vsDesc">Description</label>' +
+                        '<textarea class="pl-input ay-textarea" rows="2" id="vsDesc" placeholder="What is this about?">' +
+                        escapeHtml(_vsDraft.description || '') + '</textarea></div>' +
+
+                    '<div class="ay-field"><label class="pl-field-label">Requirements</label>' +
+                        rowsHtml +
+                        (_vsDraft.rows.length < VS_MAX_REQS
+                            ? '<button type="button" class="vs-btn vs-btn-ghost vs-addreq" onclick="vsAddRow()">+ Add requirement</button>'
+                            : '') +
+                    '</div>' +
+
+                    '<div class="vs-two">' +
+                        '<div class="ay-field"><label class="pl-field-label" for="vsDuration">Duration (days)</label>' +
+                            '<input class="pl-input" id="vsDuration" type="number" min="1" max="90" value="' +
+                            _vsDraft.durationDays + '"></div>' +
+                        '<div class="ay-field"><label class="pl-field-label" for="vsStake">Stake each</label>' +
+                            '<select class="pl-input" id="vsStake" onchange="vsRowChanged()">' + stakeOpts + '</select></div>' +
+                    '</div>' +
+
+                    '<div class="vs-summary">' +
+                        '<div><span>Pot if accepted</span><strong>' + (_vsDraft.stake * 2) + ' Grit</strong></div>' +
+                        '<div><span>Bonus XP</span><strong>+' + vsDraftBonusXP() + ' XP</strong></div>' +
+                        '<div><span>Your balance</span><strong class="' + (short ? 'vs-short' : '') + '">' +
+                            bal + ' Grit</strong></div>' +
+                    '</div>' +
+                    '<p class="vs-note">Your stake is escrowed the moment you send the invite, so the pot is real ' +
+                    'before they answer. If they decline or it expires, it comes straight back. ' +
+                    '<strong>Only completions logged on the day they happen count.</strong></p>' +
+                '</div>' +
+                '<div class="modal-footer pl-modal-footer">' +
+                    '<button class="vs-btn vs-btn-ghost" onclick="vsCloseSheet()">Cancel</button>' +
+                    '<button class="vs-btn vs-btn-primary" id="vsSendBtn" onclick="vsSubmitCreate()"' +
+                        (short ? ' disabled title="Not enough Grit"' : '') + '>Send invite</button>' +
+                '</div>'
+            );
+        }
+
+        window.vsSubmitCreate = async function () {
+            vsReadCreateForm();
+            var d = _vsDraft;
+            if (!d) return;
+            if (!d.name || !d.name.trim()) { showToast('Give the challenge a name.', 'red'); return; }
+            var reqs = [];
+            for (var i = 0; i < d.rows.length; i++) {
+                var r = d.rows[i];
+                if (!r.activityId) { showToast('Pick an activity for requirement ' + (i + 1) + '.', 'red'); return; }
+                var act = gritFindActivity(r.activityId);
+                if (!act) { showToast('That activity no longer exists.', 'red'); return; }
+                reqs.push({
+                    reqId: r.reqId,
+                    name: (r.name && r.name.trim()) || act.name,
+                    targetCount: r.targetCount,
+                    activityId: act.id,
+                    activityName: act.name
+                });
+            }
+            var btn = document.getElementById('vsSendBtn');
+            if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+            try {
+                await vsCreateChallenge({
+                    opponentUid: d.opponentUid,
+                    opponentName: d.opponentName,
+                    name: d.name.trim(),
+                    description: (d.description || '').trim(),
+                    stake: d.stake,
+                    durationDays: d.durationDays,
+                    bonusXP: vsDraftBonusXP(),
+                    requirements: reqs
+                });
+                vsCloseSheet();
+                _vsDraft = null;
+                showToast('Challenge sent — ' + d.stake + ' Grit escrowed.', 'blue');
+                await vsFetch(true);
+                vsPaint();
+            } catch (e) {
+                showToast(vsErrText(e), 'red');
+                if (btn) { btn.disabled = false; btn.textContent = 'Send invite'; }
+            }
+        };
+
+        // ── Accept walkthrough (§3.3, §8.5) ───────────────────────────────
+        // One requirement per screen with a progress indicator. There is no
+        // reject option on a requirement — rejecting one is declining the
+        // challenge. The accept button only enables once every requirement is
+        // resolved. Mapping work is kept in memory (and in userData, so it
+        // survives a reload) so a shortfall does not throw it away.
+
+        let _vsAccept = null;
+
+        window.vsOpenAccept = async function (id) {
+            await vsFetch(false);
+            var ch = vsCacheGet(id);
+            if (!ch) { showToast('That challenge is gone.', 'red'); return; }
+            if (ch.status !== 'pending') { showToast('That invite is no longer open.', 'red'); vsPaint(); return; }
+            // A saved draft can outlive the activities it points at.
+            var saved = ((window.userData && window.userData.vsDraftMappings) || {})[id] || {};
+            var mapping = {};
+            Object.keys(saved).forEach(function (reqId) {
+                var a = gritFindActivity(saved[reqId] && saved[reqId].activityId);
+                if (a) mapping[reqId] = { activityId: a.id, activityName: a.name };
+            });
+            _vsAccept = { id: id, step: 0, mapping: mapping };
+            vsRenderAcceptStep();
+        };
+
+        function vsPersistAcceptDraft() {
+            if (!_vsAccept || !window.userData) return;
+            if (!window.userData.vsDraftMappings) window.userData.vsDraftMappings = {};
+            window.userData.vsDraftMappings[_vsAccept.id] = _vsAccept.mapping;
+            debouncedSaveUserData();
+        }
+
+        function vsRenderAcceptStep() {
+            var ch = vsCacheGet(_vsAccept.id);
+            if (!ch) { vsCloseSheet(); return; }
+            var reqs = ch.requirements || [];
+            var i = Math.min(_vsAccept.step, reqs.length);
+            var uid = vsUid();
+
+            // Final screen — review and accept.
+            if (i >= reqs.length) {
+                var allMapped = reqs.every(function (r) { return _vsAccept.mapping[r.reqId]; });
+                var bal = gritBalance();
+                var short = bal < ch.stake;
+                var rows = reqs.map(function (r, idx) {
+                    var m = _vsAccept.mapping[r.reqId];
+                    return '<div class="vs-review-row">' +
+                        '<span class="vs-review-req">' + escapeHtml(r.name) + ' ×' + r.targetCount + '</span>' +
+                        '<span class="vs-review-act">' + (m ? escapeHtml(m.activityName) : '—') + '</span>' +
+                        '<button class="vs-review-edit" onclick="vsAcceptGoto(' + idx + ')">change</button>' +
+                        '</div>';
+                }).join('');
+                vsSheet(
+                    vsSheetHead('Accepting · ' + vsName(ch, vsOther(ch, uid)), ch.name) +
+                    '<div class="modal-body pl-modal-body">' +
+                        '<div class="vs-review">' + rows + '</div>' +
+                        '<div class="vs-summary">' +
+                            '<div><span>Your stake</span><strong>' + ch.stake + ' Grit</strong></div>' +
+                            '<div><span>Pot</span><strong>' + (ch.stake * 2) + ' Grit</strong></div>' +
+                            '<div><span>Your balance</span><strong class="' + (short ? 'vs-short' : '') + '">' +
+                                bal + ' Grit</strong></div>' +
+                            '<div><span>Runs for</span><strong>' + ch.durationDays + ' days</strong></div>' +
+                        '</div>' +
+                        '<p class="vs-note"><strong>Only completions logged on the day they happen count toward ' +
+                        'this challenge.</strong> Backdating still earns XP and feeds your streaks everywhere ' +
+                        'else — it just does not move this wager.</p>' +
+                        (short ? '<p class="vs-note vs-short">You are ' + (ch.stake - bal) +
+                                 ' Grit short. Your mapping is saved — come back when you have earned it.</p>' : '') +
+                    '</div>' +
+                    '<div class="modal-footer pl-modal-footer">' +
+                        '<button class="vs-btn vs-btn-ghost" onclick="vsAcceptGoto(' + (reqs.length - 1) + ')">Back</button>' +
+                        '<button class="vs-btn vs-btn-primary" id="vsAcceptBtn" onclick="vsSubmitAccept()"' +
+                            ((!allMapped || short) ? ' disabled' : '') + '>Accept · stake ' + ch.stake + '</button>' +
+                    '</div>'
+                );
+                return;
+            }
+
+            var req = reqs[i];
+            var chosen = _vsAccept.mapping[req.reqId];
+            var committed = vsCommittedActivityIds(ch.id);
+            var takenHere = Object.keys(_vsAccept.mapping)
+                .filter(function (k) { return k !== req.reqId; })
+                .map(function (k) { return _vsAccept.mapping[k].activityId; });
+
+            var acts = gritAllActivities();
+            var pickerRows = acts.map(function (a) {
+                var lockedElsewhere = committed.has(a.id);
+                var usedHere = takenHere.indexOf(a.id) !== -1;
+                if (lockedElsewhere || usedHere) {
+                    return '<div class="vs-pick-row vs-pick-locked">' +
+                        '<span>' + escapeHtml(a.name) + '</span>' +
+                        '<span class="vs-pick-why">' +
+                        (lockedElsewhere ? 'in another challenge' : 'used for another requirement') +
+                        '</span></div>';
+                }
+                return '<button class="vs-pick-row' + (chosen && chosen.activityId === a.id ? ' vs-pick-on' : '') +
+                       '" onclick="vsMapExisting(\'' + a.id + '\')">' +
+                       '<span>' + escapeHtml(a.name) + '</span>' +
+                       '<span class="vs-pick-xp">' + (a.baseXP || 0) + ' XP</span></button>';
+            }).join('');
+
+            vsSheet(
+                vsSheetHead('Requirement ' + (i + 1) + ' of ' + reqs.length, req.name) +
+                '<div class="modal-body pl-modal-body">' +
+                    '<div class="vs-stepdots">' + reqs.map(function (r, k) {
+                        return '<span class="vs-stepdot' + (k === i ? ' on' : '') +
+                               (_vsAccept.mapping[r.reqId] ? ' done' : '') + '"></span>';
+                    }).join('') + '</div>' +
+                    '<p class="vs-note">They need this done <strong>' + req.targetCount +
+                    '&times;</strong>. Point it at one of your activities, or add it.</p>' +
+                    '<button class="vs-btn vs-btn-primary vs-addact" onclick="vsCreateActivityFor()">' +
+                        '+ Add "' + escapeHtml(req.name) + '" to my activities</button>' +
+                    '<div class="vs-pick-head">I already do this</div>' +
+                    (acts.length ? '<div class="vs-picklist">' + pickerRows + '</div>'
+                                 : '<p class="vs-note">You have no activities yet.</p>') +
+                '</div>' +
+                '<div class="modal-footer pl-modal-footer">' +
+                    (i > 0 ? '<button class="vs-btn vs-btn-ghost" onclick="vsAcceptGoto(' + (i - 1) + ')">Back</button>'
+                           : '<button class="vs-btn vs-btn-ghost" onclick="vsCloseSheet()">Cancel</button>') +
+                    '<button class="vs-btn vs-btn-primary" onclick="vsAcceptGoto(' + (i + 1) + ')"' +
+                        (chosen ? '' : ' disabled') + '>' +
+                        (i + 1 >= reqs.length ? 'Review' : 'Next') + '</button>' +
+                '</div>'
+            );
+        }
+
+        window.vsAcceptGoto = function (step) {
+            if (!_vsAccept) return;
+            _vsAccept.step = Math.max(0, step);
+            vsRenderAcceptStep();
+        };
+
+        window.vsMapExisting = function (activityId) {
+            var ch = vsCacheGet(_vsAccept.id);
+            var req = (ch.requirements || [])[_vsAccept.step];
+            var act = gritFindActivity(activityId);
+            if (!req || !act) return;
+            _vsAccept.mapping[req.reqId] = { activityId: act.id, activityName: act.name };
+            vsPersistAcceptDraft();
+            vsAcceptGoto(_vsAccept.step + 1);
+        };
+
+        // "Add this to my activities" reuses the existing activity-creation
+        // path exactly — same modal, same defaults, same dimension/path
+        // prompts. Nothing is forked. The new activity is identified by
+        // diffing the id set across the save.
+        window.vsCreateActivityFor = function () {
+            var ch = vsCacheGet(_vsAccept.id);
+            var req = (ch.requirements || [])[_vsAccept.step];
+            if (!req) return;
+            window._vsPendingCreate = {
+                reqId: req.reqId,
+                before: new Set(gritAllActivities().map(function (a) { return a.id; }))
+            };
+            vsCloseSheet();
+            openActivityModal(null, null);
+            var nameEl = document.getElementById('activityName');
+            if (nameEl) nameEl.value = req.name;
+        };
+
+        window.vsSubmitAccept = async function () {
+            var btn = document.getElementById('vsAcceptBtn');
+            if (btn) { btn.disabled = true; btn.textContent = 'Staking…'; }
+            try {
+                await vsAcceptChallenge(_vsAccept.id, _vsAccept.mapping);
+                if (window.userData && window.userData.vsDraftMappings) {
+                    delete window.userData.vsDraftMappings[_vsAccept.id];
+                    debouncedSaveUserData();
+                }
+                vsCloseSheet();
+                _vsAccept = null;
+                showToast('Challenge accepted — the pot is live.', 'blue');
+                await vsFetch(true);
+                vsPaint();
+            } catch (e) {
+                showToast(vsErrText(e), 'red');
+                if (btn) { btn.disabled = false; btn.textContent = 'Accept'; }
+            }
+        };
+
+        // ── Forfeit confirmation (§6.2) ───────────────────────────────────
+        window.vsConfirmForfeit = async function (id) {
+            var ch = vsCacheGet(id);
+            if (!ch) return;
+            var uid = vsUid();
+            if (!confirm('Forfeit "' + ch.name + '"? ' + vsName(ch, vsOther(ch, uid)) +
+                         ' takes the whole ' + ch.pot + ' Grit pot. This cannot be undone.')) return;
+            try {
+                await vsForfeit(id, 'manual');
+                showToast('Forfeited. The pot went to your opponent.', 'red');
+                await vsRunMaintenance();
+                vsPaint();
+            } catch (e) { showToast(vsErrText(e), 'red'); }
+        };
+
+        // ── Hooks into existing flows ─────────────────────────────────────
+        // Every one of these is a wrapper. No existing function is
+        // restructured, and nothing here touches solo challenges.
+
+        // Completion → challenge progress. completeActivity is the LIVE path;
+        // retroactiveComplete is deliberately not wrapped (§4.1 rule 4).
+        (function () {
+            var _orig = window.completeActivity;
+            if (typeof _orig === 'function') {
+                window.completeActivity = async function () {
+                    var before = arguments;
+                    var act = null;
+                    try {
+                        act = window.userData.dimensions[arguments[0]]
+                                  .paths[arguments[1]].activities[arguments[2]];
+                    } catch (e) {}
+                    var countBefore = act ? (act.completionCount || 0) : null;
+                    await _orig.apply(this, before);
+                    // Only fire when a completion actually landed —
+                    // completeActivity returns early on a blocked tap.
+                    if (act && (act.completionCount || 0) > countBefore) {
+                        vsOnCompletion(act.id).catch(function () {});
+                    }
+                };
+            }
+        })();
+
+        (function () {
+            var _orig = window.undoActivity;
+            if (typeof _orig === 'function') {
+                window.undoActivity = async function () {
+                    var act = null;
+                    try {
+                        act = window.userData.dimensions[arguments[0]]
+                                  .paths[arguments[1]].activities[arguments[2]];
+                    } catch (e) {}
+                    var countBefore = act ? (act.completionCount || 0) : null;
+                    await _orig.apply(this, arguments);
+                    if (act && (act.completionCount || 0) < countBefore) {
+                        vsOnUndo(act.id).catch(function () {});
+                    }
+                };
+            }
+        })();
+
+        // §6.2 — deleting an activity that is committed to a live wager
+        // forfeits it. Say what it will cost BEFORE it happens, and only
+        // actually forfeit once the activity is really gone: deleteActivity
+        // runs its own confirm, and backing out there must not cost a pot.
+        (function () {
+            var _orig = window.deleteActivity;
+            if (typeof _orig !== 'function') return;
+            window.deleteActivity = async function (di, pi, ai) {
+                var act = null;
+                try { act = window.userData.dimensions[di].paths[pi].activities[ai]; } catch (e) {}
+                var uid = vsUid();
+                var hits = act ? _vsCache.list.filter(function (ch) {
+                    if (ch.status !== 'active') return false;
+                    var m = vsMappingOf(ch, uid);
+                    return Object.keys(m).some(function (k) { return m[k].activityId === act.id; });
+                }) : [];
+
+                if (hits.length) {
+                    var ch = hits[0];
+                    if (!confirm('"' + act.name + '" is committed to the live challenge "' + ch.name +
+                                 '". Deleting it forfeits the challenge — ' +
+                                 vsName(ch, vsOther(ch, uid)) + ' takes the ' + ch.pot +
+                                 ' Grit pot. Delete anyway?')) return;
+                }
+
+                var r = await _orig.call(this, di, pi, ai);
+
+                if (!hits.length) return r;
+                // The original asks for its own confirmation. If the activity
+                // is still there, the user backed out — nothing is forfeited.
+                if (gritFindActivity(act.id)) return r;
+                for (var i = 0; i < hits.length; i++) {
+                    try { await vsForfeit(hits[i].id, 'activity deleted'); } catch (e) {}
+                }
+                await vsRunMaintenance();
+                vsRenderIfVisible();
+                return r;
+            };
+        })();
+
+        // The accept walkthrough's "add this to my activities" hands off to the
+        // real activity modal. When it saves, pick up whichever activity is
+        // new and map it to the requirement that asked for it.
+        (function () {
+            var _orig = window.saveActivity;
+            if (typeof _orig !== 'function') return;
+            window.saveActivity = async function (event) {
+                // Claimed before the await: saveActivity closes the modal
+                // itself, and the close wrapper must not read this as the user
+                // backing out.
+                var pending = window._vsPendingCreate;
+                window._vsPendingCreate = null;
+                await _orig.call(this, event);
+                if (!pending) return;
+                if (!_vsAccept) return;
+                var fresh = gritAllActivities().filter(function (a) { return !pending.before.has(a.id); });
+                if (!fresh.length) {
+                    // Nothing was created (limit reached, or the form errored).
+                    // Put the walkthrough back rather than leaving them nowhere.
+                    vsRenderAcceptStep();
+                    return;
+                }
+                var act = fresh[fresh.length - 1];
+                _vsAccept.mapping[pending.reqId] = { activityId: act.id, activityName: act.name };
+                vsPersistAcceptDraft();
+                vsAcceptGoto(_vsAccept.step + 1);
+            };
+        })();
+
+        // Backing out of the activity modal mid-walkthrough must not strand
+        // the user: bring the accept sheet back where they left it.
+        (function () {
+            var _orig = window.closeActivityModal;
+            if (typeof _orig !== 'function') return;
+            window.closeActivityModal = function () {
+                var wasPending = window._vsPendingCreate;
+                var r = _orig.apply(this, arguments);
+                if (wasPending && window._vsPendingCreate && _vsAccept) {
+                    window._vsPendingCreate = null;
+                    vsRenderAcceptStep();
+                }
+                return r;
+            };
+        })();
+
+        // Sub-tab render
+        (function () {
+            var _orig = window.switchSubTab;
+            window.switchSubTab = function (parentTab, subTab) {
+                _orig(parentTab, subTab);
+                if (parentTab === 'challenges' && subTab !== 'versus') vsDetachDetail();
+                if (parentTab === 'challenges' && subTab === 'versus') vsRenderTab();
+            };
+        })();
+
+        // Leaving the Challenges tab drops the detail listener (§5).
+        (function () {
+            var _orig = window.switchTab;
+            if (typeof _orig !== 'function') return;
+            window.switchTab = function (tabName) {
+                if (tabName !== 'challenges') vsDetachDetail();
+                var r = _orig.apply(this, arguments);
+                if (tabName === 'challenges') { vsFetch(false).then(vsUpdateBadges).catch(function () {}); }
+                return r;
+            };
+        })();
+
+        // §3.2 / §3.4 / §6.3 — one fetch on login and on app foreground, which
+        // drives the invite badge and the lazy expiry, resolution and payout
+        // evaluation. The challenger's own client evaluates expiry here too, so
+        // a refund is never gated on the opponent ever logging in again.
+        function vsOnLogin() {
+            _vsCache = { at: 0, list: [], uid: vsUid() };
+            _vsSeenWritten = {};
+            vsRunMaintenance().catch(function (e) {
+                console.warn('Versus login pass failed:', e && e.message);
+            });
+        }
+        window.vsOnLogin = vsOnLogin;
+
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState !== 'visible') return;
+            if (!vsUid()) return;
+            if (vsNow() - _vsCache.at < VS_CACHE_TTL_MS) return;
+            vsRunMaintenance().catch(function () {});
+        });
+
+        // ════════════════════════════════════════════════════════════════════
+        // ══ END VERSUS CHALLENGES ═══════════════════════════════════════════
         // ════════════════════════════════════════════════════════════════════
