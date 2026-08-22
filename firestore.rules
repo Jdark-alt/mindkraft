@@ -7,10 +7,12 @@ rules_version = '2';
 //  firebase.json, so `firebase deploy` will not push it; the rules are
 //  managed in the Firebase console. Keep the two in sync by hand.
 //
-//  The versus-challenge block at the bottom is the only cross-account
-//  surface in the app. Everything it allows is scoped to the two
-//  participants named inside the document, and no rule anywhere grants one
-//  participant read access to anything the other owns.
+//  There are three cross-account surfaces: the versus-challenge block at
+//  the bottom, the gift pair (a sender writing into a receiver's subtree and
+//  the receiver stamping four fields back on the sender's mirror), and
+//  leaderboardBoards, whose read rule is itself the mutuality test. Each is
+//  scoped to the accounts named inside the document, and no rule anywhere
+//  grants one party read access to anything else the other owns.
 // ══════════════════════════════════════════════════════════════════════════
 
 service cloud.firestore {
@@ -43,6 +45,134 @@ service cloud.firestore {
     match /users/{uid}/gritLedger/{entryId} {
       allow read, create: if request.auth != null && request.auth.uid == uid;
       allow update, delete: if false;
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  GIFTS  —  users/{receiverUid}/gifts and users/{senderUid}/giftsSent
+    //
+    //  The one place in the app where a client writes into another user's
+    //  subtree, in both directions:
+    //
+    //    the SENDER creates the gift in the RECEIVER's `gifts`
+    //    the RECEIVER stamps four fields on the SENDER's `giftsSent` mirror
+    //
+    //  Both are scoped as tightly as the flow allows. `type` is validated
+    //  against the enum here, not just in the client: a client that can write
+    //  an arbitrary type can invent gift kinds. A user can never create a gift
+    //  in their own receiving subcollection, so nobody can mint themselves a
+    //  shield or a double-XP.
+    //
+    //  Same 1000-expression budget as the challenges block below: the denied
+    //  write is the expensive case, so these use diff().affectedKeys() and
+    //  keys().hasOnly() rather than field-by-field comparison.
+    // ══════════════════════════════════════════════════════════════════
+
+    match /users/{receiverUid}/gifts/{giftId} {
+      function next()    { return request.resource.data; }
+      function prev()    { return resource.data; }
+      function changed() { return next().diff(prev()).affectedKeys(); }
+
+      // The receiver's own inbox. They may read it and consume from it; they
+      // may never create in it.
+      allow read: if request.auth != null && request.auth.uid == receiverUid;
+
+      allow create: if request.auth != null
+                    && request.auth.uid != receiverUid
+                    && next().senderUid == request.auth.uid
+                    && next().receiverUid == receiverUid
+                    && next().id == giftId
+                    && next().type in ['shield', 'xp_boost']
+                    && next().status == 'pending'
+                    && next().sentAt is string
+                    && next().senderName is string
+                    && next().receiverName is string
+                    && next().consumedAt == null
+                    && next().consumedActivityId == null
+                    && next().consumedActivityTitle == null
+                    && next().baseXP == null
+                    && next().awardedXP == null
+                    && next().thanked == false
+                    && next().thankedAt == null
+                    && next().keys().hasOnly(['id', 'type', 'senderUid', 'senderName',
+                                              'receiverUid', 'receiverName', 'sentAt', 'status',
+                                              'consumedAt', 'consumedActivityId',
+                                              'consumedActivityTitle', 'baseXP', 'awardedXP',
+                                              'thanked', 'thankedAt'])
+                    // You may only gift someone on your own friends list.
+                    // get() reads the SENDER's own document and grants nobody
+                    // any read access; .get('friends', []) so an account
+                    // predating the field is denied rather than erroring.
+                    && receiverUid in
+                       get(/databases/$(database)/documents/users/$(request.auth.uid))
+                         .data.get('friends', []);
+
+      // pending → consumed, plus the thanks flag. What the gift IS never
+      // moves: not its type, not who sent it, not when.
+      allow update: if request.auth != null
+                    && request.auth.uid == receiverUid
+                    && next().status == 'consumed'
+                    && next().thanked is bool
+                    && changed().hasOnly(['status', 'consumedAt', 'consumedActivityId',
+                                          'consumedActivityTitle', 'baseXP', 'awardedXP',
+                                          'thanked', 'thankedAt', 'mirrorSynced']);
+
+      // A gift that happened stays in the record.
+      allow delete: if false;
+    }
+
+    match /users/{senderUid}/giftsSent/{giftId} {
+      function next()    { return request.resource.data; }
+      function prev()    { return resource.data; }
+      function changed() { return next().diff(prev()).affectedKeys(); }
+
+      allow read: if request.auth != null && request.auth.uid == senderUid;
+
+      allow create: if request.auth != null
+                    && request.auth.uid == senderUid
+                    && next().senderUid == senderUid
+                    && next().receiverUid != senderUid
+                    && next().id == giftId
+                    && next().type in ['shield', 'xp_boost']
+                    && next().status == 'pending'
+                    && next().thanked == false;
+
+      // The unusual permission: the RECEIVER writes into the sender's tree.
+      // Scoped to exactly four fields, and only on a document that names them
+      // as its receiver — nobody gets broad write access to another user's
+      // subtree, and a spoofed receiverUid cannot be written in the first
+      // place because create above pins it to the sender's own batch.
+      allow update: if request.auth != null
+                    && request.auth.uid == prev().receiverUid
+                    && next().status == 'consumed'
+                    && next().thanked is bool
+                    && changed().hasOnly(['status', 'consumedAt', 'thanked', 'thankedAt']);
+
+      allow delete: if false;
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  LEADERBOARD BOARDS  —  leaderboardBoards/{uid}
+    //
+    //  Published only by users who have opted into weekly payouts. The read
+    //  rule IS the mutuality test (§8.1): you may read someone's board only
+    //  if you appear on it, in the live roster or in either frozen one. A
+    //  denied read is the answer "not mutual" — no social graph leaks past
+    //  that, which is why board membership does not live on publicProfiles,
+    //  where every signed-in user can read it.
+    // ══════════════════════════════════════════════════════════════════
+    match /leaderboardBoards/{uid} {
+      allow read: if request.auth != null
+                  && (request.auth.uid == uid
+                      || request.auth.uid in resource.data.get('members', [])
+                      || request.auth.uid in resource.data.get('scored', [])
+                      || request.auth.uid in resource.data.get('prevScored', []));
+
+      allow create, update: if request.auth != null
+                            && request.auth.uid == uid
+                            && request.resource.data.uid == uid;
+
+      // Opting out withdraws the board entirely.
+      allow delete: if request.auth != null && request.auth.uid == uid;
     }
 
     match /publicProfiles/{uid} {

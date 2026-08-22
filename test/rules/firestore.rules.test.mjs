@@ -195,6 +195,118 @@ await t('ledger entries cannot be rewritten', () => assertFails(updateDoc(doc(db
 await t('ledger entries cannot be deleted', () => assertFails(deleteDoc(doc(dbA,'users',A,'gritLedger','e1'))));
 await t('nobody else can read your ledger', () => assertFails(getDoc(doc(dbB,'users',A,'gritLedger','e1'))));
 
+console.log('── GIFTS: CREATE ──');
+// A and B are mutual friends; C has nobody.
+const SENT = '2026-08-20T09:00:00.000Z';
+function gift(o = {}) {
+  return Object.assign({
+    id: 'g1', type: 'shield', senderUid: A, senderName: 'Ana',
+    receiverUid: B, receiverName: 'Ben', sentAt: SENT, status: 'pending',
+    consumedAt: null, consumedActivityId: null, consumedActivityTitle: null,
+    baseXP: null, awardedXP: null, thanked: false, thankedAt: null
+  }, o);
+}
+const giftAt = (d, owner, col, id) => doc(d, 'users', owner, col, id);
+
+await t('sender creates a gift in a friend\'s inbox', () =>
+  assertSucceeds(setDoc(giftAt(dbA, B, 'gifts', 'g1'), gift())));
+await t('sender creates the matching mirror in their own tree', () =>
+  assertSucceeds(setDoc(giftAt(dbA, A, 'giftsSent', 'g1'), gift())));
+await t('an xp_boost gift is allowed', () =>
+  assertSucceeds(setDoc(giftAt(dbA, B, 'gifts', 'g2'), gift({ id: 'g2', type: 'xp_boost' }))));
+await t('an invented gift type is refused', () =>
+  assertFails(setDoc(giftAt(dbA, B, 'gifts', 'x1'), gift({ id: 'x1', type: 'infinite_xp' }))));
+await t('a spoofed senderUid is refused', () =>
+  assertFails(setDoc(giftAt(dbA, B, 'gifts', 'x2'), gift({ id: 'x2', senderUid: C }))));
+await t('a non-friend cannot gift', () =>
+  assertFails(setDoc(giftAt(dbC, B, 'gifts', 'x3'), gift({ id: 'x3', senderUid: C, receiverUid: B }))));
+await t('you cannot create a gift in your OWN inbox', () =>
+  assertFails(setDoc(giftAt(dbB, B, 'gifts', 'x4'), gift({ id: 'x4', senderUid: B, receiverUid: B }))));
+await t('the document id must match the gift id', () =>
+  assertFails(setDoc(giftAt(dbA, B, 'gifts', 'x5'), gift({ id: 'not-x5' }))));
+await t('a gift cannot be born consumed', () =>
+  assertFails(setDoc(giftAt(dbA, B, 'gifts', 'x6'), gift({ id: 'x6', status: 'consumed' }))));
+await t('a gift cannot be born thanked', () =>
+  assertFails(setDoc(giftAt(dbA, B, 'gifts', 'x7'), gift({ id: 'x7', thanked: true }))));
+await t('a gift cannot carry pre-filled XP', () =>
+  assertFails(setDoc(giftAt(dbA, B, 'gifts', 'x8'), gift({ id: 'x8', awardedXP: 9999 }))));
+await t('a gift cannot smuggle an extra field', () =>
+  assertFails(setDoc(giftAt(dbA, B, 'gifts', 'x9'), gift({ id: 'x9', message: 'hello there' }))));
+await t('the receiverUid must match the inbox owner', () =>
+  assertFails(setDoc(giftAt(dbA, B, 'gifts', 'xa'), gift({ id: 'xa', receiverUid: C }))));
+
+console.log('── GIFTS: READ ──');
+await t('receiver reads their own inbox', () => assertSucceeds(getDoc(giftAt(dbB, B, 'gifts', 'g1'))));
+await t('sender cannot read the receiver\'s inbox', () => assertFails(getDoc(giftAt(dbA, B, 'gifts', 'g1'))));
+await t('a stranger cannot read someone\'s inbox', () => assertFails(getDoc(giftAt(dbC, B, 'gifts', 'g1'))));
+await t('sender reads their own giftsSent', () => assertSucceeds(getDoc(giftAt(dbA, A, 'giftsSent', 'g1'))));
+await t('receiver cannot read the sender\'s giftsSent', () => assertFails(getDoc(giftAt(dbB, A, 'giftsSent', 'g1'))));
+
+console.log('── GIFTS: CONSUME ──');
+await t('receiver consumes their gift', () => assertSucceeds(updateDoc(giftAt(dbB, B, 'gifts', 'g2'), {
+  status: 'consumed', consumedAt: SENT, consumedActivityId: 'a1',
+  consumedActivityTitle: 'Run', baseXP: 20, awardedXP: 40 })));
+await t('receiver may set thanks on their own gift', () =>
+  assertSucceeds(updateDoc(giftAt(dbB, B, 'gifts', 'g2'), { thanked: true, thankedAt: SENT, mirrorSynced: true })));
+await t('receiver cannot rewrite who sent it', () =>
+  assertFails(updateDoc(giftAt(dbB, B, 'gifts', 'g2'), { status: 'consumed', senderUid: C })));
+await t('receiver cannot rewrite the gift type', () =>
+  assertFails(updateDoc(giftAt(dbB, B, 'gifts', 'g2'), { status: 'consumed', type: 'shield' })));
+await t('receiver cannot backdate sentAt', () =>
+  assertFails(updateDoc(giftAt(dbB, B, 'gifts', 'g2'), { status: 'consumed', sentAt: '2020-01-01T00:00:00.000Z' })));
+await t('receiver cannot un-consume a gift', () =>
+  assertFails(updateDoc(giftAt(dbB, B, 'gifts', 'g2'), { status: 'pending' })));
+await t('sender cannot consume the gift they sent', () =>
+  assertFails(updateDoc(giftAt(dbA, B, 'gifts', 'g1'), { status: 'consumed', consumedAt: SENT })));
+await t('nobody may delete a gift', () => assertFails(deleteDoc(giftAt(dbB, B, 'gifts', 'g1'))));
+
+console.log('── GIFTS: THE MIRROR ──');
+await env.withSecurityRulesDisabled(async ctx =>
+  setDoc(doc(ctx.firestore(), 'users', A, 'giftsSent', 'g2'), gift({ id: 'g2', type: 'xp_boost' })));
+await t('receiver stamps the four fields on the sender\'s mirror', () =>
+  assertSucceeds(updateDoc(giftAt(dbB, A, 'giftsSent', 'g2'), {
+    status: 'consumed', consumedAt: SENT, thanked: true, thankedAt: SENT })));
+await t('receiver cannot touch a fifth field on the mirror', () =>
+  assertFails(updateDoc(giftAt(dbB, A, 'giftsSent', 'g2'), {
+    status: 'consumed', consumedAt: SENT, thanked: true, thankedAt: SENT, awardedXP: 9999 })));
+await t('a third party cannot write the mirror', () =>
+  assertFails(updateDoc(giftAt(dbC, A, 'giftsSent', 'g2'), {
+    status: 'consumed', consumedAt: SENT, thanked: false, thankedAt: null })));
+await t('nobody may delete a mirror', () => assertFails(deleteDoc(giftAt(dbA, A, 'giftsSent', 'g2'))));
+await t('you cannot plant a mirror in someone else\'s tree', () =>
+  assertFails(setDoc(giftAt(dbB, A, 'giftsSent', 'x10'), gift({ id: 'x10', senderUid: A, receiverUid: B }))));
+
+console.log('── LEADERBOARD BOARDS ──');
+const board = (uid, o = {}) => Object.assign({
+  uid, optIn: true, optInFrom: '2026-08-17', members: [], scored: [], prevScored: [],
+  scoredFrom: '2026-08-17', prevScoredFrom: null,
+  week: { anchor: '2026-08-17', xp: 100, completions: 5 }, prev: null,
+  displayName: 'Someone', photoURL: null, level: 9, updatedAt: SENT
+}, o);
+
+await t('owner publishes their board', () =>
+  assertSucceeds(setDoc(doc(dbA, 'leaderboardBoards', A), board(A, { members: [B], scored: [B] }))));
+await t('you cannot publish someone else\'s board', () =>
+  assertFails(setDoc(doc(dbC, 'leaderboardBoards', A), board(A))));
+await t('the uid field must match the document', () =>
+  assertFails(setDoc(doc(dbA, 'leaderboardBoards', A), board(C))));
+await t('a member of the board may read it — this IS the mutuality test', () =>
+  assertSucceeds(getDoc(doc(dbB, 'leaderboardBoards', A))));
+await t('someone not on the board cannot read it', () =>
+  assertFails(getDoc(doc(dbC, 'leaderboardBoards', A))));
+await t('owner reads their own board', () => assertSucceeds(getDoc(doc(dbA, 'leaderboardBoards', A))));
+await env.withSecurityRulesDisabled(async ctx =>
+  setDoc(doc(ctx.firestore(), 'leaderboardBoards', A), board(A, { members: [], scored: [], prevScored: [B], prevScoredFrom: '2026-08-10' })));
+await t('a member of last week\'s frozen roster may still read it', () =>
+  assertSucceeds(getDoc(doc(dbB, 'leaderboardBoards', A))));
+await t('owner withdraws their board on opting out', () =>
+  assertSucceeds(deleteDoc(doc(dbA, 'leaderboardBoards', A))));
+await t('nobody else may delete a board', () => {
+  return env.withSecurityRulesDisabled(async ctx =>
+    setDoc(doc(ctx.firestore(), 'leaderboardBoards', A), board(A, { members: [B] })))
+    .then(() => assertFails(deleteDoc(doc(dbB, 'leaderboardBoards', A))));
+});
+
 console.log('── NO CROSS-ACCOUNT LEAK ──');
 await t('a participant still cannot read the other\'s user document', () => assertFails(getDoc(doc(dbB,'users',A))));
 

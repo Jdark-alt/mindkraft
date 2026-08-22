@@ -15408,3 +15408,202 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 /* At sheet scale the silhouette should read clearly as a SHAPE — it is what
    the user is buying. Still no saturation, still no text. */
 .tt-sil-preview .tt-silhouette { opacity: 0.85; filter: saturate(0.2); }
+
+/* ══════════════════════════════════════════════════════════════════════
+   SOCIAL GIFTING & LEADERBOARD PAYOUTS
+   Reuses the app's existing material recipes — the sheet is the versus
+   sheet's shape, the reveal is the level-up card's — so nothing here
+   introduces a second visual pattern for something that already has one.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ── Friend-row actions (Friends tab) ── */
+.fr-row-btn {
+    flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px;
+    border-radius: 9px;
+    border: 1px solid var(--color-border);
+    background: transparent;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+.fr-row-btn:hover { color: var(--color-text-primary); border-color: var(--color-accent-blue); }
+.fr-row-board.is-on { color: var(--color-progress); border-color: color-mix(in srgb, var(--color-progress) 45%, transparent); }
+.fr-row-gift:hover { color: #f5c563; border-color: color-mix(in srgb, #f5c563 55%, transparent); }
+
+/* ── Shop: the self / gift pair ── */
+.grit-buy-pair { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+.grit-gift-buy {
+    min-width: 58px;
+    padding: 7px 12px;
+    border-radius: 9px;
+    border: 1px dashed var(--color-border);
+    background: transparent;
+    color: var(--color-text-secondary);
+    font: 700 11.5px Inter, sans-serif;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+    transition: color .16s ease, border-color .16s ease;
+}
+.grit-gift-buy:hover:not(:disabled) { color: #f5c563; border-color: #f5c563; }
+.grit-gift-buy:disabled { cursor: not-allowed; opacity: 0.45; }
+.grit-item-gift-note { color: var(--color-text-secondary); opacity: 0.8; font-style: italic; }
+
+/* ── Gift sheet ── */
+.gift-sheet-scrim { display: flex; align-items: flex-end; justify-content: center; }
+.gift-sheet { width: 100%; max-width: 520px; max-height: 88vh; display: flex; flex-direction: column; }
+.gift-sheet .modal-body { overflow-y: auto; }
+.gift-note {
+    font-size: 12px; line-height: 1.6; color: var(--color-text-secondary);
+    margin: 6px 0 12px;
+}
+.gift-confirm-line { font-size: 14px; line-height: 1.6; color: var(--color-text-primary); margin: 4px 0 10px; }
+
+.gift-friend-row {
+    width: 100%; display: flex; justify-content: space-between; align-items: center;
+    gap: 10px; padding: 12px 14px; margin-bottom: 8px;
+    background: var(--color-input-bg); border: 1px solid var(--color-input-border);
+    border-radius: 9px; cursor: pointer; text-align: left;
+    font-family: inherit; font-size: 14px; color: var(--color-text-primary);
+}
+.gift-friend-row:hover { border-color: var(--color-accent-blue); }
+.gift-friend-lvl { font-size: 12px; color: var(--color-text-secondary); }
+
+.gift-item {
+    width: 100%; display: flex; align-items: center; gap: 12px;
+    padding: 13px 14px; margin-bottom: 8px;
+    background: var(--color-input-bg); border: 1px solid var(--color-input-border);
+    border-radius: 10px; cursor: pointer; text-align: left; font-family: inherit;
+}
+.gift-item:hover:not(:disabled) { border-color: var(--color-accent-blue); }
+.gift-item.is-blocked { opacity: 0.5; cursor: not-allowed; }
+.gift-item-emoji { font-size: 20px; flex-shrink: 0; }
+.gift-item-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.gift-item-name { font: 600 13.5px Inter, sans-serif; color: var(--color-text-primary); }
+.gift-item-sub { font: 500 11.5px/1.5 Inter, sans-serif; color: var(--color-text-secondary); }
+.gift-item-cost {
+    flex-shrink: 0; font: 700 14px Inter, sans-serif; color: #f5c563;
+    font-variant-numeric: tabular-nums;
+}
+.gift-item-cost::before { content: '◆ '; font-size: 10px; }
+
+/* ── Sent list ── */
+.gift-sent-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; margin-bottom: 6px;
+    background: var(--surface-card); border: 1px solid var(--card-hairline);
+    border-radius: 10px;
+}
+.gift-sent-what { font-size: 12px; font-weight: 600; color: var(--color-text-primary); flex-shrink: 0; }
+.gift-sent-to { flex: 1; min-width: 0; font-size: 12px; color: var(--color-text-secondary);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gift-sent-state { font-size: 11px; color: var(--color-text-secondary); flex-shrink: 0; }
+.gift-sent-state.is-done { color: var(--chip-xp-fg); }
+
+/* ── The reveal (§5.2) — the level-up card's material, one beat louder ── */
+.gift-reveal-card { border-color: color-mix(in srgb, #f5c563 40%, var(--card-hairline)); }
+.gift-reveal-head {
+    font: 700 18px/1.35 Inter, sans-serif;
+    color: var(--color-text-primary);
+    text-align: center; margin-top: 2px;
+}
+.gift-reveal-act {
+    font: 500 12px Inter, sans-serif; color: var(--color-text-secondary);
+    text-align: center; margin-top: 6px;
+}
+.gift-reveal-xp {
+    display: flex; align-items: baseline; justify-content: center; gap: 12px;
+    margin: 18px 0 6px;
+}
+.gift-reveal-base {
+    font: 600 14px Inter, sans-serif; color: var(--color-text-secondary);
+    text-decoration: line-through; opacity: 0.7;
+}
+.gift-reveal-awarded {
+    font: 800 40px Inter, sans-serif; color: #f5c563;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 18px rgba(245,197,99,0.55), 0 0 44px rgba(245,197,99,0.25);
+}
+.gift-reveal-actions { display: flex; gap: 8px; margin-top: 16px; width: 100%; }
+.gift-thank-btn, .gift-back-btn {
+    flex: 1; padding: 11px 10px; border-radius: 10px;
+    font: 600 12.5px Inter, sans-serif; cursor: pointer; font-family: inherit;
+    transition: background .15s ease, border-color .15s ease, opacity .15s ease;
+}
+.gift-thank-btn {
+    border: none; background: var(--color-accent-blue); color: #fff;
+}
+.gift-thank-btn:disabled, .gift-thank-btn.is-sent { opacity: 0.55; cursor: default; }
+.gift-back-btn {
+    border: 1px solid var(--color-border); background: transparent;
+    color: var(--color-text-primary);
+}
+.gift-back-btn:hover { border-color: var(--color-accent-blue); }
+
+/* ── Leaderboard payouts ── */
+.lb-last-card {
+    width: 100%; display: flex; flex-direction: column; gap: 3px;
+    padding: 14px; margin-bottom: 10px; text-align: left; cursor: pointer;
+    background: var(--surface-card); border: 1px solid var(--card-hairline);
+    border-radius: 12px; font-family: inherit;
+}
+.lb-last-card:hover { border-color: var(--color-accent-blue); }
+.lb-last-kicker {
+    font: 700 10px Inter, sans-serif; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--color-text-secondary);
+}
+.lb-last-line { font: 700 16px Inter, sans-serif; color: var(--color-text-primary); }
+.lb-last-sub { font: 500 11.5px Inter, sans-serif; color: var(--color-text-secondary); }
+
+.lb-optin-card {
+    display: flex; align-items: center; gap: 12px;
+    padding: 13px 14px; margin-bottom: 14px;
+    background: var(--color-bg-card); border: 1px solid var(--color-border);
+    border-radius: 12px;
+}
+.lb-optin-main { flex: 1; min-width: 0; }
+.lb-optin-title { font: 600 13.5px Inter, sans-serif; color: var(--color-text-primary); margin-bottom: 3px; }
+.lb-optin-sub { font: 500 11.5px/1.5 Inter, sans-serif; color: var(--color-text-secondary); }
+.lb-optin-btn {
+    flex-shrink: 0; padding: 9px 14px; border-radius: 9px;
+    border: 1px solid var(--color-border); background: var(--color-input-bg);
+    color: var(--color-text-primary); font: 700 12px Inter, sans-serif;
+    cursor: pointer; font-family: inherit;
+}
+.lb-optin-btn.is-on { border-color: color-mix(in srgb, var(--color-progress) 45%, transparent); color: var(--color-progress); }
+.lb-optin-btn:hover { border-color: var(--color-accent-blue); }
+
+.lb-roster { display: flex; flex-direction: column; gap: 6px; margin-bottom: 4px; }
+.lb-roster-row {
+    width: 100%; display: flex; justify-content: space-between; align-items: center;
+    gap: 10px; padding: 10px 14px; cursor: pointer; text-align: left; font-family: inherit;
+    background: var(--color-input-bg); border: 1px solid var(--color-input-border);
+    border-radius: 9px; color: var(--color-text-secondary);
+}
+.lb-roster-row.is-on { color: var(--color-text-primary); }
+.lb-roster-row:hover { border-color: var(--color-accent-blue); }
+.lb-roster-name { font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-roster-state { font-size: 11px; flex-shrink: 0; }
+.lb-roster-row.is-on .lb-roster-state { color: var(--color-progress); }
+
+.lb-standing-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; margin-bottom: 6px;
+    background: var(--color-input-bg); border: 1px solid var(--color-input-border);
+    border-radius: 9px;
+}
+.lb-standing-row.is-me { border-color: var(--color-accent-blue); }
+.lb-standing-place { font: 700 12px Inter, sans-serif; color: var(--color-text-secondary); width: 34px; flex-shrink: 0; }
+.lb-standing-name { flex: 1; min-width: 0; font-size: 13px; color: var(--color-text-primary);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lb-standing-xp { font-size: 12px; color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
+.lb-standing-grit { font: 700 12px Inter, sans-serif; color: #f5c563; width: 42px; text-align: right; flex-shrink: 0; }
+
+/* Tappable award toast — the leaderboard result opens its standings. */
+.mk-toast-tappable { cursor: pointer; }
+.mk-toast-tappable:hover { filter: brightness(1.12); }
+.lb-provisional {
+    font: 500 11.5px/1.5 Inter, sans-serif; color: var(--color-text-secondary);
+    margin: 0 0 12px; font-style: italic;
+}

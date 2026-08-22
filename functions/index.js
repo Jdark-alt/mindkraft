@@ -17,7 +17,7 @@
 const { initializeApp } = require('firebase-admin/app');
 const { getFirestore, Timestamp, FieldValue } = require('firebase-admin/firestore');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
-const { onDocumentWritten } = require('firebase-functions/v2/firestore');
+const { onDocumentWritten, onDocumentCreated } = require('firebase-functions/v2/firestore');
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const logger = require('firebase-functions/logger');
 
@@ -246,6 +246,104 @@ async function processUser(uid, snaps, now) {
 
     return stats;
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// GIFT NOTIFICATIONS
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Two pushes, and deliberately only two:
+//
+//   onGiftReceived   a gifted SHIELD lands  → tell the receiver
+//   onGiftConsumed   a gifted XP boost is spent → tell the sender
+//
+// A gifted XP boost produces NOTHING on arrival. No push, no badge, no
+// indication of any kind — the surprise is the entire mechanic, and a
+// notification here would destroy it. That is why onGiftReceived filters on
+// type and does not simply fire for every gift.
+//
+// Every name in these payloads is denormalized on the gift document at write
+// time, so neither function reads another user's profile.
+
+/** Push to one uid, if they have a usable subscription. Never throws. */
+async function pushToUser(uid, payload) {
+    try {
+        const snap = await db.collection('users').doc(uid).get();
+        const subscription = snap.exists ? snap.data().pushSubscription : null;
+        if (!isUsableSubscription(subscription)) {
+            logger.info('No usable push subscription — skipping gift push', { uid });
+            return;
+        }
+        const result = await sendPush(subscription, payload);
+        if (result.ok) return;
+        logger.error('Gift push failed', { uid, statusCode: result.statusCode, message: result.message });
+        if (result.dead) {
+            await db.collection('users').doc(uid).update({ pushSubscription: FieldValue.delete() });
+            logger.info('Cleared dead push subscription', { uid });
+        }
+    } catch (err) {
+        logger.error('Gift push threw', { uid, error: String(err) });
+    }
+}
+
+exports.onGiftReceived = onDocumentCreated(
+    {
+        document: 'users/{receiverUid}/gifts/{giftId}',
+        region: REGION,
+        memory: '256MiB',
+    },
+    async (event) => {
+        const snap = event.data;
+        if (!snap || !snap.exists) return;
+        const gift = snap.data();
+
+        // The silence rule. An xp_boost gift is never announced.
+        if (gift.type !== 'shield') return;
+        if (gift.status !== 'pending') return;
+
+        const sender = gift.senderName || 'A friend';
+        await pushToUser(event.params.receiverUid, {
+            title: 'Mindkraft ⚔️',
+            body: sender + ' sent you a shield.',
+            tag: 'mindkraft-gift-' + String(event.params.giftId),
+            data: { type: 'gift', activityId: null },
+        });
+    }
+);
+
+exports.onGiftConsumed = onDocumentWritten(
+    {
+        document: 'users/{senderUid}/giftsSent/{giftId}',
+        region: REGION,
+        memory: '256MiB',
+    },
+    async (event) => {
+        const beforeSnap = event.data && event.data.before;
+        const afterSnap = event.data && event.data.after;
+        if (!afterSnap || !afterSnap.exists) return;
+        if (!beforeSnap || !beforeSnap.exists) return;   // the create is the sender's own write
+
+        const before = beforeSnap.data();
+        const after = afterSnap.data();
+
+        // Exactly one transition is a notification. The receiver settles
+        // `thanked` in the same write that flips the status, so this fires
+        // once with the right copy rather than twice.
+        if (before.status !== 'pending' || after.status !== 'consumed') return;
+        if (after.type !== 'xp_boost') return;   // shields have no consumption beat
+
+        const name = after.receiverName || 'A friend';
+        const body = after.thanked
+            ? name + ' used the double XP you sent, and said thanks.'
+            : name + ' used the double XP you sent.';
+
+        await pushToUser(event.params.senderUid, {
+            title: 'Mindkraft ⚔️',
+            body,
+            tag: 'mindkraft-gift-used-' + String(event.params.giftId),
+            data: { type: 'gift', activityId: null },
+        });
+    }
+);
 
 // ══════════════════════════════════════════════════════════════════════════
 // onReminderWrite — keep nextSendAt in sync, and backstop the cap

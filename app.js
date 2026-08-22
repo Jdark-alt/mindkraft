@@ -131,8 +131,25 @@
             return `${y}-${m}-${d}`;
         }
 
+        // The LEADERBOARD week — Monday 00:00 local, the same anchor the Grit
+        // week uses (gifting spec §8.2, invariant 14). Deliberately not
+        // getWeekStartStr(): that one is Sunday-anchored and belongs to
+        // Analytics, which has its own long-standing cadence. Every leaderboard
+        // surface — ranking, the published snapshot, the payout — reads this
+        // one, so there is exactly one boundary anywhere near a payout.
+        function getLeaderboardWeekStartStr() {
+            const d = new Date();
+            d.setHours(0, 0, 0, 0);
+            d.setDate(d.getDate() - ((d.getDay() + 6) % 7));   // 0=Sun → back 6
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const dd = String(d.getDate()).padStart(2, '0');
+            return `${y}-${m}-${dd}`;
+        }
+        window.getLeaderboardWeekStartStr = getLeaderboardWeekStartStr;
+
         function computeWeeklyXP() {
-            const weekStartStr = getWeekStartStr();
+            const weekStartStr = getLeaderboardWeekStartStr();
             let xp = 0;
             (window.userData.dimensions || []).forEach(dim =>
                 (dim.paths || []).forEach(path =>
@@ -146,10 +163,31 @@
             return xp;
         }
 
-        // Week label = the ISO date of this week's Sunday — resets every Sun at midnight
+        // Leaderboard week label = the ISO date of this week's Monday. Used as
+        // the staleness key on published weeklyXP, so a stale snapshot from
+        // last week reads as zero rather than as this week's score.
         function getISOWeekLabel() {
-            return getWeekStartStr(); // e.g. "2026-04-06"
+            return getLeaderboardWeekStartStr(); // e.g. "2026-04-06"
         }
+
+        // Completion COUNT for the current leaderboard week. §8.1's "active
+        // member" test is one logged completion, not one point of XP, so the
+        // count is published alongside the XP rather than inferred from it.
+        function computeWeeklyCompletions() {
+            const weekStartStr = getLeaderboardWeekStartStr();
+            let n = 0;
+            (window.userData.dimensions || []).forEach(dim =>
+                (dim.paths || []).forEach(path =>
+                    (path.activities || []).forEach(act => {
+                        (act.completionHistory || []).forEach(e => {
+                            if (!e.isPenalty && e.date && toLocalDateStr(new Date(e.date)) >= weekStartStr) n++;
+                        });
+                    })
+                )
+            );
+            return n;
+        }
+        window.computeWeeklyCompletions = computeWeeklyCompletions;
 
         function computeXPPerHour(activities) {
             const yStr = localYesterday();
@@ -979,9 +1017,25 @@
                     handleFriendDeepLink();
                     // Handle deep-link group join (?joinGroup=CODE in URL)
                     handleGroupDeepLink();
+                    // Cold start from a gift push (?tab=friends).
+                    try {
+                        var _p = new URLSearchParams(window.location.search);
+                        if (_p.get('tab') === 'friends') {
+                            _p.delete('tab');
+                            var _qs = _p.toString();
+                            window.history.replaceState({}, '', window.location.pathname + (_qs ? '?' + _qs : ''));
+                            setTimeout(function () { try { switchTab('people'); } catch (e) {} }, 400);
+                        }
+                    } catch (e) {}
                     // Versus challenges: one fetch that drives the invite badge
                     // and the lazy expiry / resolution / payout evaluation.
                     try { vsOnLogin(); } catch (e) { console.warn('Versus login hook failed', e); }
+                    // Gifts: drain the shield inbox, prime the silent XP-boost
+                    // queue, and catch up any mirror the last session missed.
+                    try { giftOnLogin(); } catch (e) { console.warn('Gift login hook failed', e); }
+                    // Leaderboard: publish this board and pay out the closed
+                    // week if the Monday rollover has not been settled yet.
+                    try { lbOnLogin(); } catch (e) { console.warn('Leaderboard login hook failed', e); }
                     // Handle notification tap on a cold start (?reminder=<activityId>)
                     window.mkHandleReminderDeepLink();
                     // Init the restore backup button visibility (async — non-blocking)
@@ -5685,8 +5739,19 @@
             // Grit's armed double-XP boost (§5.2). Exactly x2, never more, and
             // consumed by gritOnCompletion() once the completion lands.
             const gritBoosted         = (typeof gritIsBoostArmed === 'function') && gritIsBoostArmed(activity);
-            const earnedXP            = Math.floor((activity.baseXP || 0) * multiplier) * (gritBoosted ? 2 : 1);
-            return { currentStreak, todayStr, shouldGrantStreak, newStreak, multiplier, earnedXP, gritBoosted };
+            // A gifted boost (gifting spec §5.1). Only ever consulted when no
+            // self-purchased boost is armed: the user paid for that one
+            // deliberately and chose its timing, so it goes first (invariant 7).
+            // The gift is a surprise — it can wait. Peeking is side-effect free
+            // and returns the SAME gift on both calls in a completion, so the
+            // floating-XP preview and the awarded figure cannot drift.
+            const giftBoost           = (!gritBoosted && typeof giftPeekFor === 'function')
+                                        ? giftPeekFor(activity) : null;
+            // Exactly 2x whichever one applies, never 4x (invariant 6).
+            const preBoostXP          = Math.floor((activity.baseXP || 0) * multiplier);
+            const earnedXP            = preBoostXP * ((gritBoosted || giftBoost) ? 2 : 1);
+            return { currentStreak, todayStr, shouldGrantStreak, newStreak, multiplier,
+                     earnedXP, preBoostXP, gritBoosted, giftBoost };
         }
 
         window.completeActivity = async function(dimIndex, pathIndex, actIndex) {
@@ -5714,7 +5779,8 @@
             // All XP/streak prediction lives in predictCompletionXP — same code path
             // the floating-XP preview uses, so they can't drift.
             const { currentStreak, todayStr, shouldGrantStreak, newStreak,
-                    multiplier: consistencyMultiplier, earnedXP } = predictCompletionXP(activity);
+                    multiplier: consistencyMultiplier, earnedXP,
+                    preBoostXP, giftBoost } = predictCompletionXP(activity);
             if (!isOccasional && shouldGrantStreak) {
                 activity.streakGrantedDate = todayStr;
                 // Stamp the start of a new streak so processStreakSystem's walk
@@ -5761,6 +5827,15 @@
             // Grit: +1 drip, week numerator, cadence bonus, streak milestones
             // and boost consumption — one call, same beat as the XP above.
             try { gritOnCompletion(activity); } catch (e) { console.warn('Grit completion hook failed', e); }
+            // A gifted double-XP lands here, silently until this moment. Marks
+            // the gift consumed and queues the reveal — which waits for any
+            // level-up card to clear first (§5.2). Fire-and-forget: the XP is
+            // already awarded above and must not be gated on a network write.
+            if (giftBoost) {
+                try {
+                    giftOnCompletion(giftBoost, activity, preBoostXP, earnedXP);
+                } catch (e) { console.warn('Gift consumption hook failed', e); }
+            }
 
             // Apply XP to the parent dimension's level track
             const _dimForAct = window.userData.dimensions[dimIndex];
@@ -8717,7 +8792,7 @@
             // Block access to tabs locked behind level thresholds. Surface the
             // unlock requirement as a toast and don't change tabs.
             if (typeof isTabUnlocked === 'function' && !isTabUnlocked(tabName)) {
-                const meta = TAB_UNLOCKS[tabName];
+                const meta = (typeof tabUnlockMeta === 'function') ? tabUnlockMeta(tabName) : null;
                 if (meta) {
                     showToast(`🔒 ${meta.label} unlocks at Level ${meta.level}`, 'olive');
                 }
@@ -8748,7 +8823,7 @@
             // Render the newly-visible tab (skipped during updateDashboard if not active)
             if (tabName === 'challenges') renderChallenges();
             else if (tabName === 'projects') { try { renderProjects(); } catch(e) { console.warn('renderProjects failed', e); } }
-            else if (tabName === 'friends') renderFriendsTab();
+            else if (tabName === 'friends' || tabName === 'people') renderFriendsTab();
             else if (tabName === 'settings') { loadSettings(); }
             else if (tabName === 'analytics') {
                 renderAnalytics();
@@ -12113,11 +12188,20 @@
             return stack;
         }
 
-        function showToast(message, color = 'blue') {
+        // `onTap` is optional. When given, the toast becomes a button: the
+        // leaderboard award toast uses it to open that week's final standings.
+        function showToast(message, color = 'blue', onTap = null) {
             const cfg = TOAST_CONFIG[color] || TOAST_CONFIG.blue;
             const stack = _ensureToastStack();
             const toast = document.createElement('div');
-            toast.className = 'mk-toast mk-toast-' + color;
+            toast.className = 'mk-toast mk-toast-' + color + (onTap ? ' mk-toast-tappable' : '');
+            if (onTap) {
+                toast.setAttribute('role', 'button');
+                toast.setAttribute('tabindex', '0');
+                toast.addEventListener('click', function () {
+                    try { onTap(); } catch (e) { console.warn('Toast tap handler failed', e); }
+                });
+            }
             toast.style.setProperty('--mk-toast-stripe', cfg.stripe);
             // Newer toasts insert at the top of the stack so the most-
             // recent message reads first.
@@ -12954,8 +13038,17 @@
                           body: 'Add friends, compare XP on the leaderboard, and keep each other accountable. Share your friend code to get started.' },
         };
 
+        // Friends and Leaderboards were one tab until the split, and they
+        // share one unlock — aliasing here (rather than adding a second
+        // TAB_UNLOCKS entry) keeps the level-7 unlock popup firing once.
+        const TAB_UNLOCK_ALIASES = { people: 'friends' };
+        function tabUnlockMeta(tabName) {
+            return TAB_UNLOCKS[TAB_UNLOCK_ALIASES[tabName] || tabName];
+        }
+        window.tabUnlockMeta = tabUnlockMeta;
+
         function isTabUnlocked(tabName) {
-            const meta = TAB_UNLOCKS[tabName];
+            const meta = tabUnlockMeta(tabName);
             if (!meta) return true; // tabs not in the map (activities, settings) are always unlocked
             const lvl = (window.userData && window.userData.level) || 1;
             return lvl >= meta.level;
@@ -12969,7 +13062,7 @@
                 const m = onclick.match(/switchTab\('(\w+)'\)/);
                 if (!m) return;
                 const tabName = m[1];
-                const meta = TAB_UNLOCKS[tabName];
+                const meta = tabUnlockMeta(tabName);
                 if (!meta) return; // not a lockable tab
                 const locked = !isTabUnlocked(tabName);
                 tab.classList.toggle('nav-tab-locked', locked);
@@ -14091,6 +14184,10 @@
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.addEventListener('message', function(event) {
                 var msg = event.data || {};
+                if (msg.type === 'mindkraft-gift-click') {
+                    setTimeout(function () { try { switchTab('people'); } catch (e) {} }, 300);
+                    return;
+                }
                 if (msg.type !== 'mindkraft-notification-click') return;
                 // Defer so a click arriving mid-boot doesn't race the render.
                 setTimeout(function() {
@@ -14124,15 +14221,21 @@
 
         // ── Render the full Friends tab ───────────────────────────────────
         // ── Render the full Friends tab ───────────────────────────────────
+        // Renders BOTH social pages from one pass. The Friends tab and the
+        // Leaderboards tab hold different hosts but need the same data — one
+        // set of profile reads, not two — so the split is in the markup, not
+        // here. Every host is optional: whichever exists gets filled.
         window.renderFriendsTab = async function() {
             const lb  = document.getElementById('friendsLeaderboard');
+            const req = document.getElementById('friendsRequests');
             const add = document.getElementById('friendsAddSection');
             const all = document.getElementById('friendsAllList');
-            if (!lb || !add || !all) return;
+            if (!lb && !add && !all) return;
 
-            lb.innerHTML  = '<div style="padding:8px 0 4px;color:var(--color-text-secondary);font-size:13px;">Loading\u2026</div>';
-            add.innerHTML = '';
-            all.innerHTML = '';
+            if (lb)  lb.innerHTML  = '<div style="padding:8px 0 4px;color:var(--color-text-secondary);font-size:13px;">Loading\u2026</div>';
+            if (req) req.innerHTML = '';
+            if (add) add.innerHTML = '';
+            if (all) all.innerHTML = '';
 
             const friends     = window.userData.friends || [];
             const myUID       = window.currentUser.uid;
@@ -14206,6 +14309,8 @@
             }
 
             // ── 4. Pending requests banner ─────────────────────────────────
+            // Lives on the Friends tab now (§1.1) — the accept/decline
+            // framework itself is untouched.
             let requestsHTML = '';
             if (pendingRequests.length > 0) {
                 requestsHTML = `
@@ -14259,7 +14364,8 @@
             const activeTab = document.getElementById(activeTabId);
             if (activeTab) activeTab.classList.add('active');
 
-            lb.innerHTML = requestsHTML + (topEntries.length === 0
+            if (req) req.innerHTML = requestsHTML;
+            if (lb) lb.innerHTML = (topEntries.length === 0
                 ? '<div style="padding:28px 0;text-align:center;color:var(--color-text-secondary);font-size:13px;">No one on the leaderboard yet.</div>'
                 : topEntries.map((e, i) => {
                     const rank   = i + 1;
@@ -14289,10 +14395,16 @@
                     </div>`;
                 }).join(''));
 
+            // ── 5b. Leaderboard board controls + payout panel (§8) ─────────
+            // Add/remove from the board is reachable from BOTH tabs (§1.1):
+            // here as an explicit roster, and on every friend row over on the
+            // Friends tab.
+            try { lbRenderPayoutSection(entries); } catch (e) { console.warn('Leaderboard payout panel failed', e); }
+
             // ── 6. Add Friend ──────────────────────────────────────────────
             const myCode = window.userData.friendCode || '—';
             const atCap  = friends.length >= 20;
-            add.innerHTML = `
+            if (add) add.innerHTML = `
                 <div class="fr-add-card analytics-card">
                     <div class="fr-add-header">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--color-progress);flex-shrink:0;"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
@@ -14333,27 +14445,41 @@
 
             // ── 7. All Friends list ────────────────────────────────────────
             const friendEntries = entries.filter(e => !e.isMe);
-            if (friendEntries.length === 0) {
+            if (all && friendEntries.length === 0) {
                 all.innerHTML = `
                     <div class="fr-section-kicker">Friends (0)</div>
                     <div class="fr-empty">Add a friend using their MK code above</div>`;
-            } else {
+            } else if (all) {
                 all.innerHTML = `
                     <div class="fr-section-kicker">Friends (${friendEntries.length}/20)</div>
                     ${friendEntries.sort((a, b) => (a.displayName || '').localeCompare(b.displayName || '')).map(e => {
                         const avatar = e.photoURL
                             ? `<img src="${escapeHtml(e.photoURL)}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0;">`
                             : `<div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--color-accent-blue),var(--color-progress));display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:#fff;flex-shrink:0;">${escapeHtml((e.displayName || '?')[0].toUpperCase())}</div>`;
+                        const onBoard = (window.userData.leaderboardHidden || []).indexOf(e.uid) === -1;
                         return `<div onclick="openFriendProfileCard('${escapeHtml(e.uid)}')" class="fr-friend-row">
                             ${avatar}
                             <div class="fr-friend-info">
                                 <div class="fr-friend-name">${escapeHtml(e.displayName || 'Adventurer')}</div>
                                 <div class="fr-friend-meta">Lv ${e.level || 1} · ${escapeHtml(e.characterTitle || '')}</div>
                             </div>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="color:var(--color-text-secondary);flex-shrink:0;"><polyline points="9 18 15 12 9 6"/></svg>
+                            <button type="button" class="fr-row-btn fr-row-board${onBoard ? ' is-on' : ''}"
+                                title="${onBoard ? 'On your leaderboard' : 'Not on your leaderboard'}"
+                                aria-label="${onBoard ? 'Remove from leaderboard' : 'Add to leaderboard'}"
+                                onclick="event.stopPropagation();toggleLeaderboardVisibility('${escapeHtml(e.uid)}')">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="12" width="5" height="8" rx="1"/><rect x="9.5" y="6" width="5" height="14" rx="1"/><rect x="16" y="14" width="5" height="6" rx="1"/></svg>
+                            </button>
+                            <button type="button" class="fr-row-btn fr-row-gift"
+                                title="Send a gift" aria-label="Send a gift"
+                                onclick="event.stopPropagation();giftOpenPicker('${escapeHtml(e.uid)}')">
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 12 20 22 4 22 4 12"/><rect x="2" y="7" width="20" height="5"/><line x1="12" y1="22" x2="12" y2="7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></svg>
+                            </button>
                         </div>`;
                     }).join('')}`;
             }
+
+            // ── 8. Gifts you have sent (§6 — the sender's own sent list) ───
+            try { giftRenderSentList(); } catch (e) { console.warn('Sent-gift list failed', e); }
         };
 
         // ── Add friend by MK code ─────────────────────────────────────────
@@ -14520,6 +14646,11 @@
 
                 ${!isMe ? `
                 <div style="display:flex;gap:8px;margin: 4px 0 8px;">
+                    <button onclick="closeFriendProfileCard();giftOpenPicker('${escapeHtml(uid)}')" class="pf-ghost-btn" style="flex:1;justify-content:center;padding:10px;font-size:12px;">
+                        Send a gift
+                    </button>
+                </div>
+                <div style="display:flex;gap:8px;margin: 4px 0 8px;">
                     <button onclick="toggleLeaderboardVisibility('${escapeHtml(uid)}')" class="pf-ghost-btn" style="flex:1;justify-content:center;padding:10px;font-size:12px;">
                         ${isHidden ? '+ Add to Leaderboard' : 'Remove from Leaderboard'}
                     </button>
@@ -14563,6 +14694,7 @@
             // Also remove from leaderboard hidden if present
             window.userData.leaderboardHidden = (window.userData.leaderboardHidden || []).filter(id => id !== uid);
             await saveUserData();
+            try { lbPublishBoard(true); } catch (e) {}
             closeFriendProfileCard();
             renderFriendsTab();
         };
@@ -14584,6 +14716,10 @@
                 ? hidden.filter(id => id !== uid)
                 : [...hidden, uid];
             debouncedSaveUserData();
+            // The published board is what other people's clients read to
+            // settle mutuality (§8.1), so it must not lag a toggle. The change
+            // only reaches the SCORED roster next Monday — see lbPublishBoard.
+            try { lbPublishBoard(true); } catch (e) {}
             closeFriendProfileCard();
             renderFriendsTab();
         };
@@ -14643,7 +14779,7 @@
                 const code   = params.get('add');
                 if (!code) return;
                 window.history.replaceState({}, '', window.location.pathname);
-                switchTab('friends');
+                switchTab('people');
                 setTimeout(() => {
                     const input = document.getElementById('friendCodeInput');
                     if (input) { input.value = code.toUpperCase(); addFriendByCode(); }
@@ -19237,6 +19373,18 @@
         const GRIT_SHIELD_COST      = 40;     // §5.1 uncapped
         const GRIT_BOOST_COST       = 50;     // §5.2
         const GRIT_BOOST_PER_MONTH  = 1;      // §5.2 calendar-month cap
+
+        // ── Gifting rate card (gifting spec §3.2) ─────────────────────────
+        // A gifted item ALWAYS costs half the self-purchase price. That ratio
+        // is the standing rule for every future giftable item — it exists to
+        // push people toward bringing friends in rather than self-servicing,
+        // so derive it, never hand-write a second number.
+        const GRIT_GIFT_RATIO           = 0.5;
+        const GRIT_GIFT_SHIELD_COST     = Math.round(GRIT_SHIELD_COST * GRIT_GIFT_RATIO);  // 20
+        const GRIT_GIFT_BOOST_COST      = Math.round(GRIT_BOOST_COST  * GRIT_GIFT_RATIO);  // 25
+        const GRIT_GIFT_BOOST_PER_MONTH = 3;  // gifted boosts, counted separately
+                                              // from the 1 self-purchase
+
         const GRIT_RATIO_CAP        = 1.30;   // §3.5
 
         // §3.5 / rate card §1.2 — weekly bonus curve, [ratio, grit], linearly
@@ -19954,14 +20102,26 @@
             return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0');
         }
 
-        // §5.2 — remaining boost allowance this calendar month.
-        function gritBoostsLeftThisMonth() {
+        // §5.2 / gifting §3.2 — remaining boost allowance this calendar month.
+        // `kind` was added when gifting landed; entries written before that are
+        // all self-purchases, so a missing kind reads as 'self'.
+        function gritBoostsUsedThisMonth(kind) {
             var g = gritState();
             if (!g) return 0;
             var mk = gritMonthKey();
-            var used = g.boostPurchases.filter(function (p) { return p && p.month === mk; }).length;
-            return Math.max(0, GRIT_BOOST_PER_MONTH - used);
+            return g.boostPurchases.filter(function (p) {
+                return p && p.month === mk && (p.kind || 'self') === kind;
+            }).length;
         }
+
+        function gritBoostsLeftThisMonth() {
+            return Math.max(0, GRIT_BOOST_PER_MONTH - gritBoostsUsedThisMonth('self'));
+        }
+
+        function gritGiftBoostsLeftThisMonth() {
+            return Math.max(0, GRIT_GIFT_BOOST_PER_MONTH - gritBoostsUsedThisMonth('gift'));
+        }
+        window.gritGiftBoostsLeftThisMonth = gritGiftBoostsLeftThisMonth;
 
         async function gritPurchase(cost, reason, grant, revert, meta) {
             var g = gritState();
@@ -20028,13 +20188,14 @@
             var res = await gritPurchase(GRIT_BOOST_COST, 'xp_boost_purchase',
                 function (gg) {
                     gg.pendingBoost = { activityId: null, purchasedAt: new Date().toISOString() };
-                    gg.boostPurchases.push({ month: mk, at: new Date().toISOString() });
+                    gg.boostPurchases.push({ month: mk, at: new Date().toISOString(), kind: 'self' });
                     if (gg.boostPurchases.length > 24) gg.boostPurchases = gg.boostPurchases.slice(-24);
                 },
                 function (gg) {
                     gg.pendingBoost = null;
                     for (var i = gg.boostPurchases.length - 1; i >= 0; i--) {
-                        if (gg.boostPurchases[i] && gg.boostPurchases[i].month === mk) {
+                        if (gg.boostPurchases[i] && gg.boostPurchases[i].month === mk &&
+                            (gg.boostPurchases[i].kind || 'self') === 'self') {
                             gg.boostPurchases.splice(i, 1); break;
                         }
                     }
@@ -20232,6 +20393,10 @@
                 case 'tree_regen':       return 'Regenerated your map';
                 case 'shield_purchase':  return 'Bought a streak shield';
                 case 'xp_boost_purchase':return 'Bought double XP';
+                case 'gift_shield':      return 'Sent a shield to ' + (m.receiverName || 'a friend');
+                case 'gift_xp_boost':    return 'Sent double XP to ' + (m.receiverName || 'a friend');
+                case 'leaderboard_payout': return (m.place ? gritOrdinal(m.place) + ' place' : 'Placed') +
+                                            ' on your leaderboard';
                 case 'migration':        return 'Balance carried over';
                 case 'correction':       return 'Balance correction';
                 default:                 return e.reason;
@@ -20354,11 +20519,18 @@
                         '<div class="grit-item-name">🛡 Streak shield</div>' +
                         '<div class="grit-item-sub">Absorbs one missed window before your ' +
                           'streak breaks. Bought into your pool, then placed on whichever ' +
-                          'activity you want protected.</div>' +
+                          'activity you want protected.' +
+                          '<br><span class="grit-item-gift-note">Gift one to a friend for ' +
+                            GRIT_GIFT_SHIELD_COST + ' — it drops straight into their pool.</span></div>' +
                       '</div>' +
-                      '<button type="button" class="grit-buy" id="gritBuyShieldBtn"' +
-                        (g.balance < GRIT_SHIELD_COST ? ' disabled' : '') + '>' +
-                        GRIT_SHIELD_COST + '</button>' +
+                      '<div class="grit-buy-pair">' +
+                        '<button type="button" class="grit-buy" id="gritBuyShieldBtn"' +
+                          (g.balance < GRIT_SHIELD_COST ? ' disabled' : '') + '>' +
+                          GRIT_SHIELD_COST + '</button>' +
+                        '<button type="button" class="grit-gift-buy" id="gritGiftShieldBtn"' +
+                          (g.balance < GRIT_GIFT_SHIELD_COST ? ' disabled' : '') +
+                          ' title="Gift a shield to a friend">Gift ' + GRIT_GIFT_SHIELD_COST + '</button>' +
+                      '</div>' +
                     '</div>';
 
             // ── The pool: hold it, then place it ─────────────────────────
@@ -20376,6 +20548,8 @@
                     '</div>';
 
             var boostBlocked = g.balance < GRIT_BOOST_COST || boostsLeft <= 0 || !!g.pendingBoost;
+            var giftBoostsLeft   = gritGiftBoostsLeftThisMonth();
+            var giftBoostBlocked = g.balance < GRIT_GIFT_BOOST_COST || giftBoostsLeft <= 0;
             html += '<div class="grit-item' + (boostBlocked ? ' is-poor' : '') + '">' +
                       '<div class="grit-item-main">' +
                         '<div class="grit-item-name">⚡ Double XP</div>' +
@@ -20384,11 +20558,19 @@
                             ? 'Armed — your next completion counts twice.'
                             : 'Arms a ×2 on the next completion you choose. ' +
                               boostsLeft + ' of ' + GRIT_BOOST_PER_MONTH + ' left this month.') +
+                          '<br><span class="grit-item-gift-note">Gifted: ' + giftBoostsLeft + ' of ' +
+                            GRIT_GIFT_BOOST_PER_MONTH + ' left this month — it lands as a surprise ' +
+                            'on their next completion.</span>' +
                         '</div>' +
                       '</div>' +
-                      '<button type="button" class="grit-buy" id="gritBuyBoostBtn"' +
-                        (boostBlocked ? ' disabled' : '') + '>' +
-                        GRIT_BOOST_COST + '</button>' +
+                      '<div class="grit-buy-pair">' +
+                        '<button type="button" class="grit-buy" id="gritBuyBoostBtn"' +
+                          (boostBlocked ? ' disabled' : '') + '>' +
+                          GRIT_BOOST_COST + '</button>' +
+                        '<button type="button" class="grit-gift-buy" id="gritGiftBoostBtn"' +
+                          (giftBoostBlocked ? ' disabled' : '') +
+                          ' title="Gift double XP to a friend">Gift ' + GRIT_GIFT_BOOST_COST + '</button>' +
+                      '</div>' +
                     '</div>';
             html += '</div>';
 
@@ -20432,6 +20614,10 @@
                 bb.disabled = true;
                 window.gritBuyBoost().finally(function () { gritRenderRewards(); });
             });
+            var gs = document.getElementById('gritGiftShieldBtn');
+            if (gs) gs.addEventListener('click', function () { giftOpenPicker(null, 'shield'); });
+            var gb = document.getElementById('gritGiftBoostBtn');
+            if (gb) gb.addEventListener('click', function () { giftOpenPicker(null, 'xp_boost'); });
 
             gritRenderLog();
         }
@@ -22989,4 +23175,1131 @@
 
         // ════════════════════════════════════════════════════════════════════
         // ══ END VERSUS CHALLENGES ═══════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════════
+
+        // ════════════════════════════════════════════════════════════════════
+        // ══ SOCIAL GIFTING ══════════════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════════
+        //
+        // Peer-to-peer shields and double-XP. Self-contained: it reaches the
+        // rest of the app through three hook points and nothing else.
+        //
+        //   predictCompletionXP()  — giftPeekFor(), side-effect free
+        //   completeActivity()     — one call to giftOnCompletion()
+        //   the login pass         — one call to giftOnLogin()
+        //
+        // Gifts live on the RECEIVER, because the receiver's device is what
+        // consumes them:
+        //
+        //   users/{receiverUid}/gifts/{giftId}        the gift itself
+        //   users/{senderUid}/giftsSent/{giftId}      the sender's mirror
+        //
+        // Both display names are denormalized at write time (invariant 4). No
+        // read path anywhere below looks up a name — which keeps the
+        // notification path free of cross-user reads, and keeps a name stable
+        // if either side renames later.
+        // ════════════════════════════════════════════════════════════════════
+
+        const GIFT_TYPES = ['shield', 'xp_boost'];
+
+        function giftUid() {
+            return (window.currentUser && window.currentUser.uid) || null;
+        }
+
+        function giftMyName() {
+            var p = (window.userData && window.userData.profile) || {};
+            return p.username || (window.currentUser && window.currentUser.displayName) || 'A friend';
+        }
+
+        // Client-generated and stable across retries (invariant 3): a replayed
+        // write lands on the same document id and can never make two gifts.
+        function giftNewId() {
+            return 'gf-' + Date.now().toString(36) + '-' +
+                   Math.random().toString(36).slice(2, 10);
+        }
+
+        function giftCost(type) {
+            return type === 'shield' ? GRIT_GIFT_SHIELD_COST : GRIT_GIFT_BOOST_COST;
+        }
+
+        function giftEsc(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        // ── In-memory state ───────────────────────────────────────────────
+        // _giftQueue is the receiver's pending xp_boost gifts, oldest first.
+        // It exists only in memory and is NEVER rendered: an XP boost gift
+        // produces no signal of any kind until it is consumed (invariant 5).
+        let _giftQueue     = [];
+        let _giftSentCache = [];
+        let _giftSending   = false;
+        let _giftInflight  = {};     // {type|receiverUid: giftId} — retry-stable
+        let _giftInboxAt   = 0;      // last inbox drain, for the foreground throttle
+
+        // ══════════════════════════════════════════════════════════════════
+        //  SENDING (§3)
+        // ══════════════════════════════════════════════════════════════════
+
+        // The whole send, in the order §3.3 requires: refuse before spending,
+        // spend and persist, and only then write the pair of documents. If the
+        // pair fails, refund with a `correction` entry — Grit is never left
+        // spent with no gift written (invariant 2).
+        async function giftSend(type, receiverUid, receiverName) {
+            var g = gritState();
+            var me = giftUid();
+            if (!g || !me) return { ok: false, message: 'Not signed in.' };
+            if (GIFT_TYPES.indexOf(type) === -1) return { ok: false, message: 'Unknown gift.' };
+            if (!receiverUid || receiverUid === me) return { ok: false, message: 'Pick a friend to send to.' };
+            if (((window.userData.friends) || []).indexOf(receiverUid) === -1) {
+                return { ok: false, message: 'You can only send gifts to someone on your friends list.' };
+            }
+            if (_giftSending) return { ok: false, message: 'Hold on — that gift is still going through.' };
+            if (!canPersistUserData('giftSend')) return { ok: false, message: 'Not signed in.' };
+
+            var cost = giftCost(type);
+            if (g.balance < cost) {
+                return { ok: false, message: 'You need ' + (cost - g.balance) + ' more Grit for that.' };
+            }
+            if (type === 'xp_boost' && gritGiftBoostsLeftThisMonth() <= 0) {
+                return { ok: false, message: 'You have used all ' + GRIT_GIFT_BOOST_PER_MONTH +
+                                             ' gifted double-XPs this month.' };
+            }
+
+            // One id per (type, receiver) attempt, reused until it succeeds.
+            var key = type + '|' + receiverUid;
+            var giftId = _giftInflight[key] || (_giftInflight[key] = giftNewId());
+
+            var mk     = gritMonthKey();
+            var reason = type === 'shield' ? 'gift_shield' : 'gift_xp_boost';
+            var before = { balance: g.balance, lifetimeSpent: g.lifetimeSpent };
+            var bufferMark = _gritLedgerBuffer.length;
+
+            _giftSending = true;
+            try {
+                // 1–2. Spend, ledger, persist.
+                gritApplyDelta(-cost, reason, {
+                    item: type, receiverUid: receiverUid,
+                    receiverName: receiverName || '', giftId: giftId
+                });
+                if (type === 'xp_boost') {
+                    g.boostPurchases.push({ month: mk, at: new Date().toISOString(), kind: 'gift' });
+                    if (g.boostPurchases.length > 24) g.boostPurchases = g.boostPurchases.slice(-24);
+                }
+                var saved = await gritPersist();
+                if (!saved) {
+                    // Nothing landed. Unwind the balance and the ledger entry
+                    // so the record matches what actually happened: nothing.
+                    if (type === 'xp_boost') giftDropBoostRecord(g, mk);
+                    g.balance = before.balance;
+                    g.lifetimeSpent = before.lifetimeSpent;
+                    _gritLedgerBuffer.length = bufferMark;
+                    gritRefreshUI();
+                    return { ok: false, message: 'Could not save that. Nothing was spent.' };
+                }
+
+                // 3. Both documents, one batch. Never one without the other.
+                var gift = {
+                    id:                    giftId,
+                    type:                  type,
+                    senderUid:             me,
+                    senderName:            giftMyName(),
+                    receiverUid:           receiverUid,
+                    receiverName:          receiverName || 'A friend',
+                    sentAt:                new Date().toISOString(),
+                    status:                'pending',
+                    consumedAt:            null,
+                    consumedActivityId:    null,
+                    consumedActivityTitle: null,
+                    baseXP:                null,
+                    awardedXP:             null,
+                    thanked:               false,
+                    thankedAt:             null
+                };
+                try {
+                    var batch = writeBatch(db);
+                    batch.set(doc(db, 'users', receiverUid, 'gifts', giftId), gift);
+                    batch.set(doc(db, 'users', me, 'giftsSent', giftId), gift);
+                    await batch.commit();
+                } catch (err) {
+                    // 4. Refund. The spend is real and already persisted, so
+                    // this is a correction in the record, not an unwind.
+                    console.error('Gift write failed, refunding:', err);
+                    gritApplyDelta(cost, 'correction', {
+                        note: 'gift write failed; refunded', item: type,
+                        receiverUid: receiverUid, giftId: giftId
+                    });
+                    if (type === 'xp_boost') giftDropBoostRecord(g, mk);
+                    await gritPersist();
+                    gritFlushLedger();
+                    gritRefreshUI();
+                    return { ok: false, message: 'That gift could not be delivered. Your Grit is back.' };
+                }
+
+                delete _giftInflight[key];
+                _giftSentCache = [gift].concat(_giftSentCache);
+                gritFlushLedger();
+                gritRefreshUI();
+                return { ok: true, gift: gift };
+            } finally {
+                _giftSending = false;
+            }
+        }
+        window.giftSend = giftSend;
+
+        // Removes the most recent gifted-boost record for this month — the
+        // cap must not be spent by a purchase that did not happen.
+        function giftDropBoostRecord(g, mk) {
+            for (var i = g.boostPurchases.length - 1; i >= 0; i--) {
+                var p = g.boostPurchases[i];
+                if (p && p.month === mk && p.kind === 'gift') { g.boostPurchases.splice(i, 1); return; }
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  THE PICKER (§3.1)
+        // ══════════════════════════════════════════════════════════════════
+        // Two entry points, one flow: the Rewards shop opens it with a type
+        // and no friend, a friend row opens it with a friend and no type.
+
+        function giftCloseSheet() {
+            var el = document.getElementById('giftSheet');
+            if (el) el.remove();
+        }
+        window.giftCloseSheet = giftCloseSheet;
+
+        function giftSheet(innerHtml) {
+            giftCloseSheet();
+            var el = document.createElement('div');
+            el.id = 'giftSheet';
+            el.className = 'modal-overlay gift-sheet-scrim active';
+            el.addEventListener('click', function (e) { if (e.target === el) giftCloseSheet(); });
+            el.innerHTML = '<div class="modal pl-modal gift-sheet">' + innerHtml + '</div>';
+            document.body.appendChild(el);
+            return el;
+        }
+
+        // Same head as the versus sheet, so the two bottom sheets in the app
+        // are visibly the same component rather than two near-misses.
+        function giftHeader(title, eyebrow) {
+            return '<div class="modal-header pl-modal-header">' +
+                     '<div>' +
+                       (eyebrow ? '<div class="pl-modal-eyebrow">' + giftEsc(eyebrow) + '</div>' : '') +
+                       '<h3 class="modal-title">' + giftEsc(title) + '</h3></div>' +
+                     '<button class="pl-modal-close" type="button" onclick="giftCloseSheet()" aria-label="Close">' +
+                     '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+                     '</button></div>';
+        }
+
+        // The name written onto both gift documents comes from this cache, so
+        // it has to be filled before a send — the Rewards shop can open the
+        // picker in a session where the Friends tab was never rendered, and a
+        // gift stamped "Adventurer" would be wrong forever (invariant 4).
+        async function giftEnsureFriendNames() {
+            var friends = (window.userData.friends || []);
+            var cache = window._friendProfileCache || (window._friendProfileCache = {});
+            var missing = friends.filter(function (u) { return !cache[u]; });
+            if (!missing.length) return;
+            await Promise.all(missing.map(async function (u) {
+                try {
+                    var snap = await getDoc(doc(db, 'publicProfiles', u));
+                    if (snap.exists()) cache[u] = Object.assign({ uid: u }, snap.data());
+                } catch (e) { /* an unreadable profile just stays unnamed */ }
+            }));
+        }
+
+        // uid may be null (chose an item first), type may be null (chose a
+        // friend first). Whichever is missing is asked for here.
+        window.giftOpenPicker = async function (uid, type) {
+            if (!giftUid()) return;
+            var friends = (window.userData.friends || []);
+            if (!friends.length) {
+                showToast('Add a friend first — gifts go to people on your friends list.', 'olive');
+                return;
+            }
+            await giftEnsureFriendNames();
+            if (!uid) { giftRenderFriendStep(type); return; }
+            giftRenderTypeStep(uid, type);
+        };
+
+        function giftRenderFriendStep(type) {
+            var friends = (window.userData.friends || []);
+            var rows = friends.map(function (u) {
+                var p = (window._friendProfileCache || {})[u] || {};
+                var name = p.displayName || 'Adventurer';
+                return '<button type="button" class="gift-friend-row" ' +
+                         'onclick="giftPickFriend(\'' + giftEsc(u) + '\',' +
+                         (type ? '\'' + giftEsc(type) + '\'' : 'null') + ')">' +
+                         '<span class="gift-friend-name">' + giftEsc(name) + '</span>' +
+                         (p.level ? '<span class="gift-friend-lvl">Lv ' + p.level + '</span>' : '') +
+                       '</button>';
+            }).join('');
+            giftSheet(giftHeader('Send to', 'A gift') +
+                '<div class="modal-body pl-modal-body">' +
+                  '<p class="gift-note">Gifts cost half what the same thing costs you.</p>' +
+                  rows +
+                '</div>');
+        }
+
+        window.giftPickFriend = function (uid, type) {
+            giftRenderTypeStep(uid, type);
+        };
+
+        function giftFriendName(uid) {
+            var p = (window._friendProfileCache || {})[uid] || {};
+            return p.displayName || 'Adventurer';
+        }
+
+        function giftRenderTypeStep(uid, type) {
+            var g = gritState();
+            var bal = g ? g.balance : 0;
+            var name = giftFriendName(uid);
+            var giftBoostsLeft = gritGiftBoostsLeftThisMonth();
+
+            function card(t, emoji, title, sub, cost, blockedMsg) {
+                var blocked = !!blockedMsg;
+                return '<button type="button" class="gift-item' + (blocked ? ' is-blocked' : '') + '"' +
+                         (blocked ? ' disabled' : '') +
+                         ' onclick="giftConfirm(\'' + giftEsc(uid) + '\',\'' + t + '\')">' +
+                         '<span class="gift-item-emoji">' + emoji + '</span>' +
+                         '<span class="gift-item-main">' +
+                           '<span class="gift-item-name">' + giftEsc(title) + '</span>' +
+                           '<span class="gift-item-sub">' + (blocked ? giftEsc(blockedMsg) : giftEsc(sub)) + '</span>' +
+                         '</span>' +
+                         '<span class="gift-item-cost">' + cost + '</span>' +
+                       '</button>';
+            }
+
+            var shieldBlocked = bal < GRIT_GIFT_SHIELD_COST
+                ? 'You need ' + (GRIT_GIFT_SHIELD_COST - bal) + ' more Grit.' : null;
+            var boostBlocked  = giftBoostsLeft <= 0
+                ? 'No gifted double-XP left this month.'
+                : (bal < GRIT_GIFT_BOOST_COST
+                    ? 'You need ' + (GRIT_GIFT_BOOST_COST - bal) + ' more Grit.' : null);
+
+            var body =
+                '<p class="gift-note">Sending to <strong>' + giftEsc(name) + '</strong> · ' +
+                  'you have ' + bal.toLocaleString() + ' Grit</p>' +
+                card('shield', '🛡', 'Streak shield',
+                     'Drops straight into their pool. They are told you sent it.',
+                     GRIT_GIFT_SHIELD_COST, shieldBlocked) +
+                card('xp_boost', '⚡', 'Double XP',
+                     'A surprise. They find out when it lands on a completion. ' +
+                     giftBoostsLeft + ' of ' + GRIT_GIFT_BOOST_PER_MONTH + ' left this month.',
+                     GRIT_GIFT_BOOST_COST, boostBlocked);
+
+            if (type === 'shield' || type === 'xp_boost') {
+                // Came in from the shop with the item already chosen — confirm
+                // straight away rather than asking twice.
+                giftConfirm(uid, type);
+                return;
+            }
+            giftSheet(giftHeader('Send a gift', 'Half price for a friend') +
+                      '<div class="modal-body pl-modal-body">' + body + '</div>');
+        }
+
+        window.giftConfirm = function (uid, type) {
+            var name = giftFriendName(uid);
+            var cost = giftCost(type);
+            var label = type === 'shield' ? 'a streak shield' : 'double XP';
+            var self  = type === 'shield' ? GRIT_SHIELD_COST : GRIT_BOOST_COST;
+            giftSheet(giftHeader('Confirm', 'A gift') +
+                '<div class="modal-body pl-modal-body">' +
+                  '<p class="gift-confirm-line">Send <strong>' + giftEsc(label) + '</strong> to ' +
+                    '<strong>' + giftEsc(name) + '</strong> for <strong>' + cost + ' Grit</strong>?</p>' +
+                  '<p class="gift-note">Half of the ' + self + ' it would cost you.' +
+                    (type === 'xp_boost'
+                      ? ' They get no notification — it reveals itself on their next completion.'
+                      : '') + '</p>' +
+                '</div>' +
+                '<div class="modal-footer pl-modal-footer">' +
+                  '<button type="button" class="pl-btn-ghost" onclick="giftCloseSheet()">Cancel</button>' +
+                  '<button type="button" class="pl-btn-primary" id="giftSendBtn">Send</button>' +
+                '</div>');
+            var btn = document.getElementById('giftSendBtn');
+            if (!btn) return;
+            btn.addEventListener('click', async function () {
+                // §3.3 — disabled between tap and resolution, so a double-tap
+                // cannot start a second send.
+                btn.disabled = true;
+                btn.textContent = 'Sending…';
+                var res = await giftSend(type, uid, name);
+                giftCloseSheet();
+                showToast(res.ok
+                    ? (type === 'shield'
+                        ? '🛡 Shield sent to ' + name
+                        : '⚡ Double XP sent to ' + name + ' — they will not see it coming')
+                    : res.message, res.ok ? 'green' : 'red');
+                try { gritRenderRewards(); } catch (e) {}
+                try { giftRenderSentList(); } catch (e) {}
+            });
+        };
+
+        // ══════════════════════════════════════════════════════════════════
+        //  RECEIVING (§4, §5.1)
+        // ══════════════════════════════════════════════════════════════════
+
+        async function giftFetchPending() {
+            var me = giftUid();
+            if (!me || !canPersistUserData('giftFetch')) return [];
+            try {
+                // One equality filter, no orderBy — served by the automatic
+                // single-field index, so there is no composite index to deploy.
+                // Ordering is done here; the volume is bounded by the friend cap.
+                var snap = await getDocs(query(
+                    collection(db, 'users', me, 'gifts'), where('status', '==', 'pending')));
+                var out = [];
+                snap.forEach(function (d) { out.push(d.data()); });
+                out.sort(function (a, b) { return String(a.sentAt).localeCompare(String(b.sentAt)); });
+                return out;
+            } catch (e) {
+                console.warn('Gift inbox read failed:', e && e.message);
+                return [];
+            }
+        }
+
+        // §4 — a gifted shield resolves immediately into the pool, exactly as a
+        // self-purchased one does. Nothing distinguishes it once it is there.
+        //
+        // The gift is marked consumed BEFORE the pool is credited. That order
+        // makes a mid-flight failure lose a shield rather than mint one: the
+        // pool lives in userData, which the next save carries anyway, while a
+        // gift left pending would be redeemed again on the next login.
+        async function giftResolveShield(gift) {
+            var me = giftUid();
+            var g  = gritState();
+            if (!me || !g) return false;
+            var at = new Date().toISOString();
+            try {
+                await updateDoc(doc(db, 'users', me, 'gifts', gift.id), {
+                    status: 'consumed', consumedAt: at
+                });
+            } catch (e) {
+                console.warn('Could not claim gifted shield:', e && e.message);
+                return false;
+            }
+            gift.consumedAt = at;
+            g.shieldPool = (g.shieldPool || 0) + 1;
+            gritLedgerWrite(0, g.balance, 'gift_received', {
+                item: 'shield', giftId: gift.id,
+                senderUid: gift.senderUid, senderName: gift.senderName
+            });
+            await gritPersist();
+            gritFlushLedger();
+            gritRefreshUI();
+            showToast('🛡 ' + (gift.senderName || 'A friend') + ' sent you a shield.', 'green');
+            giftSyncMirror(gift, { thanked: false, thankedAt: null });
+            return true;
+        }
+
+        // Reports the oldest pending xp_boost gift for this completion, or
+        // null. Pure: it never mutates the queue, so the two calls a single
+        // completion makes (preview, then award) always agree.
+        function giftPeekFor(activity) {
+            if (!_giftQueue.length) return null;
+            if (!activity || typeof gritIsCountable !== 'function') return null;
+            // Doubling a perform-mode negative would double a penalty.
+            if (!gritIsCountable(activity)) return null;
+            return _giftQueue[0];
+        }
+        window.giftPeekFor = giftPeekFor;
+
+        // §5.1 — take exactly one gift, stamp it, and queue the reveal. The XP
+        // has already been awarded by the caller; nothing here can change it.
+        function giftOnCompletion(gift, activity, baseXP, awardedXP) {
+            if (!gift || _giftQueue[0] !== gift) return;
+            _giftQueue.shift();                       // gifts queue, never stack
+
+            var me = giftUid();
+            var at = new Date().toISOString();
+            var patch = {
+                status:                'consumed',
+                consumedAt:            at,
+                consumedActivityId:    activity.id || null,
+                consumedActivityTitle: activity.name || null,
+                baseXP:                baseXP,
+                awardedXP:             awardedXP
+            };
+            Object.assign(gift, patch);
+
+            if (me) {
+                updateDoc(doc(db, 'users', me, 'gifts', gift.id), patch)
+                    .catch(function (e) { console.warn('Gift consume write failed:', e && e.message); });
+            }
+            giftQueueReveal(gift);
+        }
+        window.giftOnCompletion = giftOnCompletion;
+
+        // ══════════════════════════════════════════════════════════════════
+        //  THE REVEAL (§5.2) AND THANKS (§5.3)
+        // ══════════════════════════════════════════════════════════════════
+
+        // If the same completion also levelled the user up, the level-up shows
+        // first and the gift waits for it (§5.2). Polls rather than hooking the
+        // level-up card's teardown, so no level-up path can forget to call us.
+        function giftQueueReveal(gift, waited) {
+            waited = waited || 0;
+            var levelUpOpen = !!document.getElementById('levelUpToast');
+            var rewardEl    = document.getElementById('rewardUnlockOverlay');
+            var rewardOpen  = !!(rewardEl && rewardEl.style.display !== 'none' &&
+                                 rewardEl.offsetParent !== null);
+            if ((levelUpOpen || rewardOpen) && waited < 24000) {
+                setTimeout(function () { giftQueueReveal(gift, waited + 400); }, 400);
+                return;
+            }
+            giftShowReveal(gift);
+        }
+
+        function giftShowReveal(gift) {
+            var existing = document.getElementById('giftRevealOverlay');
+            if (existing) existing.remove();
+
+            var overlay = document.createElement('div');
+            overlay.id = 'giftRevealOverlay';
+            overlay.className = 'level-up-overlay gift-reveal-overlay';
+            overlay.setAttribute('role', 'dialog');
+            overlay.setAttribute('aria-modal', 'true');
+
+            var card = document.createElement('div');
+            card.className = 'level-up-card gift-reveal-card';
+            card.innerHTML =
+                '<button type="button" class="level-up-close" aria-label="Dismiss" id="giftRevealClose">' +
+                  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+                  'stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">' +
+                  '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+                '</button>' +
+                '<div class="level-up-eyebrow">A GIFT</div>' +
+                '<div class="level-up-emoji">⚡</div>' +
+                '<div class="gift-reveal-head">' + giftEsc(gift.senderName || 'A friend') +
+                  ' sent you double XP</div>' +
+                '<div class="gift-reveal-act">on ' +
+                  giftEsc(gift.consumedActivityTitle || 'that completion') + '</div>' +
+                '<div class="gift-reveal-xp">' +
+                  '<span class="gift-reveal-base">' + (gift.baseXP || 0) + ' XP</span>' +
+                  '<span class="gift-reveal-awarded">' + (gift.awardedXP || 0) + ' XP</span>' +
+                '</div>' +
+                '<div class="gift-reveal-actions">' +
+                  '<button type="button" class="gift-thank-btn" id="giftThankBtn">Say thanks</button>' +
+                  '<button type="button" class="gift-back-btn" id="giftBackBtn">Send one back</button>' +
+                '</div>';
+
+            overlay.appendChild(card);
+            document.body.appendChild(overlay);
+
+            // Dismissal is what settles the mirror — see giftSyncMirror. Every
+            // exit path routes through here so the sender is told exactly once.
+            var settled = false;
+            function close(thanked) {
+                if (settled) return;
+                settled = true;
+                giftSyncMirror(gift, thanked
+                    ? { thanked: true, thankedAt: new Date().toISOString() }
+                    : { thanked: false, thankedAt: null });
+                overlay.classList.add('level-up-leaving');
+                setTimeout(function () { overlay.remove(); }, 280);
+            }
+
+            document.getElementById('giftRevealClose').onclick = function () { close(false); };
+            overlay.onclick = function (e) { if (e.target === overlay) close(false); };
+
+            var thankBtn = document.getElementById('giftThankBtn');
+            thankBtn.onclick = function () {
+                // §5.3 — fixed shape, no text field, ever. The button disables
+                // after the tap and does not come back.
+                thankBtn.disabled = true;
+                thankBtn.textContent = 'Thanks sent';
+                thankBtn.classList.add('is-sent');
+                close(true);
+            };
+            document.getElementById('giftBackBtn').onclick = function () {
+                close(false);
+                setTimeout(function () { giftOpenPicker(gift.senderUid); }, 200);
+            };
+        }
+
+        // Writes the four fields the receiver is allowed to touch on the
+        // sender's mirror, and marks our own copy synced so a session that
+        // died before this point catches up on the next login. This single
+        // write is what fires the sender's notification (§6), which is why
+        // `thanked` is settled before it goes out — one write, one
+        // notification, correct copy.
+        async function giftSyncMirror(gift, thanks) {
+            var me = giftUid();
+            if (!me || !gift || !gift.senderUid) return;
+            var patch = {
+                status:     'consumed',
+                consumedAt: gift.consumedAt || new Date().toISOString(),
+                thanked:    !!thanks.thanked,
+                thankedAt:  thanks.thankedAt || null
+            };
+            Object.assign(gift, { thanked: patch.thanked, thankedAt: patch.thankedAt });
+
+            // Two writes, not one batch, and in this order on purpose. What the
+            // user did is recorded on their OWN copy whatever happens to the
+            // sender's tree — a mirror that has gone away (a deleted account, a
+            // refused write) must not swallow the thanks as well. Only once the
+            // mirror actually lands is the gift marked synced, so the login
+            // catch-up knows what is still owed.
+            try {
+                await updateDoc(doc(db, 'users', me, 'gifts', gift.id), {
+                    status: 'consumed', consumedAt: patch.consumedAt,
+                    thanked: patch.thanked, thankedAt: patch.thankedAt
+                });
+            } catch (e) {
+                console.warn('Gift thanks write failed:', e && e.message);
+            }
+            try {
+                await updateDoc(doc(db, 'users', gift.senderUid, 'giftsSent', gift.id), patch);
+                await updateDoc(doc(db, 'users', me, 'gifts', gift.id), { mirrorSynced: true });
+            } catch (e) {
+                console.warn('Gift mirror sync failed (will retry next login):', e && e.message);
+            }
+        }
+
+        // Catch-up for a session that consumed a gift and then closed before
+        // the reveal was dismissed. Without it the sender is never told.
+        async function giftSyncOrphanedMirrors() {
+            var me = giftUid();
+            if (!me || !canPersistUserData('giftMirrorCatchup')) return;
+            try {
+                var snap = await getDocs(query(
+                    collection(db, 'users', me, 'gifts'), where('status', '==', 'consumed')));
+                var pending = [];
+                snap.forEach(function (d) {
+                    var v = d.data();
+                    if (!v.mirrorSynced && v.type === 'xp_boost') pending.push(v);
+                });
+                for (var i = 0; i < pending.length; i++) {
+                    await giftSyncMirror(pending[i], {
+                        thanked: !!pending[i].thanked, thankedAt: pending[i].thankedAt || null
+                    });
+                }
+            } catch (e) {
+                console.warn('Gift mirror catch-up failed:', e && e.message);
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  THE SENDER'S OWN SENT LIST (§6)
+        // ══════════════════════════════════════════════════════════════════
+        // The only place a pending gift is ever visible, and only to the person
+        // who sent it. Receivers see nothing here.
+
+        async function giftFetchSent(max) {
+            var me = giftUid();
+            if (!me || !canPersistUserData('giftSentRead')) return [];
+            try {
+                var snap = await getDocs(query(
+                    collection(db, 'users', me, 'giftsSent'),
+                    orderBy('sentAt', 'desc'), limit(max || 15)));
+                var out = [];
+                snap.forEach(function (d) { out.push(d.data()); });
+                return out;
+            } catch (e) {
+                console.warn('Sent-gift read failed:', e && e.message);
+                return [];
+            }
+        }
+
+        async function giftRenderSentList() {
+            var host = document.getElementById('friendsGiftsSent');
+            if (!host) return;
+            var list = await giftFetchSent(15);
+            _giftSentCache = list;
+            if (!list.length) { host.innerHTML = ''; return; }
+            host.innerHTML =
+                '<div class="fr-section-kicker">Gifts sent</div>' +
+                list.map(function (gf) {
+                    var what = gf.type === 'shield' ? '🛡 Shield' : '⚡ Double XP';
+                    var state = gf.status === 'consumed'
+                        ? (gf.type === 'shield' ? 'Received' :
+                            (gf.thanked ? 'Used — they said thanks' : 'Used'))
+                        : (gf.type === 'shield' ? 'On its way' : 'Waiting to land');
+                    return '<div class="gift-sent-row">' +
+                             '<span class="gift-sent-what">' + what + '</span>' +
+                             '<span class="gift-sent-to">' + giftEsc(gf.receiverName || 'A friend') + '</span>' +
+                             '<span class="gift-sent-state' +
+                               (gf.status === 'consumed' ? ' is-done' : '') + '">' + state + '</span>' +
+                           '</div>';
+                }).join('');
+        }
+        window.giftRenderSentList = giftRenderSentList;
+
+        // ══════════════════════════════════════════════════════════════════
+        //  LOGIN PASS
+        // ══════════════════════════════════════════════════════════════════
+
+        async function giftRunInbox() {
+            var pending = await giftFetchPending();
+            var shields = pending.filter(function (gf) { return gf.type === 'shield'; });
+            // §5.1 — oldest first, and only xp_boost gifts queue. The queue is
+            // never rendered anywhere: no badge, no count, no hint (§3.4).
+            _giftQueue = pending.filter(function (gf) { return gf.type === 'xp_boost'; });
+            for (var i = 0; i < shields.length; i++) {
+                await giftResolveShield(shields[i]);
+            }
+        }
+
+        function giftOnLogin() {
+            _giftQueue = [];
+            _giftInflight = {};
+            _giftInboxAt = Date.now();
+            if (!giftUid()) return;
+            giftRunInbox()
+                .then(giftSyncOrphanedMirrors)
+                .catch(function (e) { console.warn('Gift login pass failed:', e && e.message); });
+        }
+        window.giftOnLogin = giftOnLogin;
+
+        // Foregrounding re-drains the inbox so a shield gifted while the app
+        // was backgrounded lands without waiting for a fresh login. Throttled:
+        // this is a Firestore read on every tab switch otherwise.
+        const GIFT_INBOX_TTL_MS = 2 * 60 * 1000;
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState !== 'visible') return;
+            if (!giftUid()) return;
+            if (Date.now() - _giftInboxAt < GIFT_INBOX_TTL_MS) return;
+            _giftInboxAt = Date.now();
+            giftRunInbox().catch(function () {});
+        });
+
+        // ════════════════════════════════════════════════════════════════════
+        // ══ END SOCIAL GIFTING ══════════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════════
+
+        // ════════════════════════════════════════════════════════════════════
+        // ══ LEADERBOARD PAYOUTS ═════════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════════
+        //
+        // Leaderboards pay Grit weekly. No entry fee — charging admission
+        // excludes exactly the people a leaderboard exists to re-engage.
+        //
+        // Every user curates their own board, so board size is under the
+        // user's control and a naive "payout scales with size" rule is
+        // trivially farmed. Two rules close that, and both are required:
+        //
+        //   ACTIVE   — a member counts only if they logged a completion during
+        //              the scored week. Twenty dormant friends inflate nothing.
+        //   MUTUAL   — a member counts only if you are on THEIR board too.
+        //              One-sided stacking pays nothing.
+        //
+        // `scoredSize` is the count of members who are both, including the user
+        // themselves. Every payout keys off it, never off raw membership
+        // (invariant 12).
+        //
+        // Mutuality needs one user to be able to see another's board. That is
+        // what `leaderboardBoards/{uid}` is for, and its read rule is the
+        // mutuality test itself: you may read someone's board document only if
+        // you appear on it. A denied read IS the "not mutual" answer, and
+        // nothing about anyone's social graph leaks beyond that.
+        //
+        //   leaderboardBoards/{uid} = {
+        //     uid, optIn, optInFrom,        // §8.7 — opt-in, effective Monday
+        //     members: [uid],               // the live board
+        //     scored:  [uid], scoredFrom,   // frozen at this week's Monday
+        //     week: { anchor, xp, completions },   // the open week
+        //     prev: { anchor, xp, completions },   // the last closed week
+        //     displayName, photoURL, level, updatedAt }
+        //
+        // `prev` is what makes the payout race-free: a friend who opens the app
+        // on Monday morning rolls their own week over, and the closed week's
+        // figures have to survive that or nobody could ever score them.
+        // ════════════════════════════════════════════════════════════════════
+
+        const LB_PAY_MULT       = [3, 2, 1];   // §8.3 — 1st / 2nd / 3rd × scoredSize
+        const LB_MIN_SIZE       = 3;           // §8.3 — below this, nothing pays
+        const LB_THIRD_MIN_SIZE = 8;           // §8.3 — third of five is not an achievement
+        const LB_PUBLISH_MS     = 5 * 60 * 1000;
+
+        let _lbPublishedAt = 0;
+        let _lbSettling    = false;
+
+        function lbUid() { return (window.currentUser && window.currentUser.uid) || null; }
+
+        function lbState() {
+            if (!window.userData) return null;
+            var lb = window.userData.leaderboard;
+            if (!lb || typeof lb !== 'object') {
+                lb = window.userData.leaderboard = { optIn: false, optInFrom: null, lastWeek: null, pub: null };
+            }
+            if (typeof lb.optIn !== 'boolean') lb.optIn = false;
+            return lb;
+        }
+
+        function lbShiftAnchor(anchorStr, days) {
+            var d = new Date(anchorStr + 'T00:00:00');
+            d.setDate(d.getDate() + days);
+            return toLocalDateStr(d);
+        }
+
+        // The Monday that opens the week AFTER this one. §8.7 — opting in
+        // mid-week takes effect here, so nobody joins after seeing they'd win.
+        function lbNextAnchorStr() {
+            return lbShiftAnchor(getLeaderboardWeekStartStr(), 7);
+        }
+
+        // The most recent CLOSED week. §8.5 — only ever this one is paid, the
+        // same rule the weekly completion bonus follows.
+        function lbClosedAnchorStr() {
+            return lbShiftAnchor(getLeaderboardWeekStartStr(), -7);
+        }
+
+        function lbOrdinal(n) {
+            return n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3rd' : n + 'th';
+        }
+        function gritOrdinal(n) { return lbOrdinal(n); }
+        window.gritOrdinal = gritOrdinal;
+
+        // The live board: every friend not explicitly taken off it.
+        function lbBoardMembers() {
+            var hidden = window.userData.leaderboardHidden || [];
+            return (window.userData.friends || []).filter(function (u) { return hidden.indexOf(u) === -1; });
+        }
+        window.lbBoardMembers = lbBoardMembers;
+
+        // Exact figures for any week, straight from this user's own history.
+        // Only other people's numbers need the published snapshot.
+        function lbMyWeek(anchor) {
+            var end = lbShiftAnchor(anchor, 7);
+            var xp = 0, n = 0;
+            (window.userData.dimensions || []).forEach(function (dim) {
+                (dim.paths || []).forEach(function (path) {
+                    (path.activities || []).forEach(function (act) {
+                        (act.completionHistory || []).forEach(function (e) {
+                            if (e.isPenalty || !e.date) return;
+                            var d = toLocalDateStr(new Date(e.date));
+                            if (d >= anchor && d < end) { xp += (e.xp || 0); n++; }
+                        });
+                    });
+                });
+            });
+            return { anchor: anchor, xp: xp, completions: n };
+        }
+
+        // ── Publishing (§8.1, §8.7) ───────────────────────────────────────
+        // Written only while opted in. A user who has not opted in publishes
+        // nothing, appears in nobody's scoredSize and cannot place — their
+        // ranking display is untouched, they are simply outside the payouts.
+        async function lbPublishBoard(force) {
+            var me = lbUid();
+            var st = lbState();
+            if (!me || !st || !canPersistUserData('lbPublish')) return;
+            if (!st.optIn) return;
+            var now = Date.now();
+            if (!force && now - _lbPublishedAt < LB_PUBLISH_MS) return;
+
+            var anchor  = getLeaderboardWeekStartStr();
+            var members = lbBoardMembers();
+            var pub     = st.pub && typeof st.pub === 'object' ? st.pub : {};
+
+            // Roll the open week into `prev` the first time we touch a new one,
+            // so last week's figures survive for anyone still scoring them.
+            if (pub.week && pub.week.anchor && pub.week.anchor !== anchor) pub.prev = pub.week;
+            pub.week = lbMyWeek(anchor);
+
+            // §8.1 / open question 7 — the SCORED roster is frozen at the
+            // week's Monday. Adding or removing someone mid-week changes the
+            // live board immediately but cannot change who is being scored, so
+            // nobody trims their board after seeing who is ahead.
+            if (pub.scoredFrom !== anchor) {
+                // The roster that was frozen for the week just closed has to
+                // survive this roll — it is what settlement scores against,
+                // and what everyone else's settlement tests mutuality against.
+                if (pub.scored) { pub.prevScored = pub.scored; pub.prevScoredFrom = pub.scoredFrom || null; }
+                pub.scored = members.slice();
+                pub.scoredFrom = anchor;
+            }
+
+            st.pub = pub;
+            var profile = (window.userData.profile) || {};
+            var payload = {
+                uid:         me,
+                optIn:       true,
+                optInFrom:   st.optInFrom || null,
+                members:     members,
+                scored:      pub.scored || [],
+                scoredFrom:  pub.scoredFrom || anchor,
+                prevScored:  pub.prevScored || [],
+                prevScoredFrom: pub.prevScoredFrom || null,
+                week:        pub.week,
+                prev:        pub.prev || null,
+                displayName: profile.username || (window.currentUser && window.currentUser.displayName) || 'Adventurer',
+                photoURL:    (window.currentUser && window.currentUser.photoURL) || null,
+                level:       window.userData.level || 1,
+                updatedAt:   new Date().toISOString()
+            };
+            try {
+                await setDoc(doc(db, 'leaderboardBoards', me), payload);
+                _lbPublishedAt = now;
+            } catch (e) {
+                console.warn('Leaderboard board publish failed:', e && e.message);
+            }
+        }
+        window.lbPublishBoard = lbPublishBoard;
+
+        // A denied read is not an error here — it is the answer "you are not on
+        // their board", which is exactly what mutuality asks.
+        async function lbReadBoard(uid) {
+            try {
+                var snap = await getDoc(doc(db, 'leaderboardBoards', uid));
+                return snap.exists() ? snap.data() : null;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        // The board roster as it stood at the START of `anchor`. Works on
+        // either shape — this user's own `pub` or a published board document —
+        // because they carry the same three fields. Falls back to the live
+        // members list only when neither snapshot covers the week asked for.
+        function lbRosterFor(board, anchor) {
+            if (!board) return [];
+            if (board.prevScoredFrom === anchor && board.prevScored) return board.prevScored.slice();
+            if (board.scoredFrom === anchor && board.scored) return board.scored.slice();
+            return (board.members || board.scored || []).slice();
+        }
+
+        // ── Payout arithmetic (§8.3) ──────────────────────────────────────
+        function lbPayForPosition(pos, scoredSize) {
+            if (scoredSize < LB_MIN_SIZE) return 0;
+            if (pos === 3 && scoredSize < LB_THIRD_MIN_SIZE) return 0;
+            var mult = LB_PAY_MULT[pos - 1];
+            return mult ? mult * scoredSize : 0;
+        }
+
+        // Rows in, ranked rows out. Ties split the combined payout of the
+        // positions they occupy, rounded down, remainder discarded (§8.2).
+        function lbRank(rows, scoredSize) {
+            var sorted = rows.slice().sort(function (a, b) { return b.xp - a.xp; });
+            var out = [], i = 0;
+            while (i < sorted.length) {
+                var j = i;
+                while (j + 1 < sorted.length && sorted[j + 1].xp === sorted[i].xp) j++;
+                var tiedCount = j - i + 1;
+                var pot = 0;
+                for (var p = i + 1; p <= j + 1; p++) pot += lbPayForPosition(p, scoredSize);
+                var each = Math.floor(pot / tiedCount);
+                for (var k = i; k <= j; k++) {
+                    out.push(Object.assign({}, sorted[k], { place: i + 1, grit: each }));
+                }
+                i = j + 1;
+            }
+            return out;
+        }
+        window.lbRank = lbRank;
+
+        // ── Settlement (§8.5) ─────────────────────────────────────────────
+        // Runs on the same Monday rollover that reconciles the weekly
+        // completion bonus. Ranking happens on the client, so the idempotency
+        // marker is the ONLY thing standing between one payout and one payout
+        // per device. It is load-bearing: set it before the award, always.
+        async function lbSettleClosedWeek() {
+            var g  = gritState();
+            var st = lbState();
+            var me = lbUid();
+            if (!g || !st || !me || _lbSettling) return;
+            if (!canPersistUserData('lbSettle')) return;
+
+            var closed = lbClosedAnchorStr();
+            var marker = 'leaderboard:' + closed;
+            if (g.awarded[marker]) return;
+
+            // Not opted in for that week — nothing to settle, and nothing to
+            // mark: eligibility for a week already closed can never change.
+            if (!st.optIn || !st.optInFrom || st.optInFrom > closed) return;
+
+            _lbSettling = true;
+            try {
+                var mine   = lbMyWeek(closed);
+                var roster = lbRosterFor(st.pub, closed);
+                var rows   = [];
+
+                for (var i = 0; i < roster.length; i++) {
+                    var b = await lbReadBoard(roster[i]);
+                    if (!b) continue;                                        // not mutual, or not opted in
+                    if (b.optIn !== true) continue;
+                    if (!b.optInFrom || b.optInFrom > closed) continue;      // outside the payout system
+                    if (lbRosterFor(b, closed).indexOf(me) === -1) continue; // one-sided — pays nothing
+                    var w = (b.prev && b.prev.anchor === closed) ? b.prev
+                          : (b.week && b.week.anchor === closed) ? b.week : null;
+                    if (!w || !(w.completions > 0)) continue;                // dormant — inflates nothing
+                    rows.push({ uid: roster[i], name: b.displayName || 'Adventurer', xp: w.xp || 0 });
+                }
+                if (mine.completions > 0) {
+                    rows.push({ uid: me, name: giftMyName(), xp: mine.xp, isMe: true });
+                }
+
+                var scoredSize = rows.length;
+                var ranked     = lbRank(rows, scoredSize);
+                var mineRow    = ranked.filter(function (r) { return r.uid === me; })[0] || null;
+                var grit       = mineRow ? mineRow.grit : 0;
+
+                g.awarded[marker] = true;
+                st.lastWeek = {
+                    anchor: closed, scoredSize: scoredSize,
+                    place: mineRow ? mineRow.place : null, grit: grit,
+                    rows: ranked.slice(0, 10).map(function (r) {
+                        return { uid: r.uid, name: r.name, xp: r.xp, place: r.place, grit: r.grit };
+                    })
+                };
+
+                if (grit > 0) {
+                    gritApplyDelta(grit, 'leaderboard_payout', {
+                        anchor: closed, place: mineRow.place, scoredSize: scoredSize
+                    });
+                    gritFlushLedger();
+                }
+                await saveUserData();
+                gritRefreshUI();
+
+                if (grit > 0) {
+                    showToast(lbOrdinal(mineRow.place) + ' place this week — ' + grit + ' Grit',
+                              'green', function () { lbShowStandings(); });
+                }
+            } catch (e) {
+                console.warn('Leaderboard settlement failed:', e && e.message);
+            } finally {
+                _lbSettling = false;
+            }
+        }
+
+        // ── Final standings (§8.6) ────────────────────────────────────────
+        window.lbShowStandings = function () {
+            var st = lbState();
+            var lw = st && st.lastWeek;
+            if (!lw) return;
+            var body = !lw.rows.length
+                ? '<p class="gift-note">Nobody on your board logged anything that week.</p>'
+                : lw.rows.map(function (r) {
+                    return '<div class="lb-standing-row' + (r.uid === lbUid() ? ' is-me' : '') + '">' +
+                             '<span class="lb-standing-place">' + lbOrdinal(r.place) + '</span>' +
+                             '<span class="lb-standing-name">' + giftEsc(r.name) + '</span>' +
+                             '<span class="lb-standing-xp">' + (r.xp || 0).toLocaleString() + ' XP</span>' +
+                             '<span class="lb-standing-grit">' + (r.grit ? '+' + r.grit : '—') + '</span>' +
+                           '</div>';
+                  }).join('');
+            giftSheet(giftHeader('Week of ' + lw.anchor, 'Final standings') +
+                '<div class="modal-body pl-modal-body">' +
+                  '<p class="gift-note">' + lw.scoredSize + ' scored ' +
+                    (lw.scoredSize === 1 ? 'member' : 'members') +
+                    ' — mutual and active. Payouts key off that number, not board size.</p>' +
+                  body +
+                '</div>');
+        };
+
+        // ── Opt-in (§8.7) ─────────────────────────────────────────────────
+        window.lbToggleOptIn = async function () {
+            var st = lbState();
+            if (!st) return;
+            if (st.optIn) {
+                st.optIn = false;
+                st.optInFrom = null;
+                showToast('You are out of leaderboard payouts.', 'olive');
+                try { await deleteDoc(doc(db, 'leaderboardBoards', lbUid())); } catch (e) {}
+            } else {
+                st.optIn = true;
+                // Effective from the FOLLOWING Monday — a user cannot join
+                // after seeing they would have won this week.
+                st.optInFrom = lbNextAnchorStr();
+                showToast('You are in — payouts start Monday ' + st.optInFrom + '.', 'green');
+            }
+            await saveUserData();
+            await lbPublishBoard(true);
+            renderFriendsTab();
+        };
+
+        // ── The Leaderboards tab panel (§8.6, §8.7) ───────────────────────
+        // No projected payout mid-week: scoredSize moves as members become
+        // active, and a number that drops on Sunday reads as the app taking
+        // something away.
+        function lbRenderPayoutSection(entries) {
+            var host = document.getElementById('lbPayoutSection');
+            if (!host) return;
+            var st = lbState();
+            if (!st) { host.innerHTML = ''; return; }
+
+            var anchor  = getLeaderboardWeekStartStr();
+            var pending = st.optIn && st.optInFrom && st.optInFrom > anchor;
+            var html = '';
+
+            // §8.6 — say plainly that the standings above are not settled. No
+            // projected payout: scoredSize moves as members become active, and
+            // a number that drops on Sunday reads as the app taking something
+            // away.
+            if (st.optIn && !pending) {
+                html += '<p class="lb-provisional">Standings for the week of ' + giftEsc(anchor) +
+                        ' are provisional until Monday.</p>';
+            }
+
+            if (st.lastWeek) {
+                var lw = st.lastWeek;
+                var line = lw.place
+                    ? lbOrdinal(lw.place) + ' place · ' + (lw.grit ? '+' + lw.grit + ' Grit' : 'no payout')
+                    : 'You were not scored';
+                html += '<button type="button" class="lb-last-card" onclick="lbShowStandings()">' +
+                          '<span class="lb-last-kicker">Week of ' + giftEsc(lw.anchor) + '</span>' +
+                          '<span class="lb-last-line">' + giftEsc(line) + '</span>' +
+                          '<span class="lb-last-sub">' + lw.scoredSize + ' scored ' +
+                            (lw.scoredSize === 1 ? 'member' : 'members') + ' — tap for the standings</span>' +
+                        '</button>';
+            }
+
+            html += '<div class="lb-optin-card">' +
+                      '<div class="lb-optin-main">' +
+                        '<div class="lb-optin-title">Weekly payouts</div>' +
+                        '<div class="lb-optin-sub">' +
+                          (st.optIn
+                            ? (pending
+                                ? 'You are in from Monday ' + giftEsc(st.optInFrom) + '. Standings during the week are provisional.'
+                                : 'You are in. Top three are paid every Monday, scaled by how many of your board were mutual and active.')
+                            : 'Opt in to be paid for placing. Nobody is enrolled by default, and joining takes effect the following Monday.') +
+                        '</div>' +
+                      '</div>' +
+                      '<button type="button" class="lb-optin-btn' + (st.optIn ? ' is-on' : '') + '" ' +
+                        'onclick="lbToggleOptIn()">' + (st.optIn ? 'Opt out' : 'Opt in') + '</button>' +
+                    '</div>';
+
+            // Board roster — add/remove works here as well as on the Friends
+            // tab (§1.1). Changes take effect for scoring next Monday.
+            var hidden = window.userData.leaderboardHidden || [];
+            var friends = (window.userData.friends || []);
+            if (friends.length) {
+                html += '<div class="fr-section-kicker">Your board</div>' +
+                        '<div class="lb-roster">' +
+                        friends.map(function (u) {
+                            var e = (entries || []).filter(function (x) { return x.uid === u; })[0] || {};
+                            var on = hidden.indexOf(u) === -1;
+                            return '<button type="button" class="lb-roster-row' + (on ? ' is-on' : '') + '" ' +
+                                     'onclick="toggleLeaderboardVisibility(\'' + giftEsc(u) + '\')">' +
+                                     '<span class="lb-roster-name">' + giftEsc(e.displayName || 'Adventurer') + '</span>' +
+                                     '<span class="lb-roster-state">' + (on ? 'On board' : 'Off board') + '</span>' +
+                                   '</button>';
+                        }).join('') +
+                        '</div>' +
+                        '<p class="gift-note">Adding or removing someone takes effect for scoring next Monday. ' +
+                          'Only friends who also have you on their board, and who logged something that week, ' +
+                          'count toward a payout.</p>';
+            }
+
+            host.innerHTML = html;
+        }
+        window.lbRenderPayoutSection = lbRenderPayoutSection;
+
+        function lbOnLogin() {
+            if (!lbUid()) return;
+            lbPublishBoard(true)
+                .then(lbSettleClosedWeek)
+                .catch(function (e) { console.warn('Leaderboard login pass failed:', e && e.message); });
+        }
+        window.lbOnLogin = lbOnLogin;
+
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState !== 'visible') return;
+            if (!lbUid()) return;
+            lbPublishBoard(false).then(lbSettleClosedWeek).catch(function () {});
+        });
+
+        // ════════════════════════════════════════════════════════════════════
+        // ══ END LEADERBOARD PAYOUTS ═════════════════════════════════════════
         // ════════════════════════════════════════════════════════════════════

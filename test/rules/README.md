@@ -28,3 +28,11 @@ heavy branch is ever evaluated.
 If you add a clause, re-run this suite and check the output for
 `maximum of 1000 expressions` — any occurrence means the budget is blown again,
 even if every assertion still passes.
+
+## A note on `firebase.json`
+
+The emulator config here deliberately declares no `firestore.rules` path.
+Newer `firebase-tools` refuses a rules file outside the project directory, and
+the canonical rules live at the repo root. It makes no difference to what is
+tested: `initializeTestEnvironment` reads `../../firestore.rules` itself and
+installs it in the emulator, so every assertion runs against the real file.
