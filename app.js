@@ -1,6 +1,6 @@
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
         import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js';
-        import { getFirestore, doc, getDoc, getDocFromCache, setDoc, addDoc, updateDoc, deleteDoc, collection, query, where, getDocs, onSnapshot, writeBatch, orderBy, limit, documentId } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
+        import { getFirestore, doc, getDoc, getDocFromCache, setDoc, addDoc, updateDoc, deleteDoc, collection, query, where, getDocs, onSnapshot, writeBatch, orderBy, limit } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
         import { getAnalytics, logEvent } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-analytics.js';
         import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-functions.js';
 
@@ -19232,8 +19232,9 @@
 
         // ── Ledger (users/{uid}/gritLedger) ───────────────────────────────
         // Append-only. Never mutated, never deleted. Entry ids are
-        // timestamp-prefixed so `orderBy(documentId(), 'desc')` pages newest
-        // first with no composite index.
+        // timestamp-prefixed so the raw collection reads chronologically and
+        // ids never collide; the Rewards tab pages newest-first by ordering
+        // on the `at` field (see gritReadLedger for why not by id).
         let _gritLedgerBuffer = [];
         let _gritLedgerTimer  = null;
         let _gritLedgerSeq    = 0;
@@ -19294,7 +19295,14 @@
             if (!canPersistUserData('gritLedgerRead')) return [];
             try {
                 var col = collection(db, 'users', window.currentUser.uid, 'gritLedger');
-                var snap = await getDocs(query(col, orderBy(documentId(), 'desc'), limit(max || 20)));
+                // Ordered by the `at` field, NOT by document id: Firestore
+                // refuses a descending key scan outright
+                // (failed-precondition), so orderBy(documentId(), 'desc')
+                // throws on every call. `at` is an ISO-8601 UTC string, so
+                // lexicographic order is chronological order, and a single
+                // field plus a limit is served by the automatic single-field
+                // index — still no composite index to configure.
+                var snap = await getDocs(query(col, orderBy('at', 'desc'), limit(max || 20)));
                 var out = [];
                 snap.forEach(function (d) { out.push(d.data()); });
                 return out;
