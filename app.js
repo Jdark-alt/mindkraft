@@ -19167,6 +19167,33 @@
             }
         }, 0);
 
+        // ── The callable ─────────────────────────────────────────────────────
+        // The region is passed explicitly where `functions` is created
+        // (asia-south1, matching the Firestore database). Leave it out and the
+        // SDK calls us-central1, finds nothing, and returns an error that
+        // looks like CORS but is not.
+        //
+        // The SDK's own timeout is well under a minute, which would abandon a
+        // legitimate composition, so it is set explicitly. The 30-second guard
+        // below is the one the user actually feels — nobody should be left on
+        // a spinner, and the callable is expected back in 5-15 seconds.
+        var QC_CALL_TIMEOUT_MS = 180000;   // SDK ceiling
+        var QC_USER_TIMEOUT_MS = 30000;    // what the user waits, at most
+
+        async function qcCallCompose(payload) {
+            var call = httpsCallable(functions, 'composeQuest', { timeout: QC_CALL_TIMEOUT_MS });
+            var timer = null;
+            var guard = new Promise(function(_, reject) {
+                timer = setTimeout(function() { reject(new Error('qc_timeout')); }, QC_USER_TIMEOUT_MS);
+            });
+            try {
+                var res = await Promise.race([call(payload), guard]);
+                return (res && res.data) || null;
+            } finally {
+                clearTimeout(timer);
+            }
+        }
+
         // ── Validators ───────────────────────────────────────────────────────
         // KEEP IN SYNC: a byte-identical copy of qcValidateGroup /
         // qcValidateLeaf runs server-side in the composer Cloud Function, so a

@@ -77,8 +77,13 @@ jobs:
           fi
           printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/sa.json"
           export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
+          # Functions are named ONE BY ONE, never a bare `--only functions`.
+          # A bare deploy also DELETES any deployed function missing from the
+          # source, so a bad merge could silently take notifications down.
+          # ADD NEW FUNCTIONS TO THIS LIST — one left out is one never
+          # deployed, and it fails silently.
           npx --yes firebase-tools@13 deploy \
-            --only functions,firestore:indexes \
+            --only functions:sendDueReminders,functions:onGiftReceived,functions:onGiftConsumed,functions:onReminderWrite,functions:createActivityReminder,functions:composeQuest,firestore:indexes \
             --project "$FIREBASE_PROJECT" \
             --non-interactive \
             --force
