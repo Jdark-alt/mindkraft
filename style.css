@@ -13228,6 +13228,7 @@
 .pr-chip-gold { background: #f5c563; color: #23262c; }
 .pr-card-detailline { display: flex; align-items: center; gap: 6px; margin-top: 5px; font-size: 12px; font-weight: 500; color: var(--color-text-secondary); flex-wrap: wrap; }
 .pr-cd-bonus { color: var(--chip-xp-fg); font-weight: 700; }
+.pr-cd-grit { color: var(--color-accent-amber); font-weight: 700; }
 .pr-cd-sep { opacity: 0.4; }
 .pr-card-actions { display: flex; gap: 2px; margin-left: auto; flex-shrink: 0; }
 .pr-icon-btn { width: 30px; height: 30px; border-radius: 8px; background: none; border: none; color: var(--color-text-secondary); opacity: 0.75; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background 0.14s, color 0.14s; flex-shrink: 0; }
@@ -13293,6 +13294,7 @@
 .pr-detail-desc { font-size: 12.5px; font-weight: 500; color: var(--color-text-secondary); line-height: 1.5; margin-top: 8px; }
 .pr-detail-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; margin-top: 9px; font-size: 12px; font-weight: 500; color: var(--color-text-secondary); }
 .pr-detail-meta-g { font-weight: 800; color: var(--chip-xp-fg); }
+.pr-detail-meta-grit { font-weight: 800; color: var(--color-accent-amber); }
 .pr-detail-meta-dot { opacity: 0.4; margin: 0 2px; }
 .pr-sealed-badge { display: inline-flex; align-items: center; gap: 7px; margin-top: 14px; background: rgba(245,197,99,0.13); color: #f5c563; border-radius: 10px; padding: 10px 13px; font-size: 12.5px; font-weight: 700; }
 .pr-sealed-badge svg { width: 15px; height: 15px; }

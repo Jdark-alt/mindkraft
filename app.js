@@ -18019,6 +18019,52 @@
             })({ kind: 'group', repeat: 1, children: p.groups || [] }, 1);
             return Math.round(sum * QUEST_XP_FRACTION);
         }
+        // ── Quest Grit payout (rate card §4 "Quest completion") ───────────
+        // required completions × 3 × breadth factor, clamped to [15, 120].
+        //
+        // The rate card writes the third term as a "duration factor" but never
+        // defines it, and duration is the wrong axis: one activity dragged
+        // across three months must not out-earn ten activities finished in ten
+        // days. Breadth — how many DISTINCT activities the quest is built from
+        // — is what a decomposition is actually worth, and it reads nothing
+        // date-shaped, so a slow quest and a fast one of the same shape pay
+        // identically.
+        //
+        // Task leaves contribute nothing, here and in questPotentialBonus:
+        // they are self-attested checkboxes with no verification, and an AI
+        // composer that can emit twenty of them would be a Grit printing
+        // press. Grit follows XP.
+        //
+        // The clamp mirrors the rate card's mastery row (floor 40, ceiling
+        // 120): a trivial quest is not worth farming, and the largest quest
+        // cannot out-earn a week of real activity work (~117 for a consistent
+        // user, rate card §3).
+        var GRIT_QUEST_PER_COMPLETION = 3;
+        var GRIT_QUEST_FLOOR = 15;
+        var GRIT_QUEST_CAP   = 120;
+        var GRIT_QUEST_BREADTH = [[10, 2], [6, 1.5], [3, 1.25], [0, 1]];  // [minDistinct, factor], descending
+        function questGritBreadth(distinct) {
+            for (var i = 0; i < GRIT_QUEST_BREADTH.length; i++) {
+                if (distinct >= GRIT_QUEST_BREADTH[i][0]) return GRIT_QUEST_BREADTH[i][1];
+            }
+            return 1;
+        }
+        // Mirrors questPotentialBonus's walk exactly, including the actMeta
+        // check — a leaf pointing at a deleted activity pays neither XP nor
+        // Grit, and must not count toward breadth either.
+        function questGritBonus(p) {
+            var completions = 0, ids = {};
+            (function walk(n, mult) {
+                if (n.kind === 'group') { var m2 = mult * (n.repeat || 1); (n.children || []).forEach(function(c) { walk(c, m2); }); return; }
+                if (n.type !== 'activity') return;
+                if (!actMeta(n.linkedActivityId)) return;
+                completions += itemReq(n) * mult;
+                ids[n.linkedActivityId] = true;
+            })({ kind: 'group', repeat: 1, children: p.groups || [] }, 1);
+            if (completions <= 0) return 0;
+            var raw = completions * GRIT_QUEST_PER_COMPLETION * questGritBreadth(Object.keys(ids).length);
+            return Math.min(GRIT_QUEST_CAP, Math.max(GRIT_QUEST_FLOOR, Math.round(raw)));
+        }
         function questDaysActive(p) { var start = new Date(p.lastResetAt || p.createdAt || Date.now()); return Math.max(1, Math.floor((Date.now() - start.getTime()) / 86400000) + 1); }
         function projectCycleReady(p) { var any = false, all = true; allLeaves(p).forEach(function(l) { if (l.resetMode !== 'once') { any = true; if (!leafDone(l)) all = false; } }); return any && all; }
 
@@ -18145,6 +18191,29 @@
             }
             try { if (typeof updateDashboard === 'function') updateDashboard(); } catch (e) {}
         }
+        // ── Quest Grit grant ──────────────────────────────────────────────
+        // Routed through gritAwardOnce, which is the Grit system's own
+        // idempotency primitive (§8.5): the marker is checked and set inside
+        // gritState().awarded, so a double-tap or a second device replaying
+        // the same seal pays once. A recurring quest keys its marker on the
+        // cycle number, so cycle 2 is a genuinely new award and cycle 1 can
+        // never re-pay.
+        //
+        // Grit is one-way here. There is deliberately no refund counterpart to
+        // this function: nothing in the quest lifecycle may reduce a user's
+        // Grit balance.
+        function payQuestGrit(p, amount, cycleNum) {
+            amount = Math.max(0, Math.round(amount || 0));
+            if (amount <= 0) return 0;
+            if (typeof gritAwardOnce !== 'function') return 0;
+            var isRec = p.cadence && p.cadence.type === 'recurring';
+            var marker = 'quest:' + p.id + (isRec ? ':cycle:' + cycleNum : '');
+            var paid = gritAwardOnce(marker, amount, 'quest_completion',
+                { projectId: p.id, projectTitle: p.name || '', cycleNumber: cycleNum },
+                (isRec ? 'Sealed cycle ' + cycleNum + ' — ' : 'Completed ') + (p.name || 'quest'));
+            return paid ? amount : 0;
+        }
+
         // Refund path exists only for one-off "Reopen quest" (undoing a seal
         // that hasn't been followed by any redo work yet) — see reopenProject.
         function refundQuestBonus(p, amount) {
@@ -18263,6 +18332,7 @@
             var counts = questCounts(p);
             var stats = questStats(p);
             var potential = questPotentialBonus(p);
+            var gritPotential = questGritBonus(p);
             var pct = stats.total ? Math.round(stats.done / stats.total * 100) : 0;
             var statusCls = p.status === 'completed' ? ' pr-card-gold' : p.status === 'archived' ? ' pr-card-muted' : p.status === 'paused' ? ' pr-card-paused' : '';
             var unit = counts.tasks === 0 ? 'activities' : (counts.activities === 0 ? 'tasks' : 'items');
@@ -18270,6 +18340,7 @@
 
             var bits = [];
             if (potential > 0) bits.push('<span class="pr-cd-bonus">+' + potential + ' XP</span>');
+            if (gritPotential > 0) bits.push('<span class="pr-cd-grit">+' + gritPotential + ' Grit</span>');
             bits.push('<span>' + escapeHtml(prFreqLabel(p)) + '</span>');
             bits.push('<span>' + groupCount + ' group' + (groupCount === 1 ? '' : 's') + '</span>');
             var detailLine = bits.join('<span class="pr-cd-sep">·</span>');
@@ -18351,6 +18422,7 @@
 
             var stats = questStats(p);
             var potential = questPotentialBonus(p);
+            var gritPotential = questGritBonus(p);
             var flavor = questFlavor(p);
             var pct = stats.total ? Math.round(stats.done / stats.total * 100) : 0;
             var sealed = p.status === 'completed';
@@ -18377,7 +18449,7 @@
                             (flavor ? '<div class="pr-detail-flavor">' + escapeHtml(flavor) + '</div>' : '') +
                             (p.description ? '<div class="pr-detail-desc">' + escapeHtml(p.description) + '</div>' : '') +
                             '<div class="pr-detail-meta">' +
-                                (potential > 0 ? '<span class="pr-detail-meta-g">+' + potential + ' XP</span> bonus <span class="pr-detail-meta-dot">·</span> ' : '') +
+                                (potential > 0 ? '<span class="pr-detail-meta-g">+' + potential + ' XP</span>' + (gritPotential > 0 ? ' <span class="pr-detail-meta-grit">+' + gritPotential + ' Grit</span>' : '') + ' bonus <span class="pr-detail-meta-dot">·</span> ' : '') +
                                 escapeHtml(prFreqLabel(p)) + ' <span class="pr-detail-meta-dot">·</span> ' + groupCount + ' group' + (groupCount === 1 ? '' : 's') +
                             '</div>' +
                         '</div>' +
@@ -18771,16 +18843,27 @@
             var ready = projectCycleReady(p);
             if (!ready) {
                 var isRec = p.cadence && p.cadence.type === 'recurring';
-                if (!confirm(isRec ? 'Some per-cycle items aren’t done yet. Seal this cycle early and start a fresh one? You won’t earn this cycle’s bonus XP.' : 'Some items aren’t done yet. Mark this quest complete anyway? You won’t earn the bonus XP.')) return;
+                if (!confirm(isRec ? 'Some per-cycle items aren’t done yet. Seal this cycle early and start a fresh one? You won’t earn this cycle’s bonus XP or Grit.' : 'Some items aren’t done yet. Mark this quest complete anyway? You won’t earn the bonus XP or Grit.')) return;
             }
+            // Sealing early (the confirm() override above) pays NOTHING — not
+            // XP, not Grit. Both are gated on the same `ready` flag so the two
+            // currencies can never disagree about whether the work was done.
             var bonus = ready ? questPotentialBonus(p) : 0;
+            var grit  = ready ? questGritBonus(p) : 0;
+            var cycleNum = p.currentCycle || 1;
             var stats = questStats(p);
+            // Persistence precedes the grant: the history entry is on the
+            // object before any currency moves, so a failure between the two
+            // leaves a record of an unpaid seal rather than a payment with no
+            // record of what earned it.
             p.cycleHistory = p.cycleHistory || [];
-            p.cycleHistory.push({ cycleNumber: p.currentCycle || 1, startedAt: p.startedCycleAt || p.createdAt, completedAt: new Date().toISOString(), itemsCompleted: stats.done, itemsTotal: stats.total, bonusXp: bonus });
+            p.cycleHistory.push({ cycleNumber: cycleNum, startedAt: p.startedCycleAt || p.createdAt, completedAt: new Date().toISOString(), itemsCompleted: stats.done, itemsTotal: stats.total, bonusXp: bonus, bonusGrit: grit });
             delete _prNextSkip[p.id]; delete _prNextDone[p.id];
             p.lastBonusPaid = bonus;
             payQuestBonus(p, bonus);
+            var gritPaid = payQuestGrit(p, grit, cycleNum);
             var bonusMsg = bonus > 0 ? (' — +' + bonus + ' XP') : '';
+            if (gritPaid > 0) bonusMsg += (bonus > 0 ? ' · +' : ' — +') + gritPaid + ' Grit';
             if (p.cadence && p.cadence.type === 'recurring') {
                 clearRecurringItems(p);
                 p.currentCycle = (p.currentCycle || 1) + 1; p.startedCycleAt = new Date().toISOString();
