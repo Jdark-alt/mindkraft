@@ -7,7 +7,7 @@
 // Bump CACHE_VERSION whenever you deploy a meaningful update.
 // This causes the old cache to be deleted and the new one installed.
 
-const CACHE_VERSION = 'v158';
+const CACHE_VERSION = 'v169';
 const CACHE_NAME = 'mindkraft-shell-' + CACHE_VERSION;
 
 // Files that make up the app shell — must all load for the app to work
@@ -18,7 +18,6 @@ const APP_SHELL = [
     './app.js',
     './manifest.json',
     './icon-192.svg',
-    './icon-512.svg',
     './privacy.html',
     './terms.html'
 ];
@@ -200,12 +199,14 @@ self.addEventListener('push', function(event) {
 });
 
 // Tapping the notification opens / focuses the app, and jumps to the activity
-// when the reminder was for a specific one (spec §6).
+// when the reminder was for a specific one.
 self.addEventListener('notificationclick', function(event) {
     event.notification.close();
 
     var payload = event.notification.data || {};
     var activityId = payload.activityId || null;
+    // Gift pushes carry no activity — they belong on the Friends tab.
+    var gift = payload.type === 'gift';
 
     event.waitUntil(
         clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(list) {
@@ -215,10 +216,11 @@ self.addEventListener('notificationclick', function(event) {
                     // App is already open — tell it where to go, then focus.
                     // postMessage rather than a URL change so we don't reload
                     // and lose in-memory state.
-                    if (activityId && client.postMessage) {
+                    if ((activityId || gift) && client.postMessage) {
                         try {
                             client.postMessage({
-                                type: 'mindkraft-notification-click',
+                                type: gift ? 'mindkraft-gift-click'
+                                           : 'mindkraft-notification-click',
                                 activityId: activityId
                             });
                         } catch (e) { /* focus alone is still useful */ }
@@ -228,6 +230,7 @@ self.addEventListener('notificationclick', function(event) {
             }
             // Cold start — carry the target in the URL for the app to pick up.
             if (clients.openWindow) {
+                if (gift) return clients.openWindow('./?tab=friends');
                 return clients.openWindow(activityId ? './?reminder=' + encodeURIComponent(activityId) : './');
             }
         })

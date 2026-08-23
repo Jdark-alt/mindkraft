@@ -7,6 +7,14 @@
         { "fieldPath": "active", "order": "ASCENDING" },
         { "fieldPath": "nextSendAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "challenges",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "participants", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

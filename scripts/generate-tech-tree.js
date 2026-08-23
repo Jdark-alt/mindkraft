@@ -121,6 +121,27 @@ const LOAD_BUDGET_HEADROOM = 8;          // only nodes AVAILABLE at birth count 
 const MAX_GOALS = 5;
 const MAX_NEW_ACTIVITIES_PER_QUEST = 3;  // hard cap, verbatim from v2
 const MAX_NODES = 40;                    // hard ceiling across the whole web
+
+// ── Tech Tree v5: the reveal loop ────────────────────────────────────────
+// The client owns reveal state, but the worker MINTS nodes, so it has to
+// stamp the birth values or every freshly generated node would arrive
+// without them and be migrated by the client's fallback rule instead.
+//
+// §3.1: a node with no prerequisites is born revealed — that is the anchors
+// (the user's own activities, which they can obviously already read) and the
+// wildcard. Everything the roadmap hangs off an anchor is bought.
+const TT_REVEAL_COST = 40;
+function stampReveal(node) {
+    if (!node) return node;
+    if (typeof node.revealCost !== 'number') node.revealCost = TT_REVEAL_COST;
+    if (typeof node.revealed !== 'boolean') {
+        node.revealed = !(node.prerequisites || []).length
+                     || node.lifecycle === 'active' || !!node.resolvedAt;
+        node.revealedAt = node.revealed ? (node.createdAt || new Date().toISOString()) : null;
+    }
+    if (node.revealedAt === undefined) node.revealedAt = null;
+    return node;
+}
 const REGEN_COOLDOWN_DAYS = 30;          // per-goal regenerate cooldown
 const REVISION_LIMIT = 3;
 const WILDCARD_MAX_XP = 8;               // §8: wildcards ≤8 XP
@@ -1320,8 +1341,11 @@ async function processGenerateFamily(docRef, userData, req, type) {
         // filtered to the surviving goals.
         outGoals = newGoals.concat((techTree.goals || []).filter(g => g.retiredAt));
         const goalIdSet = new Set(outGoals.map(g => g.id));
+        // v5 §6.1 — adopted, mastered AND revealed nodes all survive a
+        // regeneration. The user paid Grit for that information; replacing
+        // the frontier must not take it back. Only silhouettes are discarded.
         const survivors = oldNodes
-            .filter(n => n.resolvedAt || n.lifecycle === 'active')
+            .filter(n => n.resolvedAt || n.lifecycle === 'active' || n.revealed)
             .map(n => Object.assign({}, n, { goalIds: (n.goalIds || []).filter(gid => goalIdSet.has(gid)) }));
         outNodes = mergeNodes(survivors, newNodes);
     } else if (type === 'add_goal') {
@@ -1347,13 +1371,16 @@ async function processGenerateFamily(docRef, userData, req, type) {
         outNodes = mergeNodes(kept, newNodes);
     }
 
+    outNodes.forEach(stampReveal);
+
     if (outNodes.length > MAX_NODES) {
         // Trim the least-committed first: locked suggestions from the back.
         const overflow = outNodes.length - MAX_NODES;
         let dropped = 0;
         for (let i = outNodes.length - 1; i >= 0 && dropped < overflow; i--) {
             const n = outNodes[i];
-            if (!n.resolvedAt && n.lifecycle !== 'active' && n.role !== 'anchor' && n.source !== 'user') {
+            if (!n.resolvedAt && n.lifecycle !== 'active' && n.role !== 'anchor'
+                && n.source !== 'user' && !n.revealed) {
                 outNodes.splice(i, 1); dropped++;
             }
         }
@@ -1548,6 +1575,9 @@ async function processExpand(docRef, userData, req) {
         'techTree.schemaVersion': 3,
     };
     if (added.length) {
+        // The expansion path mints nodes too — stamp them the same way, or a
+        // grown branch would arrive without reveal state.
+        added.forEach(stampReveal);
         update['techTree.nodes'] = nodes.concat(added);
     }
     if (patches.length) {

@@ -1,9 +1,9 @@
 'use strict';
 
 // Tests for reading activities out of the nested user document.
-// This is the highest-risk deviation from the spec: the spec assumed activity
-// documents, but they are actually nested arrays inside users/{uid}, so this
-// traversal is the only thing standing between a reminder and a wrong name.
+// Activities are nested arrays inside users/{uid}, not their own documents,
+// so this traversal is the only thing standing between a reminder and a
+// wrong activity name.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -92,7 +92,7 @@ test('resolveActivityName treats a blank name as missing', () => {
     assert.strictEqual(resolveActivityName(data, '1700000000100'), null);
 });
 
-// ── Notification payloads (spec §6) ───────────────────────────────────────
+// ── Notification payloads ────────────────────────────────────────────────
 
 test('general reminder keeps the existing copy verbatim', () => {
     const payload = buildPayload({ type: 'general' }, null);

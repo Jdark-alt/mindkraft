@@ -17,7 +17,7 @@
 const { initializeApp } = require('firebase-admin/app');
 const { getFirestore, Timestamp, FieldValue } = require('firebase-admin/firestore');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
-const { onDocumentWritten } = require('firebase-functions/v2/firestore');
+const { onDocumentWritten, onDocumentCreated } = require('firebase-functions/v2/firestore');
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const logger = require('firebase-functions/logger');
 
@@ -73,7 +73,7 @@ function nextSendTimestamp(localTime, timezone, fromDate) {
  * Roll a reminder forward to its next occurrence.
  *
  * Called on EVERY path out of the sender — sent, skipped, or failed. This
- * matters: the spec's pseudocode `continue`s past the idempotency guard
+ * matters: continuing past the idempotency guard
  * without touching nextSendAt, which would leave the document permanently
  * matching the due-query and re-read it every single minute forever.
  */
@@ -86,7 +86,7 @@ async function rollForward(ref, reminder, timezone, extra, fromDate) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// sendDueReminders — the scheduled sender (spec §5.3)
+// sendDueReminders — the scheduled sender
 // ══════════════════════════════════════════════════════════════════════════
 
 exports.sendDueReminders = onSchedule(
@@ -110,11 +110,11 @@ exports.sendDueReminders = onSchedule(
 
         const now = Timestamp.now();
         const due = await db
-            .collectionGroup('reminders')
-            .where('active', '==', true)
-            .where('nextSendAt', '<=', now)
-            .limit(MAX_DUE_PER_RUN)
-            .get();
+.collectionGroup('reminders')
+.where('active', '==', true)
+.where('nextSendAt', '<=', now)
+.limit(MAX_DUE_PER_RUN)
+.get();
 
         if (due.empty) return;
 
@@ -186,7 +186,7 @@ async function processUser(uid, snaps, now) {
         const nowDate = now.toDate();
         const todayLocal = getLocalDateString(timezone, nowDate);
 
-        // Idempotency guard (spec §5.3). Roll forward regardless — see rollForward.
+        // Idempotency guard. Roll forward regardless — see rollForward.
         if (reminder.lastSentDate === todayLocal) {
             logger.debug('Already sent today, rolling forward', { uid, reminderId: snap.id });
             await rollForward(snap.ref, reminder, timezone, null, nowDate);
@@ -248,7 +248,105 @@ async function processUser(uid, snaps, now) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// onReminderWrite — keep nextSendAt in sync, and backstop the cap (spec §5.2)
+// GIFT NOTIFICATIONS
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Two pushes, and deliberately only two:
+//
+//   onGiftReceived   a gifted SHIELD lands  → tell the receiver
+//   onGiftConsumed   a gifted XP boost is spent → tell the sender
+//
+// A gifted XP boost produces NOTHING on arrival. No push, no badge, no
+// indication of any kind — the surprise is the entire mechanic, and a
+// notification here would destroy it. That is why onGiftReceived filters on
+// type and does not simply fire for every gift.
+//
+// Every name in these payloads is denormalized on the gift document at write
+// time, so neither function reads another user's profile.
+
+/** Push to one uid, if they have a usable subscription. Never throws. */
+async function pushToUser(uid, payload) {
+    try {
+        const snap = await db.collection('users').doc(uid).get();
+        const subscription = snap.exists ? snap.data().pushSubscription : null;
+        if (!isUsableSubscription(subscription)) {
+            logger.info('No usable push subscription — skipping gift push', { uid });
+            return;
+        }
+        const result = await sendPush(subscription, payload);
+        if (result.ok) return;
+        logger.error('Gift push failed', { uid, statusCode: result.statusCode, message: result.message });
+        if (result.dead) {
+            await db.collection('users').doc(uid).update({ pushSubscription: FieldValue.delete() });
+            logger.info('Cleared dead push subscription', { uid });
+        }
+    } catch (err) {
+        logger.error('Gift push threw', { uid, error: String(err) });
+    }
+}
+
+exports.onGiftReceived = onDocumentCreated(
+    {
+        document: 'users/{receiverUid}/gifts/{giftId}',
+        region: REGION,
+        memory: '256MiB',
+    },
+    async (event) => {
+        const snap = event.data;
+        if (!snap || !snap.exists) return;
+        const gift = snap.data();
+
+        // The silence rule. An xp_boost gift is never announced.
+        if (gift.type !== 'shield') return;
+        if (gift.status !== 'pending') return;
+
+        const sender = gift.senderName || 'A friend';
+        await pushToUser(event.params.receiverUid, {
+            title: 'Mindkraft ⚔️',
+            body: sender + ' sent you a shield.',
+            tag: 'mindkraft-gift-' + String(event.params.giftId),
+            data: { type: 'gift', activityId: null },
+        });
+    }
+);
+
+exports.onGiftConsumed = onDocumentWritten(
+    {
+        document: 'users/{senderUid}/giftsSent/{giftId}',
+        region: REGION,
+        memory: '256MiB',
+    },
+    async (event) => {
+        const beforeSnap = event.data && event.data.before;
+        const afterSnap = event.data && event.data.after;
+        if (!afterSnap || !afterSnap.exists) return;
+        if (!beforeSnap || !beforeSnap.exists) return;   // the create is the sender's own write
+
+        const before = beforeSnap.data();
+        const after = afterSnap.data();
+
+        // Exactly one transition is a notification. The receiver settles
+        // `thanked` in the same write that flips the status, so this fires
+        // once with the right copy rather than twice.
+        if (before.status !== 'pending' || after.status !== 'consumed') return;
+        if (after.type !== 'xp_boost') return;   // shields have no consumption beat
+
+        const name = after.receiverName || 'A friend';
+        const body = after.thanked
+            ? name + ' used the double XP you sent, and said thanks.'
+            : name + ' used the double XP you sent.';
+
+        await pushToUser(event.params.senderUid, {
+            title: 'Mindkraft ⚔️',
+            body,
+            tag: 'mindkraft-gift-used-' + String(event.params.giftId),
+            data: { type: 'gift', activityId: null },
+        });
+    }
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// onReminderWrite — keep nextSendAt in sync, and backstop the cap
 // ══════════════════════════════════════════════════════════════════════════
 
 exports.onReminderWrite = onDocumentWritten(
@@ -291,13 +389,13 @@ exports.onReminderWrite = onDocumentWritten(
 
         // Cap backstop. Rules permit a client to flip `active` directly, so the
         // callable's check alone isn't airtight — an inactive reminder toggled
-        // back on could push the user past 5. Enforce it here too (spec §5.2).
+        // back on could push the user past 5. Enforce it here too.
         const turningOn = after.active && (!before || !before.active);
         if (turningOn && after.type === 'activity') {
             const siblings = await afterSnap.ref.parent
-                .where('type', '==', 'activity')
-                .where('active', '==', true)
-                .get();
+.where('type', '==', 'activity')
+.where('active', '==', true)
+.get();
             const others = siblings.docs.filter((d) => d.id !== afterSnap.id).length;
             if (others >= MAX_ACTIVITY_REMINDERS) {
                 logger.warn('Activity reminder cap exceeded — forcing back to inactive', { uid, reminderId, others });
@@ -328,7 +426,7 @@ exports.onReminderWrite = onDocumentWritten(
 );
 
 // ══════════════════════════════════════════════════════════════════════════
-// createActivityReminder — HTTPS callable (spec §5.4)
+// createActivityReminder — HTTPS callable
 // ══════════════════════════════════════════════════════════════════════════
 //
 // Creation of activity reminders goes through here rather than a direct

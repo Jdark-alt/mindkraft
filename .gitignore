@@ -1,2 +1,10 @@
 scripts/node_modules/
 scripts/package-lock.json
+
+# Firestore rules test deps / emulator artifacts
+test/rules/node_modules/
+test/rules/firestore-debug.log
+test/rules/ui-debug.log
+
+# Rules test lockfile — the suite pins nothing and is installed fresh
+test/rules/package-lock.json

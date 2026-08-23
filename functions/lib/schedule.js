@@ -8,16 +8,16 @@
 // The whole point of precomputing nextSendAt is to avoid doing timezone
 // arithmetic at query time. That only pays off if the arithmetic here is
 // actually correct across DST boundaries — hence Luxon rather than
-// hand-rolled offset maths. See spec §4.4.
+// hand-rolled offset maths.
 
 const { DateTime } = require('luxon');
 
 // Fallback when we have no IANA zone for the user yet. Matches the bulk of
-// the current user base (spec §4.2). Every use of the fallback is logged by
+// the current user base. Every use of the fallback is logged by
 // the caller so the rate can be watched trending to zero as clients backfill.
 const DEFAULT_TIMEZONE = 'Asia/Kolkata';
 
-// Maximum active per-activity reminders per user (spec §1.2).
+// Maximum active per-activity reminders per user.
 const MAX_ACTIVITY_REMINDERS = 5;
 
 const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;

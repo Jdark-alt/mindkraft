@@ -1,6 +1,6 @@
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
         import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js';
-        import { getFirestore, doc, getDoc, getDocFromCache, setDoc, addDoc, updateDoc, deleteDoc, collection, query, where, getDocs, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
+        import { getFirestore, doc, getDoc, getDocFromCache, setDoc, addDoc, updateDoc, deleteDoc, collection, query, where, getDocs, onSnapshot, writeBatch, orderBy, limit, runTransaction, increment } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
         import { getAnalytics, logEvent } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-analytics.js';
         import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-functions.js';
 
@@ -131,8 +131,25 @@
             return `${y}-${m}-${d}`;
         }
 
+        // The LEADERBOARD week — Monday 00:00 local, the same anchor the Grit
+        // week uses (gifting spec §8.2, invariant 14). Deliberately not
+        // getWeekStartStr(): that one is Sunday-anchored and belongs to
+        // Analytics, which has its own long-standing cadence. Every leaderboard
+        // surface — ranking, the published snapshot, the payout — reads this
+        // one, so there is exactly one boundary anywhere near a payout.
+        function getLeaderboardWeekStartStr() {
+            const d = new Date();
+            d.setHours(0, 0, 0, 0);
+            d.setDate(d.getDate() - ((d.getDay() + 6) % 7));   // 0=Sun → back 6
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const dd = String(d.getDate()).padStart(2, '0');
+            return `${y}-${m}-${dd}`;
+        }
+        window.getLeaderboardWeekStartStr = getLeaderboardWeekStartStr;
+
         function computeWeeklyXP() {
-            const weekStartStr = getWeekStartStr();
+            const weekStartStr = getLeaderboardWeekStartStr();
             let xp = 0;
             (window.userData.dimensions || []).forEach(dim =>
                 (dim.paths || []).forEach(path =>
@@ -146,10 +163,31 @@
             return xp;
         }
 
-        // Week label = the ISO date of this week's Sunday — resets every Sun at midnight
+        // Leaderboard week label = the ISO date of this week's Monday. Used as
+        // the staleness key on published weeklyXP, so a stale snapshot from
+        // last week reads as zero rather than as this week's score.
         function getISOWeekLabel() {
-            return getWeekStartStr(); // e.g. "2026-04-06"
+            return getLeaderboardWeekStartStr(); // e.g. "2026-04-06"
         }
+
+        // Completion COUNT for the current leaderboard week. §8.1's "active
+        // member" test is one logged completion, not one point of XP, so the
+        // count is published alongside the XP rather than inferred from it.
+        function computeWeeklyCompletions() {
+            const weekStartStr = getLeaderboardWeekStartStr();
+            let n = 0;
+            (window.userData.dimensions || []).forEach(dim =>
+                (dim.paths || []).forEach(path =>
+                    (path.activities || []).forEach(act => {
+                        (act.completionHistory || []).forEach(e => {
+                            if (!e.isPenalty && e.date && toLocalDateStr(new Date(e.date)) >= weekStartStr) n++;
+                        });
+                    })
+                )
+            );
+            return n;
+        }
+        window.computeWeeklyCompletions = computeWeeklyCompletions;
 
         function computeXPPerHour(activities) {
             const yStr = localYesterday();
@@ -262,14 +300,6 @@
             return actXP.sort((a, b) => b.xp - a.xp).slice(0, 3);
         }
 
-        function getDaysSinceLastLevel() {
-            if (!window.userData.levelStartedAt) return null;
-            const diff = Date.now() - new Date(window.userData.levelStartedAt).getTime();
-            const days = diff / (1000 * 60 * 60 * 24);
-            if (days < 1) return `${Math.round(days * 24)}h`;
-            return `${days.toFixed(1)}d`;
-        }
-
         function getTop2Categories(categoryXP) {
             return Object.entries(categoryXP)
                 .filter(([, xp]) => xp > 0)
@@ -298,18 +328,6 @@
                 });
             });
             return map;
-        }
-
-        function getBestActiveStreak() {
-            let best = null;
-            (window.userData.dimensions || []).forEach(dim => {
-                (dim.paths || []).forEach(path => {
-                    (path.activities || []).forEach(act => {
-                        if ((act.streak || 0) > (best ? best.streak : 0)) best = { name: act.name, streak: act.streak };
-                    });
-                });
-            });
-            return best;
         }
 
         // Hex → "r,g,b" string for canvas rgba()
@@ -999,6 +1017,25 @@
                     handleFriendDeepLink();
                     // Handle deep-link group join (?joinGroup=CODE in URL)
                     handleGroupDeepLink();
+                    // Cold start from a gift push (?tab=friends).
+                    try {
+                        var _p = new URLSearchParams(window.location.search);
+                        if (_p.get('tab') === 'friends') {
+                            _p.delete('tab');
+                            var _qs = _p.toString();
+                            window.history.replaceState({}, '', window.location.pathname + (_qs ? '?' + _qs : ''));
+                            setTimeout(function () { try { switchTab('people'); } catch (e) {} }, 400);
+                        }
+                    } catch (e) {}
+                    // Versus challenges: one fetch that drives the invite badge
+                    // and the lazy expiry / resolution / payout evaluation.
+                    try { vsOnLogin(); } catch (e) { console.warn('Versus login hook failed', e); }
+                    // Gifts: drain the shield inbox, prime the silent XP-boost
+                    // queue, and catch up any mirror the last session missed.
+                    try { giftOnLogin(); } catch (e) { console.warn('Gift login hook failed', e); }
+                    // Leaderboard: publish this board and pay out the closed
+                    // week if the Monday rollover has not been settled yet.
+                    try { lbOnLogin(); } catch (e) { console.warn('Leaderboard login hook failed', e); }
                     // Handle notification tap on a cold start (?reminder=<activityId>)
                     window.mkHandleReminderDeepLink();
                     // Init the restore backup button visibility (async — non-blocking)
@@ -1291,7 +1328,7 @@
                 document.documentElement.setAttribute('data-theme-mode', _mode === 'light' ? 'light' : 'dark');
             } catch (e) { /* non-fatal, loadTheme will set it later */ }
 
-            // Opportunistic timezone backfill (spec §4.1). Non-blocking and
+            // Opportunistic timezone backfill. Non-blocking and
             // non-fatal — reminders fall back to a default until this lands.
             try { syncUserTimezone(); } catch (e) { console.warn('Timezone sync skipped:', e); }
         }
@@ -2527,11 +2564,6 @@
             _gcActionActivityId = null;
         };
 
-        window.cycleGridCardType = function(activityId) {
-            // Deprecated — now opens the picker popup instead
-            openCardTypePicker(activityId);
-        };
-
         // ── Card type picker popup ────────────────────────────────────────
         var _pickerActivityId = null;
         var _pickerOpenedAt   = 0;
@@ -3316,24 +3348,7 @@
         // Challenge Modal Functions
         let editingChallengeIndex = null;
 
-        window.toggleMetricSection = function() {
-            const hiddenInput = document.getElementById('challengeMetricEnabled');
-            const grp = document.getElementById('challengeMetricGroup');
-            const btn = document.getElementById('metricToggleBtn');
-            const check = document.getElementById('metricToggleCheck');
-            if (!hiddenInput || !grp) return;
-            const isActive = hiddenInput.value === '1';
-            const newActive = !isActive;
-            hiddenInput.value = newActive ? '1' : '0';
-            grp.style.display = newActive ? 'flex' : 'none';
-            if (btn) btn.classList.toggle('active', newActive);
-            if (check) check.textContent = newActive ? '✓' : '';
-            // Keep the new switch UI in sync
-            const proxy = document.getElementById('challengeMetricEnabledProxy');
-            if (proxy) proxy.checked = newActive;
-        };
-
-        // ── v122 toggle proxies — drive the new ay-toggle-row switches ─────
+        // ── Toggle proxies — drive the ay-toggle-row switches ─────────────
         // The underlying hidden checkbox / hidden input is what saveChallenge
         // reads, so we keep them as the source of truth and just keep the
         // visible switch in sync.
@@ -3403,7 +3418,7 @@
                     document.getElementById('challengeMetricQty').value = challenge.metricQty;
                     document.getElementById('challengeMetricUnit').value = challenge.metricUnit;
                 }
-                // v122: sync new proxy switches
+                // Sync proxy switches
                 const _pE = document.getElementById('challengeEnforceActivitiesProxy');
                 const _pD = document.getElementById('challengeEnforceDateRangeProxy');
                 const _pM = document.getElementById('challengeMetricEnabledProxy');
@@ -3432,7 +3447,7 @@
                 const _edc = document.getElementById('enforceDateRangeCheck');
                 if (_edc) _edc.textContent = '';
                 document.getElementById('challengeMetricGroup').style.display = 'none';
-                // v122: sync new proxy switches to OFF
+                // Sync proxy switches to OFF
                 const _pE2 = document.getElementById('challengeEnforceActivitiesProxy');
                 const _pD2 = document.getElementById('challengeEnforceDateRangeProxy');
                 const _pM2 = document.getElementById('challengeMetricEnabledProxy');
@@ -3579,30 +3594,6 @@
 
         window.filterChallengeActivities = function(value) {
             _renderChallengeChecklist(value);
-        };
-
-        window.toggleChallengeEnforceActivities = function() {
-            const cb = document.getElementById('challengeEnforceActivities');
-            const btn = document.getElementById('enforceActivitiesBtn');
-            const check = document.getElementById('enforceActivitiesCheck');
-            if (!cb) return;
-            cb.checked = !cb.checked;
-            btn?.classList.toggle('active', cb.checked);
-            if (check) check.textContent = cb.checked ? '✓' : '';
-            const proxy = document.getElementById('challengeEnforceActivitiesProxy');
-            if (proxy) proxy.checked = cb.checked;
-        };
-
-        window.toggleChallengeEnforceDateRange = function() {
-            const cb = document.getElementById('challengeEnforceDateRange');
-            const btn = document.getElementById('enforceDateRangeBtn');
-            const check = document.getElementById('enforceDateRangeCheck');
-            if (!cb) return;
-            cb.checked = !cb.checked;
-            btn?.classList.toggle('active', cb.checked);
-            if (check) check.textContent = cb.checked ? '✓' : '';
-            const proxy = document.getElementById('challengeEnforceDateRangeProxy');
-            if (proxy) proxy.checked = cb.checked;
         };
 
         // Calculate and display auto-XP for specific-activity challenges
@@ -5011,7 +5002,7 @@
             modal.classList.add('active');
         };
 
-        // ── Advanced Setup accordion — v120 ────────────────────────────
+        // ── Advanced Setup accordion ───────────────────────────────────
         // The accordion is in-flow: when open, its body expands below the
         // header and pushes the modal-body height naturally. Both the
         // wrapper `.ay-accordion` and the body `.ay-accordion-body` carry
@@ -5105,7 +5096,7 @@
             btn.classList.toggle('selected');
         };
 
-        // Wire up day picker buttons (new ay-day-btn class as of v120;
+        // Wire up day picker buttons (ay-day-btn class;
         // legacy .day-btn selector retained for any other surfaces that
         // still use the old shape).
         document.querySelectorAll('.ay-day-btn, .day-btn').forEach(btn => {
@@ -5584,17 +5575,75 @@
         //   getShieldsUsedDisplay()— returns activity.shieldsConsumed
         //
         // SHIELD RULES:
-        //   3 shields per streak. Each missed closed window costs 1 shield.
-        //   Streak survives ≤3 total misses. 4th unshielded miss → streak=0.
-        //   Shields reset automatically on a new streak.
+        //   3 shields per streak, +1 at each of 25/50/75/100 days, +1 per
+        //   shield applied from the Grit pool -- summed, capped at 10.
+        //   Each missed closed window costs 1 shield. The streak survives
+        //   until they run out; the next unshielded miss → streak=0.
+        //   Shields reset automatically on a new streak -- back to the floor,
+        //   which still includes every applied shield.
+        //
+        //   activity.shieldEvents — append-only, the ONLY thing a pooled
+        //   shield purchase writes. Both folds read it via shieldFloorFor();
+        //   nothing anywhere mutates a shield count directly.
         // ══════════════════════════════════════════════════════════════════
 
         const BASE_SHIELDS      = 3;
         const SHIELD_MILESTONES = [25, 50, 75, 100];
-        const SHIELD_ABS_CAP    = 7; // 3 base + 4 milestone bonuses
+        const SHIELD_ABS_CAP    = 10; // 3 base + 4 milestone bonuses + applied, summed
+
+        // == Applied shields (from the Grit pool) =========================
+        // A pooled shield is applied by APPENDING AN EVENT, never by mutating
+        // a count. activity.shieldEvents is append-only:
+        //
+        //     { type: 'shield_applied', id: '<stable unique>', at: 'YYYY-MM-DD' }
+        //
+        // There is no equivalent event for the 25/50/75/100-day grants --
+        // those have never been stored anywhere, they are derived inside the
+        // walk from SHIELD_MILESTONES. So this array is a NEW store, not a
+        // second writer of an existing one.
+        //
+        // Counting is deduplicated by id, so a double-tap, a retried write or
+        // a replayed sync can never fold into two shields.
+        function appliedShieldCount(activity) {
+            var evs = activity && activity.shieldEvents;
+            if (!Array.isArray(evs) || !evs.length) return 0;
+            var seen = Object.create(null), n = 0;
+            for (var i = 0; i < evs.length; i++) {
+                var e = evs[i];
+                if (!e || e.type !== 'shield_applied' || !e.id || seen[e.id]) continue;
+                seen[e.id] = 1; n++;
+            }
+            return n;
+        }
+
+        // The floor every shield walk starts from: base capacity plus whatever
+        // has been applied, clamped so a walk can never begin above the cap.
+        // This is what replaced the bare BASE_SHIELDS at all twelve points in
+        // the two folds -- including the resets, so a broken streak restarts
+        // with its applied shields still in hand. Because the count comes from
+        // the activity's own events rather than from the streak walk, no
+        // retroactive completion can recompute an applied shield away.
+        function shieldFloorFor(activity) {
+            return Math.min(SHIELD_ABS_CAP, BASE_SHIELDS + appliedShieldCount(activity));
+        }
+
+        // Capacity as it stands right now, without re-walking history: the
+        // floor plus one per milestone the live streak has already crossed.
+        // Mirrors what the walks produce, so applying a shield can refresh the
+        // displayed count immediately instead of waiting for the next login.
+        function shieldCapNow(activity) {
+            var cap = shieldFloorFor(activity);
+            var streak = activity.streak || 0;
+            if (streak > 0) {
+                for (var i = 0; i < SHIELD_MILESTONES.length; i++) {
+                    if (streak >= SHIELD_MILESTONES[i]) cap += 1;
+                }
+            }
+            return Math.min(SHIELD_ABS_CAP, cap);
+        }
 
         function getShieldCap(activity) {
-            return activity.shieldCapUsed || BASE_SHIELDS;
+            return activity.shieldCapUsed || shieldFloorFor(activity);
         }
 
         // _getStreakShieldWindow removed. Shield computation is now fully owned
@@ -5687,8 +5736,22 @@
             const shouldGrantStreak   = !isOcc && (isCust ? cycleWasEmpty : !alreadyGrantedToday);
             const newStreak           = isOcc ? 0 : (shouldGrantStreak ? currentStreak + 1 : currentStreak);
             const multiplier          = isOcc ? 1 : calculateConsistencyMultiplier(newStreak);
-            const earnedXP            = Math.floor((activity.baseXP || 0) * multiplier);
-            return { currentStreak, todayStr, shouldGrantStreak, newStreak, multiplier, earnedXP };
+            // Grit's armed double-XP boost (§5.2). Exactly x2, never more, and
+            // consumed by gritOnCompletion() once the completion lands.
+            const gritBoosted         = (typeof gritIsBoostArmed === 'function') && gritIsBoostArmed(activity);
+            // A gifted boost (gifting spec §5.1). Only ever consulted when no
+            // self-purchased boost is armed: the user paid for that one
+            // deliberately and chose its timing, so it goes first (invariant 7).
+            // The gift is a surprise — it can wait. Peeking is side-effect free
+            // and returns the SAME gift on both calls in a completion, so the
+            // floating-XP preview and the awarded figure cannot drift.
+            const giftBoost           = (!gritBoosted && typeof giftPeekFor === 'function')
+                                        ? giftPeekFor(activity) : null;
+            // Exactly 2x whichever one applies, never 4x (invariant 6).
+            const preBoostXP          = Math.floor((activity.baseXP || 0) * multiplier);
+            const earnedXP            = preBoostXP * ((gritBoosted || giftBoost) ? 2 : 1);
+            return { currentStreak, todayStr, shouldGrantStreak, newStreak, multiplier,
+                     earnedXP, preBoostXP, gritBoosted, giftBoost };
         }
 
         window.completeActivity = async function(dimIndex, pathIndex, actIndex) {
@@ -5716,7 +5779,8 @@
             // All XP/streak prediction lives in predictCompletionXP — same code path
             // the floating-XP preview uses, so they can't drift.
             const { currentStreak, todayStr, shouldGrantStreak, newStreak,
-                    multiplier: consistencyMultiplier, earnedXP } = predictCompletionXP(activity);
+                    multiplier: consistencyMultiplier, earnedXP,
+                    preBoostXP, giftBoost } = predictCompletionXP(activity);
             if (!isOccasional && shouldGrantStreak) {
                 activity.streakGrantedDate = todayStr;
                 // Stamp the start of a new streak so processStreakSystem's walk
@@ -5753,13 +5817,25 @@
                     // value from history on next login, so they stay in sync.
                     if (SHIELD_MILESTONES.includes(newStreak)) {
                         activity.shieldCapUsed = Math.min(SHIELD_ABS_CAP,
-                            (activity.shieldCapUsed || BASE_SHIELDS) + 1);
+                            (activity.shieldCapUsed || shieldFloorFor(activity)) + 1);
                     }
                 }
             }
             activity.completionCount = (activity.completionCount || 0) + 1;
             activity.totalXP = (activity.totalXP || 0) + earnedXP;
             recordCompletion(activity, activity.isNegative ? -earnedXP : earnedXP);
+            // Grit: +1 drip, week numerator, cadence bonus, streak milestones
+            // and boost consumption — one call, same beat as the XP above.
+            try { gritOnCompletion(activity); } catch (e) { console.warn('Grit completion hook failed', e); }
+            // A gifted double-XP lands here, silently until this moment. Marks
+            // the gift consumed and queues the reveal — which waits for any
+            // level-up card to clear first (§5.2). Fire-and-forget: the XP is
+            // already awarded above and must not be gated on a network write.
+            if (giftBoost) {
+                try {
+                    giftOnCompletion(giftBoost, activity, preBoostXP, earnedXP);
+                } catch (e) { console.warn('Gift consumption hook failed', e); }
+            }
 
             // Apply XP to the parent dimension's level track
             const _dimForAct = window.userData.dimensions[dimIndex];
@@ -5990,7 +6066,7 @@
             showUndoToast(toastXP);
             debouncedSaveUserData(); // fire-and-forget
 
-            // v122 bug fix: if the undone activity is part of an active
+            // If the undone activity is part of an active
             // challenge that the user has nominated to the active group, the
             // group's view of their progress goes stale until the next save.
             // Mirror the completeActivity path: re-sync whenever the activity
@@ -6006,7 +6082,7 @@
             }
         };
 
-        // ── Retroactive Write Functions (Phase 2) ────────────────────────
+        // ── Retroactive Write Functions ──────────────────────────────────
 
         async function applyRetroactiveRecalculation(activity, dimIndex, xpDelta) {
             // 1. Per-activity counters
@@ -6035,7 +6111,7 @@
             await saveUserData();
             updateDashboard();
 
-            // v122: if this retroactive change affected a nominated challenge,
+            // If this retroactive change affected a nominated challenge,
             // push the new progress to the active group so members see it.
             if (window.userData.activeGroupChallengeId) {
                 const isInActiveChallenge = (window.userData.challenges || []).some(ch =>
@@ -6093,6 +6169,7 @@
             if (foundActivity.completionHistory.length > 365) foundActivity.completionHistory.shift();
 
             await applyRetroactiveRecalculation(foundActivity, foundDi, xp);
+            try { gritOnRetroComplete(foundActivity, dateStr); } catch (e) { console.warn('Grit retro hook failed', e); }
             if (typeof renderHistoryEdit === 'function') renderHistoryEdit();
             renderActivityHistory(true);
             showToast(`✓ Logged ${foundActivity.name} for ${dateStr} (+${xp} XP)`, 'blue');
@@ -6146,6 +6223,12 @@
             // Normal entry: stored xp is positive → delta is negative (deduct from total).
             // Penalty entry: stored xp is negative → delta is positive (restore the deduction).
             await applyRetroactiveRecalculation(foundActivity, foundDi, -deletedXP);
+            // Grit: a deleted completion inside the current week leaves the
+            // numerator, mirroring the add. Grit already paid is never clawed
+            // back — no path in this system takes Grit away.
+            if (!isPenaltyEntry) {
+                try { gritOnRetroDelete(foundActivity, entryDateStr); } catch (e) { console.warn('Grit retro-delete hook failed', e); }
+            }
             if (typeof renderHistoryEdit === 'function') renderHistoryEdit();
             renderActivityHistory(true);
             showToast(`↩ Removed entry for ${entryDateStr}`, 'blue');
@@ -6967,15 +7050,6 @@
             return result;
         }
 
-        function parseCompletionDates(activity) {
-            // We store lastCompleted; we also need the full history.
-            // Since full history isn't stored, we derive a synthetic list from completionCount + lastCompleted
-            // for the calendar. Full history would require a separate log — we'll use what we have.
-            const dates = [];
-            if (activity.lastCompleted) dates.push(new Date(activity.lastCompleted));
-            return dates;
-        }
-
         // Build a proper completion event log from stored history arrays (if present) or fallback
         function getCompletionLog(activities) {
             const log = []; // { date, activityId, activityName, xp, dimName, pathName }
@@ -7087,7 +7161,7 @@
 
         // ── Main Render ──────────────────────────────────────────────────
 
-        // ── History Edit UI (Phase 3) ─────────────────────────────────────
+        // ── History Edit UI ───────────────────────────────────────────────
 
         function renderHistoryEdit() {
             const container = document.getElementById('historyEditList');
@@ -8261,28 +8335,12 @@
 
         // ── End Analytics System ─────────────────────────────────────────
 
-        // ── Retroactive Recalculation Engine (Phase 1) ───────────────────
+        // ── Retroactive Recalculation Engine ─────────────────────────────
 
         function recomputeActivityCounters(activity) {
             const userEntries = (activity.completionHistory || []).filter(e => !e.isPenalty);
             activity.completionCount = userEntries.length;
             activity.totalXP = userEntries.reduce((sum, e) => sum + Math.abs(e.xp || 0), 0);
-        }
-
-        function recomputeTotalXPFromHistory() {
-            let total = 0;
-            (window.userData.dimensions || []).forEach(dim =>
-                (dim.paths || []).forEach(path =>
-                    (path.activities || []).forEach(act => {
-                        (act.completionHistory || []).forEach(e => {
-                            if (!e.isPenalty) total += Math.abs(e.xp || 0);
-                            else total += (e.xp || 0); // penalties are negative — permanently deduct
-                        });
-                    })
-                )
-            );
-            total += (window.userData.xpDeletedGhost || 0);
-            return total;
         }
 
         function recomputeLevelFromTotalXP(totalXP) {
@@ -8353,7 +8411,7 @@
                 activity.shieldsConsumed = 0;
                 activity.streakStartWindow = null;
                 activity.streakGrantedDate = null;
-                activity.shieldCapUsed = BASE_SHIELDS;
+                activity.shieldCapUsed = shieldFloorFor(activity);
                 return;
             }
             activity.lastCompleted = userHistory[userHistory.length - 1].date;
@@ -8380,7 +8438,7 @@
                 activity.shieldsConsumed = 0;
                 activity.streakStartWindow = hasTodayCompletion ? todayStr : null;
                 activity.streakGrantedDate = hasTodayCompletion ? todayStr : null;
-                activity.shieldCapUsed = BASE_SHIELDS;
+                activity.shieldCapUsed = shieldFloorFor(activity);
                 activity.bestStreak = Math.max(activity.bestStreak || 0, activity.streak);
                 return;
             }
@@ -8397,7 +8455,7 @@
 
             let streak = 0;
             let shieldsConsumed = 0;
-            let walkCapUsed = BASE_SHIELDS;
+            let walkCapUsed = shieldFloorFor(activity);
             let streakStartWindow = null;
             const MAX_WALK = 400;
 
@@ -8420,7 +8478,7 @@
                     shieldsConsumed++;
                 } else if (streak > 0) {
                     // Unshielded miss — streak breaks. Reset; later hits start fresh.
-                    streak = 0; shieldsConsumed = 0; walkCapUsed = BASE_SHIELDS;
+                    streak = 0; shieldsConsumed = 0; walkCapUsed = shieldFloorFor(activity);
                     streakStartWindow = null;
                 }
                 // streak===0 + miss: no active streak to protect, skip silently.
@@ -8432,7 +8490,7 @@
                 if (streak === 0) {
                     // Fresh streak that begins today.
                     shieldsConsumed = 0;
-                    walkCapUsed = BASE_SHIELDS;
+                    walkCapUsed = shieldFloorFor(activity);
                     streakStartWindow = todayWindow;
                 }
                 streak++;
@@ -8445,7 +8503,7 @@
             activity.bestStreak = Math.max(activity.bestStreak || 0, streak);
             activity.streakStartWindow = streakStartWindow ? toLocalDateStr(streakStartWindow) : null;
             activity.streakGrantedDate = hasTodayCompletion ? todayStr : null;
-            activity.shieldCapUsed = streak > 0 ? walkCapUsed : BASE_SHIELDS;
+            activity.shieldCapUsed = streak > 0 ? walkCapUsed : shieldFloorFor(activity);
         }
 
         function recomputeChallengeProgress(activityId) {
@@ -8734,7 +8792,7 @@
             // Block access to tabs locked behind level thresholds. Surface the
             // unlock requirement as a toast and don't change tabs.
             if (typeof isTabUnlocked === 'function' && !isTabUnlocked(tabName)) {
-                const meta = TAB_UNLOCKS[tabName];
+                const meta = (typeof tabUnlockMeta === 'function') ? tabUnlockMeta(tabName) : null;
                 if (meta) {
                     showToast(`🔒 ${meta.label} unlocks at Level ${meta.level}`, 'olive');
                 }
@@ -8765,7 +8823,7 @@
             // Render the newly-visible tab (skipped during updateDashboard if not active)
             if (tabName === 'challenges') renderChallenges();
             else if (tabName === 'projects') { try { renderProjects(); } catch(e) { console.warn('renderProjects failed', e); } }
-            else if (tabName === 'friends') renderFriendsTab();
+            else if (tabName === 'friends' || tabName === 'people') renderFriendsTab();
             else if (tabName === 'settings') { loadSettings(); }
             else if (tabName === 'analytics') {
                 renderAnalytics();
@@ -8892,14 +8950,6 @@
             }
             return window.userData.planner.days[dateStr];
         }
-
-        // ── Date navigation ──
-        window.plannerDateNav = function(delta) {
-            var d = new Date(window._plannerDate + 'T12:00:00');
-            d.setDate(d.getDate() + delta);
-            window._plannerDate = localDateStr(d);
-            renderPlanner();
-        };
 
         window.setPlannerDate = function(val) {
             if (!val) {
@@ -9999,16 +10049,6 @@
             if (typeof showToast === 'function') showToast('✓ Group deleted', 'olive');
         };
 
-        // ── Complete / Undo from planner ──
-        window.plannerCompleteActivity = function(activityId) {
-            completeActivityById(activityId);
-            // renderPlanner called via updateDashboard -> renderActivitiesList chain
-        };
-
-        window.plannerUndoActivity = function(activityId) {
-            undoActivityById(activityId);
-        };
-
         // ── Slot-aware completion (per-slot, not per-activity) ────────────
         // Each planner slot tracks its own completion state. Completing a slot
         // also completes the activity once (so XP/streak fire), but slots for
@@ -10423,7 +10463,7 @@
 
         const THEMES = [
             // Two shipped presets. Dark stays first as the safe default for
-            // new accounts. Light is the design-brief "parallel light" mode:
+            // new accounts. Light is the "parallel light" mode:
             // cool paper background, white cards lifted by shadow (not
             // borders), and a deeper-saturated blue so the interactive
             // primary keeps AA contrast on pale surfaces.
@@ -11153,10 +11193,13 @@
         // 0→1 transition.
         //
         // SHIELD RULES:
-        //   3 base shields per streak; +1 at each milestone (25/50/75/100), cap 7.
+        //   Base capacity is shieldFloorFor(activity) — 3, plus one per shield
+        //   applied from the Grit pool. +1 more at each milestone
+        //   (25/50/75/100). The sum is capped at SHIELD_ABS_CAP (10).
         //   Each missed closed window costs 1 shield. Unshielded miss → streak=0.
-        //   Shields reset to 3 automatically when a new streak begins (the walk
-        //   finds no consumed shields in a fresh run).
+        //   Shields reset to the floor automatically when a new streak begins
+        //   (the walk finds no consumed shields in a fresh run) — applied
+        //   shields are part of the floor, so they survive the reset.
         //   completeActivity and undoActivity NEVER touch shieldsConsumed.
         //
         // Returns true if any field was mutated (caller saves to Firestore).
@@ -11197,7 +11240,7 @@
                 if (lcWindow) {
                     const healHist = (activity.completionHistory || [])
                         .filter(e => !e.isPenalty && (e.xp || 0) > 0);
-                    let cur = lcWindow, shieldsLeft = BASE_SHIELDS, oldestHit = lcWindow;
+                    let cur = lcWindow, shieldsLeft = shieldFloorFor(activity), oldestHit = lcWindow;
                     for (let i = 0; i < 400; i++) {
                         const winEnd = getNextCycleWindowStart(activity, cur);
                         if (!winEnd) break;
@@ -11220,7 +11263,7 @@
 
             let streak = 0;
             let shieldsConsumed = 0;
-            let walkCapUsed = BASE_SHIELDS;
+            let walkCapUsed = shieldFloorFor(activity);
             let streakStartWindow = null;
             const MAX_WALK = 400;
 
@@ -11254,7 +11297,7 @@
                     } else if (streak > 0) {
                         // Unshielded miss — streak breaks. Reset so any later
                         // segment in the same walk starts fresh with full shields.
-                        streak = 0; shieldsConsumed = 0; walkCapUsed = BASE_SHIELDS;
+                        streak = 0; shieldsConsumed = 0; walkCapUsed = shieldFloorFor(activity);
                         streakStartWindow = null;
                     }
                     // streak===0 + miss: no active streak to protect, skip.
@@ -11285,7 +11328,7 @@
             activity.bestStreak      = Math.max(activity.bestStreak || 0, finalStreak);
             if (finalStreak === 0) {
                 activity.streakStartWindow = null;
-                activity.shieldCapUsed     = BASE_SHIELDS;
+                activity.shieldCapUsed     = shieldFloorFor(activity);
             } else {
                 // Always re-stamp from the walk — handles mid-walk resets where
                 // an earlier segment broke and a later one anchored elsewhere.
@@ -11310,8 +11353,12 @@
                         if (processStreakSystem(act, today)) anyChanged = true;
                         if (processSkipPenalty(act, today))  anyChanged = true;
                     })));
-            // Tech Tree mastery rides the same recompute pass (spec §3/§14).
+            // Tech Tree mastery rides the same recompute pass.
             if (typeof evaluateTechTreeMastery === 'function' && evaluateTechTreeMastery()) anyChanged = true;
+            // Grit rides it too: localStorage migration, week rollover + weekly
+            // bonus, and the marker-guarded streak/mastery sweeps. Runs after
+            // the streak walk above so it reads settled streaks.
+            try { if (gritOnLogin()) anyChanged = true; } catch (e) { console.warn('Grit login pass failed', e); }
             if (anyChanged) {
                 try { await saveUserData(); } catch(e) { console.warn('processStreakPauses save failed', e); }
             }
@@ -12113,7 +12160,7 @@
         // ── Generic Toast ─────────────────────────────────────────────────
 
         // ── Toast notifications ───────────────────────────────────────────
-        // Visual recipe matches the design brief: card material (#22242a +
+        // Visual recipe: card material (#22242a +
         // hairline + inset top highlight + drop shadow stack). The color
         // tag is conveyed by a 3px left-edge stripe (same family as
         // dimension cards) — NOT by a flooded background. Each toast also
@@ -12141,11 +12188,20 @@
             return stack;
         }
 
-        function showToast(message, color = 'blue') {
+        // `onTap` is optional. When given, the toast becomes a button: the
+        // leaderboard award toast uses it to open that week's final standings.
+        function showToast(message, color = 'blue', onTap = null) {
             const cfg = TOAST_CONFIG[color] || TOAST_CONFIG.blue;
             const stack = _ensureToastStack();
             const toast = document.createElement('div');
-            toast.className = 'mk-toast mk-toast-' + color;
+            toast.className = 'mk-toast mk-toast-' + color + (onTap ? ' mk-toast-tappable' : '');
+            if (onTap) {
+                toast.setAttribute('role', 'button');
+                toast.setAttribute('tabindex', '0');
+                toast.addEventListener('click', function () {
+                    try { onTap(); } catch (e) { console.warn('Toast tap handler failed', e); }
+                });
+            }
             toast.style.setProperty('--mk-toast-stripe', cfg.stripe);
             // Newer toasts insert at the top of the stack so the most-
             // recent message reads first.
@@ -12982,8 +13038,17 @@
                           body: 'Add friends, compare XP on the leaderboard, and keep each other accountable. Share your friend code to get started.' },
         };
 
+        // Friends and Leaderboards were one tab until the split, and they
+        // share one unlock — aliasing here (rather than adding a second
+        // TAB_UNLOCKS entry) keeps the level-7 unlock popup firing once.
+        const TAB_UNLOCK_ALIASES = { people: 'friends' };
+        function tabUnlockMeta(tabName) {
+            return TAB_UNLOCKS[TAB_UNLOCK_ALIASES[tabName] || tabName];
+        }
+        window.tabUnlockMeta = tabUnlockMeta;
+
         function isTabUnlocked(tabName) {
-            const meta = TAB_UNLOCKS[tabName];
+            const meta = tabUnlockMeta(tabName);
             if (!meta) return true; // tabs not in the map (activities, settings) are always unlocked
             const lvl = (window.userData && window.userData.level) || 1;
             return lvl >= meta.level;
@@ -12997,7 +13062,7 @@
                 const m = onclick.match(/switchTab\('(\w+)'\)/);
                 if (!m) return;
                 const tabName = m[1];
-                const meta = TAB_UNLOCKS[tabName];
+                const meta = tabUnlockMeta(tabName);
                 if (!meta) return; // not a lockable tab
                 const locked = !isTabUnlocked(tabName);
                 tab.classList.toggle('nav-tab-locked', locked);
@@ -13416,64 +13481,6 @@
             document.body.style.overflow = '';
         };
 
-        window.advanceTutorial = async function() {
-            // Only one step now — mark complete on advance.
-            window.userData.tutorialStep = 99;
-            await saveUserData().catch(() => {});
-            hideTutorialOverlay();
-            // Check whether any tab unlocks should fire next.
-            if (typeof checkPendingTabUnlocks === 'function') {
-                setTimeout(checkPendingTabUnlocks, 350);
-            }
-        };
-
-        // ── Categorization Prompt ─────────────────────────────────────────────
-
-        window.checkCategorizationPrompt = function() {
-            const ud = window.userData;
-            if (!ud || !ud.onboardingComplete) return;
-            // Already dismissed this session
-            if (window._catPromptDismissed) return;
-            // Tutorial not yet complete
-            const ts = ud.tutorialStep ?? -1;
-            if (ts >= 0 && ts < 4) return;
-
-            // Count uncategorized activities
-            const dims = ud.dimensions || [];
-            const uncDim = dims.find(d => d.id === 'uncategorized');
-            const uncCount = uncDim
-                ? (uncDim.paths || []).flatMap(p => p.activities || []).length
-                : 0;
-            if (uncCount === 0) return;
-
-            // Fire if level >= 5 OR account is 7+ days old
-            const level = ud.level || 1;
-            const createdAt = ud.createdAt ? new Date(ud.createdAt) : null;
-            const daysSince = createdAt
-                ? Math.floor((Date.now() - createdAt) / 86400000)
-                : 0;
-            if (level < 5 && daysSince < 7) return;
-
-            // Show the prompt
-            document.getElementById('uncatCount').textContent = uncCount;
-            document.getElementById('categorizationPrompt').style.display = 'flex';
-            document.body.style.overflow = 'hidden';
-        };
-
-        window.goToCategories = function() {
-            document.getElementById('categorizationPrompt').style.display = 'none';
-            document.body.style.overflow = '';
-            window._catPromptDismissed = true;
-            switchTab('activities');
-            setTimeout(() => switchSubTab('activities', 'categories'), 200);
-        };
-
-        window.dismissCategorizationPrompt = function() {
-            document.getElementById('categorizationPrompt').style.display = 'none';
-            document.body.style.overflow = '';
-            window._catPromptDismissed = true;
-        };
-
         // ── Daily Reminder Notifications ──────────────────────────────────────
         // VAPID public key. Safe to expose — it's the public half of the pair,
         // and it's what the browser uses to build a push subscription.
@@ -13700,7 +13707,7 @@
         //   <auto-id>  — one per activity reminder, max 5 active
         //
         // A Cloud Function queries them by nextSendAt every minute and sends
-        // the Web Push. See functions/index.js and REMINDERS.md.
+        // the Web Push. See functions/index.js.
         //
         // Note the two documents never live in the same place: reminders are a
         // SUBCOLLECTION, not fields on the user doc. That's deliberate —
@@ -13730,7 +13737,7 @@
             } catch (e) { return null; }
         }
 
-        // Opportunistic backfill on load (spec §4.1). Cheap, non-blocking, and
+        // Opportunistic backfill on load. Cheap, non-blocking, and
         // self-healing: a user who travels picks up the new zone on next open.
         async function syncUserTimezone() {
             var tz = mkDetectTimezone();
@@ -14055,7 +14062,7 @@
                     if (!permitted) return;
 
                     // Creation goes through the callable so the 5-reminder cap
-                    // and the activityId check happen server-side (spec §5.4).
+                    // and the activityId check happen server-side.
                     var create = httpsCallable(functions, 'createActivityReminder');
                     await create({
                         activityId: String(_arSelectedActivityId),
@@ -14169,7 +14176,7 @@
                 }
             }
             // Activity deleted, or the tree isn't loaded yet — fall back to the
-            // Activities tab rather than doing nothing (spec §6).
+            // Activities tab rather than doing nothing.
             if (window.switchTab) switchTab('activities');
         };
 
@@ -14177,6 +14184,10 @@
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.addEventListener('message', function(event) {
                 var msg = event.data || {};
+                if (msg.type === 'mindkraft-gift-click') {
+                    setTimeout(function () { try { switchTab('people'); } catch (e) {} }, 300);
+                    return;
+                }
                 if (msg.type !== 'mindkraft-notification-click') return;
                 // Defer so a click arriving mid-boot doesn't race the render.
                 setTimeout(function() {
@@ -14210,15 +14221,21 @@
 
         // ── Render the full Friends tab ───────────────────────────────────
         // ── Render the full Friends tab ───────────────────────────────────
+        // Renders BOTH social pages from one pass. The Friends tab and the
+        // Leaderboards tab hold different hosts but need the same data — one
+        // set of profile reads, not two — so the split is in the markup, not
+        // here. Every host is optional: whichever exists gets filled.
         window.renderFriendsTab = async function() {
             const lb  = document.getElementById('friendsLeaderboard');
+            const req = document.getElementById('friendsRequests');
             const add = document.getElementById('friendsAddSection');
             const all = document.getElementById('friendsAllList');
-            if (!lb || !add || !all) return;
+            if (!lb && !add && !all) return;
 
-            lb.innerHTML  = '<div style="padding:8px 0 4px;color:var(--color-text-secondary);font-size:13px;">Loading\u2026</div>';
-            add.innerHTML = '';
-            all.innerHTML = '';
+            if (lb)  lb.innerHTML  = '<div style="padding:8px 0 4px;color:var(--color-text-secondary);font-size:13px;">Loading\u2026</div>';
+            if (req) req.innerHTML = '';
+            if (add) add.innerHTML = '';
+            if (all) all.innerHTML = '';
 
             const friends     = window.userData.friends || [];
             const myUID       = window.currentUser.uid;
@@ -14292,6 +14309,8 @@
             }
 
             // ── 4. Pending requests banner ─────────────────────────────────
+            // Lives on the Friends tab now (§1.1) — the accept/decline
+            // framework itself is untouched.
             let requestsHTML = '';
             if (pendingRequests.length > 0) {
                 requestsHTML = `
@@ -14345,7 +14364,8 @@
             const activeTab = document.getElementById(activeTabId);
             if (activeTab) activeTab.classList.add('active');
 
-            lb.innerHTML = requestsHTML + (topEntries.length === 0
+            if (req) req.innerHTML = requestsHTML;
+            if (lb) lb.innerHTML = (topEntries.length === 0
                 ? '<div style="padding:28px 0;text-align:center;color:var(--color-text-secondary);font-size:13px;">No one on the leaderboard yet.</div>'
                 : topEntries.map((e, i) => {
                     const rank   = i + 1;
@@ -14375,10 +14395,16 @@
                     </div>`;
                 }).join(''));
 
+            // ── 5b. Leaderboard board controls + payout panel (§8) ─────────
+            // Add/remove from the board is reachable from BOTH tabs (§1.1):
+            // here as an explicit roster, and on every friend row over on the
+            // Friends tab.
+            try { lbRenderPayoutSection(entries); } catch (e) { console.warn('Leaderboard payout panel failed', e); }
+
             // ── 6. Add Friend ──────────────────────────────────────────────
             const myCode = window.userData.friendCode || '—';
             const atCap  = friends.length >= 20;
-            add.innerHTML = `
+            if (add) add.innerHTML = `
                 <div class="fr-add-card analytics-card">
                     <div class="fr-add-header">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--color-progress);flex-shrink:0;"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
@@ -14419,27 +14445,41 @@
 
             // ── 7. All Friends list ────────────────────────────────────────
             const friendEntries = entries.filter(e => !e.isMe);
-            if (friendEntries.length === 0) {
+            if (all && friendEntries.length === 0) {
                 all.innerHTML = `
                     <div class="fr-section-kicker">Friends (0)</div>
                     <div class="fr-empty">Add a friend using their MK code above</div>`;
-            } else {
+            } else if (all) {
                 all.innerHTML = `
                     <div class="fr-section-kicker">Friends (${friendEntries.length}/20)</div>
                     ${friendEntries.sort((a, b) => (a.displayName || '').localeCompare(b.displayName || '')).map(e => {
                         const avatar = e.photoURL
                             ? `<img src="${escapeHtml(e.photoURL)}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0;">`
                             : `<div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--color-accent-blue),var(--color-progress));display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:#fff;flex-shrink:0;">${escapeHtml((e.displayName || '?')[0].toUpperCase())}</div>`;
+                        const onBoard = (window.userData.leaderboardHidden || []).indexOf(e.uid) === -1;
                         return `<div onclick="openFriendProfileCard('${escapeHtml(e.uid)}')" class="fr-friend-row">
                             ${avatar}
                             <div class="fr-friend-info">
                                 <div class="fr-friend-name">${escapeHtml(e.displayName || 'Adventurer')}</div>
                                 <div class="fr-friend-meta">Lv ${e.level || 1} · ${escapeHtml(e.characterTitle || '')}</div>
                             </div>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="color:var(--color-text-secondary);flex-shrink:0;"><polyline points="9 18 15 12 9 6"/></svg>
+                            <button type="button" class="fr-row-btn fr-row-board${onBoard ? ' is-on' : ''}"
+                                title="${onBoard ? 'On your leaderboard' : 'Not on your leaderboard'}"
+                                aria-label="${onBoard ? 'Remove from leaderboard' : 'Add to leaderboard'}"
+                                onclick="event.stopPropagation();toggleLeaderboardVisibility('${escapeHtml(e.uid)}')">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="12" width="5" height="8" rx="1"/><rect x="9.5" y="6" width="5" height="14" rx="1"/><rect x="16" y="14" width="5" height="6" rx="1"/></svg>
+                            </button>
+                            <button type="button" class="fr-row-btn fr-row-gift"
+                                title="Send a gift" aria-label="Send a gift"
+                                onclick="event.stopPropagation();giftOpenPicker('${escapeHtml(e.uid)}')">
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 12 20 22 4 22 4 12"/><rect x="2" y="7" width="20" height="5"/><line x1="12" y1="22" x2="12" y2="7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></svg>
+                            </button>
                         </div>`;
                     }).join('')}`;
             }
+
+            // ── 8. Gifts you have sent (§6 — the sender's own sent list) ───
+            try { giftRenderSentList(); } catch (e) { console.warn('Sent-gift list failed', e); }
         };
 
         // ── Add friend by MK code ─────────────────────────────────────────
@@ -14606,6 +14646,11 @@
 
                 ${!isMe ? `
                 <div style="display:flex;gap:8px;margin: 4px 0 8px;">
+                    <button onclick="closeFriendProfileCard();giftOpenPicker('${escapeHtml(uid)}')" class="pf-ghost-btn" style="flex:1;justify-content:center;padding:10px;font-size:12px;">
+                        Send a gift
+                    </button>
+                </div>
+                <div style="display:flex;gap:8px;margin: 4px 0 8px;">
                     <button onclick="toggleLeaderboardVisibility('${escapeHtml(uid)}')" class="pf-ghost-btn" style="flex:1;justify-content:center;padding:10px;font-size:12px;">
                         ${isHidden ? '+ Add to Leaderboard' : 'Remove from Leaderboard'}
                     </button>
@@ -14649,6 +14694,7 @@
             // Also remove from leaderboard hidden if present
             window.userData.leaderboardHidden = (window.userData.leaderboardHidden || []).filter(id => id !== uid);
             await saveUserData();
+            try { lbPublishBoard(true); } catch (e) {}
             closeFriendProfileCard();
             renderFriendsTab();
         };
@@ -14670,6 +14716,10 @@
                 ? hidden.filter(id => id !== uid)
                 : [...hidden, uid];
             debouncedSaveUserData();
+            // The published board is what other people's clients read to
+            // settle mutuality (§8.1), so it must not lag a toggle. The change
+            // only reaches the SCORED roster next Monday — see lbPublishBoard.
+            try { lbPublishBoard(true); } catch (e) {}
             closeFriendProfileCard();
             renderFriendsTab();
         };
@@ -14729,7 +14779,7 @@
                 const code   = params.get('add');
                 if (!code) return;
                 window.history.replaceState({}, '', window.location.pathname);
-                switchTab('friends');
+                switchTab('people');
                 setTimeout(() => {
                     const input = document.getElementById('friendCodeInput');
                     if (input) { input.value = code.toUpperCase(); addFriendByCode(); }
@@ -15676,7 +15726,6 @@
         var TT_MAX_GOALS = 5;               // the web can't carry more legibly
         var TT_REGEN_COOLDOWN_DAYS = 30;    // per-goal regenerate
         var TT_REVISION_LIMIT = 3;          // keep a rate limit, kill the clock
-        var TT_NEW_ACT_CAP = 3;             // new activities per quest
 
         // Resolution is the biggest moment in the feature; a deep node is
         // worth more than a near one so going deep pays.
@@ -15730,7 +15779,10 @@
                     vision: '', goalText: '', goalTextUpdatedAt: null,
                     pendingRequest: null, rejections: [], lastExpandAt: null,
                     loadBudget: { current: 0, updatedAt: null },
-                    questPatches: [], introSeen: false
+                    questPatches: [], introSeen: false,
+                    // v5 (§3.2) — the reveal loop's tree-level state.
+                    lastRegenAt: null, masteriesSinceRegen: 0,
+                    revealMigratedAt: null, viewMode: 'sky'
                 };
             }
             var tt = window.userData.techTree;
@@ -15744,6 +15796,11 @@
             if (!Array.isArray(tt.questPatches)) tt.questPatches = [];
             if (!tt.loadBudget) tt.loadBudget = { current: 0, updatedAt: null };
             if (!tt.status) tt.status = tt.nodes.length ? 'ready' : 'empty';
+            // v5 (§9 step 2). Idempotent, and marked by revealMigratedAt
+            // rather than schemaVersion — the generation worker rewrites
+            // schemaVersion on every result, so keying the one-time generous
+            // pass off it would hand out free reveals forever.
+            ttEnsureRevealFields(tt);
             return tt;
         }
 
@@ -15817,7 +15874,7 @@
             tt.status = 'ready';
         }
 
-        // v2 → v3 (spec §2.4). Idempotent, non-destructive: goal colours come
+        // v2 → v3. Idempotent, non-destructive: goal colours come
         // from their lines, nodes gain role/goalIds, station machinery dies.
         // Activities/quests/streaks/XP are never touched.
         function migrateTechTreeV3(tt) {
@@ -15946,10 +16003,6 @@
             var tt = ensureTechTree();
             return (tt.goals || []).find(function(g) { return g.id === goalId; }) || null;
         }
-        function ttGoalColor(goalId) {
-            var g = ttGoalById(goalId);
-            return (g && g.color) || TT_LINE_PALETTE[0];
-        }
         function ttNodeGoals(node) {
             var tt = ensureTechTree();
             return (node.goalIds || []).map(function(id) {
@@ -15964,13 +16017,6 @@
             if (goals.length && goals[0].color) return goals[0].color;
             return ttDimHexRaw(node.dimensionId);
         }
-        function ttAnchorNodeForActivity(activityId, tt) {
-            tt = tt || ensureTechTree();
-            return (tt.nodes || []).find(function(n) {
-                return n.lifecycle !== 'archived' && n.payload && n.payload.activityId === activityId;
-            }) || null;
-        }
-
         // ── Load budget ──────────────────────────────────────────────────
         function ttFreqWeight(freq, act) {
             if (freq === 'custom') {
@@ -16077,6 +16123,12 @@
                     try { showToast('🏅 Mastered: ' + act.name, 'green'); } catch (err) {}
                 }
             });
+            // Grit's mastery payout (§4.4) rides this pass. Placed inside the
+            // evaluator rather than at its call sites because this function
+            // runs on login, after every completion AND on every render — the
+            // award is marker-guarded (§8.5), so running it three times pays
+            // exactly once.
+            try { if (gritCheckMastery()) changed = true; } catch (err) { console.warn('Grit mastery hook failed', err); }
             // Guarantee migration has run before evaluating (this pass also
             // runs on the login path). Persist if migration just happened.
             var wasV3 = window.userData.techTree && window.userData.techTree.schemaVersion === 3;
@@ -16160,11 +16212,26 @@
         // Mastery is the ONLY key that opens a node — fusions included. A
         // fusion with two sources stays locked until BOTH are genuinely
         // mastered; merely doing an activity is never enough.
-        function ttPrereqMet(pr, node, tt) {
+        function ttPrereqMet(pr, node, tt, _seen) {
             if (pr.type === 'node_mastered') {
                 var target = tt.nodes.find(function(n) { return n.id === pr.nodeId; });
                 if (!target) return true;                    // dangling ref — don't brick the branch
-                if (target.lifecycle === 'archived') return false;
+                // v5 §5.4 / §10.5 — an archived node is TRANSPARENT, not a
+                // wall. Before v5 this returned false, so rejecting one node
+                // locked everything behind it forever and anyone who had paid
+                // to reveal a child had bought a dead end. Now the check falls
+                // through to the rejected node's own prerequisites, which is
+                // exactly "the nearest non-archived ancestor". ttRejectNode
+                // rewrites the data to match; this covers every other way a
+                // node gets archived (goal retirement, an orphaned anchor).
+                if (target.lifecycle === 'archived') {
+                    _seen = _seen || {};
+                    if (_seen[target.id]) return true;       // cycle — don't brick the branch
+                    _seen[target.id] = true;
+                    return (target.prerequisites || []).every(function (up) {
+                        return ttPrereqMet(up, target, tt, _seen);
+                    });
+                }
                 return !!target.resolvedAt;
             }
             if (pr.type === 'activity_mastered') {
@@ -16706,11 +16773,21 @@
                 var r = ttGlyphRadius(n);
                 var flash = (window._ttFlashNodeId === n.id) ? ' tt-flash' : '';
                 var dimmed = st === 'locked' ? ' tt-node-dim' : '';
-                var out = '<g class="tt-node' + flash + dimmed + '" onclick="ttOpenNode(\'' + n.id + '\')" style="cursor:pointer">';
+                // v5 §4.1 — a silhouette carries role (glyph), dimension
+                // (desaturated colour), which goal it serves (edge thread)
+                // and depth (position). Nothing else. A tap on one opens the
+                // purchase sheet, not the node.
+                var sil = ttIsSilhouette(n);
+                var handler = sil ? 'ttOpenRevealSheet' : 'ttOpenNode';
+                var out = '<g class="tt-node' + flash + dimmed + (sil ? ' tt-silhouette' : '') +
+                          '" onclick="' + handler + '(\'' + n.id + '\')" style="cursor:pointer">';
                 out += ttGlyph(n, p.x, p.y, color, defs);
-                var lblCls = st === 'resolved' ? 'tt-wn-t tt-wn-gold' : 'tt-wn-t';
-                out += '<text x="' + p.x + '" y="' + (p.y + r + 13) + '" text-anchor="middle" class="' + lblCls + '">' + escapeHtml(ttShort(n.title, 18)) + '</text>';
-                out += '<text x="' + p.x + '" y="' + (p.y + r + 24) + '" text-anchor="middle" class="tt-wn-s">' + escapeHtml(ttShort(ttNodeSublabel(n, tt), 22)) + '</text>';
+                // Sky is label-free (§8.1): the contrast between explored and
+                // unexplored territory is the whole point of this screen, and
+                // text dilutes it. Words live in Branch.
+                if (sil) {
+                    out += '<circle cx="' + p.x + '" cy="' + (p.y + r + 9) + '" r="1.6" class="tt-sil-dot"/>';
+                }
                 out += '</g>';
                 return out;
             }
@@ -16752,7 +16829,6 @@
                 var goals = (tt.goals || []).filter(function(g) { return !g.retiredAt; });
                 var rows = (goals.length ? goals.map(function(g, i) { return ttGoalRowHtml(g.rawText, i); }) : [ttGoalRowHtml('', 0)]).join('');
                 container.innerHTML = '<div class="tt-intro">'
-                    + '<h2 class="tt-intro-title">Your web</h2>'
                     + '<p class="tt-intro-sub">Name what you\'re working toward. Your real activities become the anchors; the AI weaves upgrades, quests, fusions and a wildcard or two out of them. Goals run through it all as coloured threads.</p>'
                     + (tt.lastError ? '<div class="tt-error">' + escapeHtml(tt.lastError) + ' <button class="tt-inline-btn" onclick="ttRetryGenerate()">Retry</button></div>' : '')
                     + '<div id="ttGoalFields" class="tt-goal-fields">' + rows + '</div>'
@@ -16785,8 +16861,9 @@
             }
             var activeGoals = ttActiveGoals();
             var html = '<div class="tt-web' + (reveal ? ' tt-reveal' : '') + '">'
+                // No heading here: the page is called Map and its title already
+                // says so, so a second "Your web" title only doubled up.
                 + '<div class="tt-web-head">'
-                + '<h2>Your web</h2>'
                 + '<div class="tt-head-chips">'
                 + '<button class="tt-chip-btn" onclick="ttAddGoal()">＋ Goal</button>'
                 + '<button class="tt-chip-btn" onclick="ttRebuildMap()">⟳ Rebuild</button>'
@@ -16811,18 +16888,29 @@
                 }).join('') + '</div>';
             }
             // State legend strip (one line, tiny).
-            html += '<div class="tt-state-legend"><span class="tt-sl-doing">◐</span> doing · <span class="tt-sl-gold">●</span> mastered · <span class="tt-sl-open">◌</span> open — tap · 🔒 locked</div>';
+            html += '<div class="tt-state-legend"><span class="tt-sl-doing">◐</span> doing · <span class="tt-sl-gold">●</span> mastered · <span class="tt-sl-open">◌</span> open — tap · 🔒 locked · <span class="tt-sl-dark">◍</span> unrevealed</div>';
             // First-run hint only (§5.5) — persisted behind introSeen.
             if (!tt.introSeen) {
                 html += '<div class="tt-first-hint">Tap any node to review it — accept what you want, ignore the rest. Locked nodes show what opens them.</div>';
                 tt.introSeen = true;
                 debouncedSaveUserData();
             }
-            html += '<div class="tt-web-scroll">' + ttBuildWebSVG(ttWebLayout()) + '</div>';
-            var availCount = tt.nodes.filter(function(n) { return n.lifecycle === 'available'; }).length;
+            // v5 §8 — how much is still dark, then the view the user chose.
+            html += ttDarkStripHtml(tt);
+            html += ttViewToggleHtml();
+            if (ttViewMode() === 'branch') {
+                html += ttBranchHtml(tt);
+            } else {
+                html += '<div class="tt-web-scroll" onscroll="window._ttSkyScroll=this.scrollLeft">'
+                     +  ttBuildWebSVG(ttWebLayout()) + '</div>';
+            }
+            var availCount = tt.nodes.filter(function(n) { return n.lifecycle === 'available' && !ttIsSilhouette(n); }).length;
+            var _rg = ttRegenStatus();
             html += '<div class="tt-map-actions">'
                 + '<button class="tt-tb-btn" onclick="ttOpenAvailableList()">' + ttIcon('spark', 12) + '<span>Open' + (availCount ? ' · ' + availCount : '') + '</span></button>'
                 + '<button class="tt-tb-btn" onclick="ttOpenCustomNodeForm()">' + ttIcon('edit', 12) + '<span>Add your own</span></button>'
+                + '<button class="tt-tb-btn' + (_rg.masteryMet && _rg.affordable ? ' tt-tb-ready' : '') + '" onclick="ttOpenRegenSheet()">'
+                + ttIcon('refresh', 12) + '<span>Regenerate</span></button>'
                 + '</div>';
             // Quest-patch proposals — cards, never silent writes (§6.1).
             (tt.questPatches || []).filter(function(q) { return q.status === 'pending'; }).forEach(function(q) {
@@ -16899,8 +16987,10 @@
                     + '<span class="tt-seg-name">' + escapeHtml(n.title) + '<span class="tt-avail-sub">' + escapeHtml(tlabel + ' · ' + where) + '</span></span>'
                     + badge + '</button>';
             }
-            var avail = tt.nodes.filter(function(n) { return n.lifecycle === 'available'; });
-            var locked = tt.nodes.filter(function(n) { return n.lifecycle === 'locked'; });
+            var avail = tt.nodes.filter(function(n) { return n.lifecycle === 'available' && !ttIsSilhouette(n); });
+            // Silhouettes are excluded from both lists — a title in a
+            // roster is the same leak as a title on the map (§10.9).
+            var locked = tt.nodes.filter(function(n) { return n.lifecycle === 'locked' && !ttIsSilhouette(n); });
             var html = '<div class="tt-sheet-body"><div class="tt-sheet-kicker">On the web</div><h3 class="tt-sheet-title">Open to accept</h3>';
             if (avail.length) html += '<div class="tt-seg-list">' + avail.map(function(n) { return rowFor(n, false); }).join('') + '</div>';
             else html += '<p class="tt-muted" style="margin-top:12px;">Nothing open right now — resolve a node to open new ones.</p>';
@@ -16915,6 +17005,10 @@
             var tt = ensureTechTree();
             var node = tt.nodes.find(function(n) { return n.id === nodeId; });
             if (!node) return;
+            // v5 §10.9 — an unrevealed node leaks nothing. Every route into
+            // the node sheet passes through here, so this one guard is what
+            // guarantees it, whatever calls it.
+            if (ttIsSilhouette(node)) { ttOpenRevealSheet(nodeId); return; }
             var color = ttNodeColor(node);
             var state = ttNodeState(node);
             var pl = node.payload || {};
@@ -16968,6 +17062,11 @@
             if (!goals.length && node.role !== 'wildcard' && ttActiveGoals().length) {
                 actions += '<button class="tt-btn tt-btn-ghost" onclick="ttAttachToGoal(\'' + node.id + '\')">' + ttIcon('branch', 13) + '<span>Attach to a goal</span></button>';
             }
+            // §8.3 — the Sky → Branch jump, scrolled to this node. Sky opens
+            // the sheet directly (§8.1); this is the way into the lineage
+            // around it without hunting for it in the column.
+            actions += '<button class="tt-btn tt-btn-ghost" onclick="ttCloseSheet();ttSetView(\'branch\',\'' + node.id + '\')">'
+                     + ttIcon('branch', 13) + '<span>See it in the branch</span></button>';
             html += '<div class="tt-sheet-actions">' + actions + '</div></div>';
             ttShowSheet(html);
         };
@@ -17407,6 +17506,13 @@
             var node = tt.nodes.find(function(n) { return n.id === nodeId; });
             if (!node) return;
             node.lifecycle = 'archived';
+            // §5.4 — rejecting must never strand what is behind it. The
+            // rejected node's own prerequisites take its place in every
+            // child, so each child falls back to the nearest non-archived
+            // ancestor and stays both revealable and, eventually, adoptable.
+            // Rejection does not refund the reveal: the user got the
+            // information, which is what they paid for.
+            ttRepointChildrenOf(node, tt);
             // Negative signal (with role, so the model learns "this user
             // rejects wildcards") survives regenerate. FIFO cap 40.
             tt.rejections = (tt.rejections || []).concat([{ nodeTitle: node.title, role: node.role || 'suggestion', reason: 'not_me', at: new Date().toISOString() }]).slice(-40);
@@ -17680,8 +17786,7 @@
            one. Completing a linked activity anywhere (main tracker, another
            quest, this quest) pays the real 20% bonus XP through the same
            completeActivity/undoActivity path — one ledger, not two — and
-           every quest that references it advances together. Follows the
-           Design Brief.
+           every quest that references it advances together.
            ═══════════════════════════════════════════════════════════════════ */
 
         var QUEST_XP_FRACTION = 0.2;   // real bonus XP paid per linked completion
@@ -17695,14 +17800,6 @@
                 .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
         function hexA(hex, a) { if (!hex) return 'rgba(138,144,153,' + a + ')'; var n = parseInt(hex.slice(1), 16); return 'rgba(' + (n >> 16 & 255) + ',' + (n >> 8 & 255) + ',' + (n & 255) + ',' + a + ')'; }
-
-        // Quest level — open-ended, derived from cumulative bonus XP paid.
-        function questLevelFromXP(xp) {
-            xp = Math.max(0, xp || 0);
-            var L = 1;
-            while (xp >= 25 * (L * (L + 1) / 2)) L++;
-            return L;
-        }
 
         // ── icons ───────────────────────────────────────────────────────────
         function prCheckSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'; }
@@ -17739,8 +17836,10 @@
                 if (!p.groups.length) p.groups = [blankGroup()];
             }
             p.schemaVersion = 2;
-            if (typeof p.questXP !== 'number') p.questXP = p.projectXP || 0;
-            p.questLevel = questLevelFromXP(p.questXP);
+            // questXP / questLevel are deliberately not migrated, backfilled,
+            // or deleted here. Quest levelling is gone; the fields stay inert
+            // on documents that already carry them (read-tolerance, §6). No
+            // user's stored data is rewritten to remove them.
             return p;
         }
         function blankGroup() { return { id: prId('grp'), kind: 'group', name: '', ordered: false, repeat: 1, repsDone: 0, children: [] }; }
@@ -17914,6 +18013,81 @@
             })({ kind: 'group', repeat: 1, children: p.groups || [] }, 1);
             return Math.round(sum * QUEST_XP_FRACTION);
         }
+        // ── Quest Grit payout (rate card §4 "Quest completion") ───────────
+        // required completions × 3 × breadth factor, clamped to [15, 120].
+        //
+        // The rate card writes the third term as a "duration factor" but never
+        // defines it, and duration is the wrong axis: one activity dragged
+        // across three months must not out-earn ten activities finished in ten
+        // days. Breadth — how many DISTINCT activities the quest is built from
+        // — is what a decomposition is actually worth, and it reads nothing
+        // date-shaped, so a slow quest and a fast one of the same shape pay
+        // identically.
+        //
+        // Task leaves contribute nothing, here and in questPotentialBonus:
+        // they are self-attested checkboxes with no verification, and an AI
+        // composer that can emit twenty of them would be a Grit printing
+        // press. Grit follows XP.
+        //
+        // The clamp mirrors the rate card's mastery row (floor 40, ceiling
+        // 120): a trivial quest is not worth farming, and the largest quest
+        // cannot out-earn a week of real activity work (~117 for a consistent
+        // user, rate card §3).
+        var GRIT_QUEST_PER_COMPLETION = 3;
+        var GRIT_QUEST_FLOOR = 15;
+        var GRIT_QUEST_CAP   = 120;
+        var GRIT_QUEST_BREADTH = [[10, 2], [6, 1.5], [3, 1.25], [0, 1]];  // [minDistinct, factor], descending
+        function questGritBreadth(distinct) {
+            for (var i = 0; i < GRIT_QUEST_BREADTH.length; i++) {
+                if (distinct >= GRIT_QUEST_BREADTH[i][0]) return GRIT_QUEST_BREADTH[i][1];
+            }
+            return 1;
+        }
+        // Mirrors questPotentialBonus's walk exactly, including the actMeta
+        // check — a leaf pointing at a deleted activity pays neither XP nor
+        // Grit, and must not count toward breadth either.
+        function questGritBonus(p) {
+            var completions = 0, ids = {};
+            (function walk(n, mult) {
+                if (n.kind === 'group') { var m2 = mult * (n.repeat || 1); (n.children || []).forEach(function(c) { walk(c, m2); }); return; }
+                if (n.type !== 'activity') return;
+                if (!actMeta(n.linkedActivityId)) return;
+                completions += itemReq(n) * mult;
+                ids[n.linkedActivityId] = true;
+            })({ kind: 'group', repeat: 1, children: p.groups || [] }, 1);
+            if (completions <= 0) return 0;
+            var raw = completions * GRIT_QUEST_PER_COMPLETION * questGritBreadth(Object.keys(ids).length);
+            return Math.min(GRIT_QUEST_CAP, Math.max(GRIT_QUEST_FLOOR, Math.round(raw)));
+        }
+        // ── Bonus idempotency marker (spec §4) ────────────────────────────
+        // Replaces the deleted refund path. The risk that path pretended to
+        // cover — a paid bonus being un-earned — is unreachable once payment
+        // is a deliberate terminal act. The risk that IS real is paying twice:
+        // two devices, or a double-tap racing the saveUserData() write.
+        //
+        // Absent means unpaid (§6). Every quest that exists today is unmarked,
+        // so an old quest re-completed under the new rules pays once more.
+        // That is the accepted trade — the alternative is a backfill that
+        // guesses, and a wrong guess silently withholds XP someone earned.
+        //
+        // A one-off records a timestamp; a recurring quest records the cycle
+        // numbers it has settled, so cycle 2 is a new award and cycle 1 can
+        // never re-pay. The marker survives resetProject deliberately:
+        // complete → reset → complete used to pay the bonus again every lap.
+        function questBonusPaid(p, cycleNum) {
+            if (p.cadence && p.cadence.type === 'recurring') {
+                return Array.isArray(p.bonusPaidCycles) && p.bonusPaidCycles.indexOf(cycleNum) !== -1;
+            }
+            return !!p.bonusPaidAt;
+        }
+        function markQuestBonusPaid(p, cycleNum) {
+            if (p.cadence && p.cadence.type === 'recurring') {
+                if (!Array.isArray(p.bonusPaidCycles)) p.bonusPaidCycles = [];
+                if (p.bonusPaidCycles.indexOf(cycleNum) === -1) p.bonusPaidCycles.push(cycleNum);
+                return;
+            }
+            p.bonusPaidAt = new Date().toISOString();
+        }
         function questDaysActive(p) { var start = new Date(p.lastResetAt || p.createdAt || Date.now()); return Math.max(1, Math.floor((Date.now() - start.getTime()) / 86400000) + 1); }
         function projectCycleReady(p) { var any = false, all = true; allLeaves(p).forEach(function(l) { if (l.resetMode !== 'once') { any = true; if (!leafDone(l)) all = false; } }); return any && all; }
 
@@ -18014,15 +18188,13 @@
         }
 
         // ═══ Lump-sum quest bonus — paid once, on actual completion ═══
-        // Mirrors the existing completeChallenge/undoChallenge lump-sum XP
-        // pattern (one ledger: quest's own questXP AND the user's real
-        // currentXP/totalXP move together, same level-up/level-down loops
-        // used everywhere else XP is granted).
+        // One ledger, the user's: currentXP / totalXP and the same level-up
+        // loop used everywhere else XP is granted. The quest no longer keeps
+        // a parallel score of its own — a quest is scaffolding, not a thing
+        // that accumulates.
         function payQuestBonus(p, amount) {
             amount = Math.max(0, Math.round(amount || 0));
             if (amount <= 0) return;
-            p.questXP = (p.questXP || 0) + amount;
-            p.questLevel = questLevelFromXP(p.questXP);
             if (!window.userData) return;
             window.userData.currentXP = (window.userData.currentXP || 0) + amount;
             window.userData.totalXP = (window.userData.totalXP || 0) + amount;
@@ -18040,22 +18212,27 @@
             }
             try { if (typeof updateDashboard === 'function') updateDashboard(); } catch (e) {}
         }
-        // Refund path exists only for one-off "Reopen quest" (undoing a seal
-        // that hasn't been followed by any redo work yet) — see reopenProject.
-        function refundQuestBonus(p, amount) {
+        // ── Quest Grit grant ──────────────────────────────────────────────
+        // Routed through gritAwardOnce, which is the Grit system's own
+        // idempotency primitive (§8.5): the marker is checked and set inside
+        // gritState().awarded, so a double-tap or a second device replaying
+        // the same seal pays once. A recurring quest keys its marker on the
+        // cycle number, so cycle 2 is a genuinely new award and cycle 1 can
+        // never re-pay.
+        //
+        // Grit is one-way here. There is deliberately no refund counterpart to
+        // this function: nothing in the quest lifecycle may reduce a user's
+        // Grit balance.
+        function payQuestGrit(p, amount, cycleNum) {
             amount = Math.max(0, Math.round(amount || 0));
-            if (amount <= 0) return;
-            p.questXP = Math.max(0, (p.questXP || 0) - amount);
-            p.questLevel = questLevelFromXP(p.questXP);
-            if (!window.userData) return;
-            window.userData.currentXP = (window.userData.currentXP || 0) - amount;
-            window.userData.totalXP = Math.max(0, (window.userData.totalXP || 0) - amount);
-            while (window.userData.currentXP < 0 && (window.userData.level || 1) > 1) {
-                window.userData.level -= 1;
-                window.userData.currentXP += calculateXPForLevel(window.userData.level);
-            }
-            if (window.userData.currentXP < 0) window.userData.currentXP = 0;
-            try { if (typeof updateDashboard === 'function') updateDashboard(); } catch (e) {}
+            if (amount <= 0) return 0;
+            if (typeof gritAwardOnce !== 'function') return 0;
+            var isRec = p.cadence && p.cadence.type === 'recurring';
+            var marker = 'quest:' + p.id + (isRec ? ':cycle:' + cycleNum : '');
+            var paid = gritAwardOnce(marker, amount, 'quest_completion',
+                { projectId: p.id, projectTitle: p.name || '', cycleNumber: cycleNum },
+                (isRec ? 'Sealed cycle ' + cycleNum + ' — ' : 'Completed ') + (p.name || 'quest'));
+            return paid ? amount : 0;
         }
 
         // ═══ LIST VIEW ══════════════════════════════════════════════════════
@@ -18118,27 +18295,46 @@
             renderProjects();
         };
 
+        // One row per group on the quest card. A sequence is drawn as a path —
+        // dots strung along a rail with the live step lit — because order is the
+        // whole point of it. A list has no order, and dots bunched at the left
+        // end of that same rail read as a sequence someone abandoned early, so
+        // it gets its own primitive: one segment per item, spread across the
+        // full row, each lighting up as it is ticked off, with the tally beside
+        // them. Same slot, same width, no implied direction.
         function renderThreadRow(g) {
-            var cur = currentIndex(g);
+            var kids = g.children || [];
             var rep = (g.repeat || 1) > 1;
-            var dots = (g.children || []).map(function(c, idx) {
-                var cls = nodeDone(c) ? 'pr-tdot-done' : (g.ordered && idx === cur ? 'pr-tdot-cur' : '');
-                return '<span class="pr-tdot ' + cls + '"></span>';
-            }).join('');
+            var done = kids.filter(nodeDone).length;
+            var line;
+            if (g.ordered) {
+                var cur = currentIndex(g);
+                var dots = kids.map(function(c, idx) {
+                    var cls = nodeDone(c) ? 'pr-tdot-done' : (idx === cur ? 'pr-tdot-cur' : '');
+                    return '<span class="pr-tdot ' + cls + '"></span>';
+                }).join('');
+                line = '<span class="pr-thread-rail"></span><div class="pr-thread-dots">' + dots + '</div>';
+            } else {
+                var segs = kids.map(function(c) {
+                    return '<span class="pr-tseg' + (nodeDone(c) ? ' pr-tseg-done' : '') + '"></span>';
+                }).join('');
+                line = '<div class="pr-thread-segs">' + segs + '</div>' +
+                    '<span class="pr-thread-frac">' + done + '/' + kids.length + '</span>';
+            }
             var tagCls = rep ? 'pr-tag-rep' : (g.ordered ? 'pr-tag-ord' : 'pr-tag-un');
             var tagText = rep ? ('×' + g.repeat) : (g.ordered ? 'sequence' : 'list');
             return '<div class="pr-thread' + (g.ordered ? ' pr-thread-ordered' : ' pr-thread-un') + '">' +
                 '<span class="pr-thread-name">' + escapeHtml(g.name || 'Group') + '</span>' +
-                '<div class="pr-thread-line"><span class="pr-thread-rail"></span><div class="pr-thread-dots">' + dots + '</div></div>' +
+                '<div class="pr-thread-line">' + line + '</div>' +
                 '<span class="pr-thread-tag ' + tagCls + '">' + tagText + '</span>' +
             '</div>';
         }
 
         function renderProjectCard(p) {
-            var lvl = p.questLevel || questLevelFromXP(p.questXP || 0);
             var counts = questCounts(p);
             var stats = questStats(p);
             var potential = questPotentialBonus(p);
+            var gritPotential = questGritBonus(p);
             var pct = stats.total ? Math.round(stats.done / stats.total * 100) : 0;
             var statusCls = p.status === 'completed' ? ' pr-card-gold' : p.status === 'archived' ? ' pr-card-muted' : p.status === 'paused' ? ' pr-card-paused' : '';
             var unit = counts.tasks === 0 ? 'activities' : (counts.activities === 0 ? 'tasks' : 'items');
@@ -18146,6 +18342,7 @@
 
             var bits = [];
             if (potential > 0) bits.push('<span class="pr-cd-bonus">+' + potential + ' XP</span>');
+            if (gritPotential > 0) bits.push('<span class="pr-cd-grit">+' + gritPotential + ' Grit</span>');
             bits.push('<span>' + escapeHtml(prFreqLabel(p)) + '</span>');
             bits.push('<span>' + groupCount + ' group' + (groupCount === 1 ? '' : 's') + '</span>');
             var detailLine = bits.join('<span class="pr-cd-sep">·</span>');
@@ -18168,7 +18365,6 @@
                         '<div class="pr-card-headings">' +
                             '<div class="pr-card-name-row">' +
                                 '<h3 class="pr-card-name">' + escapeHtml(p.name || 'Untitled quest') + '</h3>' +
-                                '<span class="pr-chip pr-chip-lv">Lv.&nbsp;' + lvl + '</span>' +
                             '</div>' +
                             '<div class="pr-card-detailline">' + detailLine + '</div>' +
                         '</div>' +
@@ -18227,6 +18423,7 @@
 
             var stats = questStats(p);
             var potential = questPotentialBonus(p);
+            var gritPotential = questGritBonus(p);
             var flavor = questFlavor(p);
             var pct = stats.total ? Math.round(stats.done / stats.total * 100) : 0;
             var sealed = p.status === 'completed';
@@ -18234,24 +18431,25 @@
             var dim = p.dimensionId ? (window.userData.dimensions || []).find(function(d) { return d.id === p.dimensionId; }) : null;
             var dimHex = dim ? DIM_HEX_MAP[dim.color] : null;
 
+            // No back row: it repeated the page title one line under it, and the
+            // Quests tab and the system back gesture both already return to the
+            // list. Edit rides in the hero card's own top-right corner instead
+            // of floating above it.
             var header =
-                '<button class="pr-back" onclick="closeProjectDetail()">' +
-                    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>Quests</button>' +
-                '<button class="pr-icon-btn pr-detail-edit" onclick="openProjectModal(\'' + p.id + '\')" aria-label="Edit quest"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>' +
                 '<div class="pr-detail-head' + (sealed ? ' pr-detail-sealed' : '') + '">' +
                     '<span class="pr-strip" style="' + projectStripStyle(p) + '"></span>' +
+                    '<button class="pr-icon-btn pr-detail-edit" onclick="openProjectModal(\'' + p.id + '\')" aria-label="Edit quest"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>' +
                     '<div class="pr-detail-top">' +
                         '<span class="pr-detail-emoji">' + (p.emoji || DEFAULT_QUEST_EMOJI) + '</span>' +
                         '<div class="pr-detail-titles">' +
                             '<div class="pr-detail-name-row">' +
                                 '<h1 class="pr-detail-name">' + escapeHtml(p.name || 'Untitled quest') + '</h1>' +
-                                '<span class="pr-chip pr-chip-lv">Lv.&nbsp;' + (p.questLevel || 1) + '</span>' +
                                 (dim ? '<span class="pr-detail-dim" style="background:' + hexA(dimHex, .16) + ';color:' + dimHex + ';">' + escapeHtml(dim.name) + '</span>' : '') +
                             '</div>' +
                             (flavor ? '<div class="pr-detail-flavor">' + escapeHtml(flavor) + '</div>' : '') +
                             (p.description ? '<div class="pr-detail-desc">' + escapeHtml(p.description) + '</div>' : '') +
                             '<div class="pr-detail-meta">' +
-                                (potential > 0 ? '<span class="pr-detail-meta-g">+' + potential + ' XP</span> bonus <span class="pr-detail-meta-dot">·</span> ' : '') +
+                                (potential > 0 ? '<span class="pr-detail-meta-g">+' + potential + ' XP</span>' + (gritPotential > 0 ? ' <span class="pr-detail-meta-grit">+' + gritPotential + ' Grit</span>' : '') + ' bonus <span class="pr-detail-meta-dot">·</span> ' : '') +
                                 escapeHtml(prFreqLabel(p)) + ' <span class="pr-detail-meta-dot">·</span> ' + groupCount + ' group' + (groupCount === 1 ? '' : 's') +
                             '</div>' +
                         '</div>' +
@@ -18645,16 +18843,34 @@
             var ready = projectCycleReady(p);
             if (!ready) {
                 var isRec = p.cadence && p.cadence.type === 'recurring';
-                if (!confirm(isRec ? 'Some per-cycle items aren’t done yet. Seal this cycle early and start a fresh one? You won’t earn this cycle’s bonus XP.' : 'Some items aren’t done yet. Mark this quest complete anyway? You won’t earn the bonus XP.')) return;
+                if (!confirm(isRec ? 'Some per-cycle items aren’t done yet. Seal this cycle early and start a fresh one? You won’t earn this cycle’s bonus XP or Grit.' : 'Some items aren’t done yet. Mark this quest complete anyway? You won’t earn the bonus XP or Grit.')) return;
             }
-            var bonus = ready ? questPotentialBonus(p) : 0;
+            // Sealing early (the confirm() override above) pays NOTHING — not
+            // XP, not Grit. Both are gated on the same `ready` flag so the two
+            // currencies can never disagree about whether the work was done.
+            var cycleNum = p.currentCycle || 1;
+            // Pay only for a settlement this quest/cycle has not already been
+            // paid for. Sealing early pays nothing; sealing a second time
+            // after a reopen or a reset pays nothing.
+            var payable = ready && !questBonusPaid(p, cycleNum);
+            var bonus = payable ? questPotentialBonus(p) : 0;
+            var grit  = payable ? questGritBonus(p) : 0;
             var stats = questStats(p);
+            // Persistence precedes the grant (§3.4): the history entry and the
+            // marker are on the object before any currency moves, so a failure
+            // between the two leaves a record of an unpaid seal rather than a
+            // payment with no record of what earned it. The marker is set on
+            // any ready settlement, not only a paying one — otherwise a quest
+            // completed while worth nothing could be edited to add activity
+            // leaves and completed again for a full payout.
             p.cycleHistory = p.cycleHistory || [];
-            p.cycleHistory.push({ cycleNumber: p.currentCycle || 1, startedAt: p.startedCycleAt || p.createdAt, completedAt: new Date().toISOString(), itemsCompleted: stats.done, itemsTotal: stats.total, bonusXp: bonus });
+            p.cycleHistory.push({ cycleNumber: cycleNum, startedAt: p.startedCycleAt || p.createdAt, completedAt: new Date().toISOString(), itemsCompleted: stats.done, itemsTotal: stats.total, bonusXp: bonus, bonusGrit: grit });
+            if (payable) markQuestBonusPaid(p, cycleNum);
             delete _prNextSkip[p.id]; delete _prNextDone[p.id];
-            p.lastBonusPaid = bonus;
             payQuestBonus(p, bonus);
+            var gritPaid = payQuestGrit(p, grit, cycleNum);
             var bonusMsg = bonus > 0 ? (' — +' + bonus + ' XP') : '';
+            if (gritPaid > 0) bonusMsg += (bonus > 0 ? ' · +' : ' — +') + gritPaid + ' Grit';
             if (p.cadence && p.cadence.type === 'recurring') {
                 clearRecurringItems(p);
                 p.currentCycle = (p.currentCycle || 1) + 1; p.startedCycleAt = new Date().toISOString();
@@ -18670,17 +18886,15 @@
         window.resumeProject = function(id) { var p = findProject(id); if (!p) return; p.status = 'active'; saveUserData(); showToast('Quest resumed', 'green'); renderProjectDetail(id); };
         window.archiveProject = function(id) { var p = findProject(id); if (!p) return; p.status = 'archived'; saveUserData(); showToast('Quest archived', 'olive'); window.closeProjectDetail(); };
         window.unarchiveProject = function(id) { var p = findProject(id); if (!p) return; p.status = 'active'; saveUserData(); showToast('Quest restored', 'green'); renderProjectDetail(id); };
-        // Reopening refunds the just-paid bonus (mirrors undo elsewhere in the
-        // app: the inverse of a completion is a real, reversible refund) —
-        // otherwise reopen -> instantly re-complete for free would pay the
-        // lump sum twice for the same work.
+        // Reopening takes nothing back. Double payment is prevented at the
+        // paying end by the bonusPaidAt / bonusPaidCycles marker, not by a
+        // clawback here: reopen -> re-complete simply pays zero. Quest state
+        // must never reduce a user's XP, level, or Grit (spec §24.3).
         window.reopenProject = function(id) {
             var p = findProject(id); if (!p) return;
-            var refund = p.lastBonusPaid || 0;
-            if (refund > 0) { refundQuestBonus(p, refund); p.lastBonusPaid = 0; }
             p.status = 'active'; p.completedAt = null;
             saveUserData();
-            showToast(refund > 0 ? 'Quest reopened — −' + refund + ' XP refunded' : 'Quest reopened', 'green');
+            showToast('Quest reopened', 'green');
             renderProjectDetail(id);
         };
 
@@ -19104,13 +19318,13 @@
                 var p = findProject(_projectEditingId);
                 if (!p) { showToast('Quest not found', 'red'); return; }
                 p.name = name; p.emoji = emoji; p.description = desc; p.dimensionIds = dims.dimensionIds; p.dimensionId = dims.dimensionId;
-                p.cadence = cadence; p.groups = groups; p.schemaVersion = 2; p.questLevel = questLevelFromXP(p.questXP || 0);
+                p.cadence = cadence; p.groups = groups; p.schemaVersion = 2;
                 var savedId = p.id;
                 saveUserData(); closeProjectModal(); showToast('✓ Quest updated', 'green'); openProjectDetail(savedId);
             } else {
                 var proj = { id: prId('proj'), name: name, emoji: emoji, description: desc, dimensionIds: dims.dimensionIds, dimensionId: dims.dimensionId,
                     status: 'active', cadence: cadence, groups: groups, schemaVersion: 2, currentCycle: 1, cycleHistory: [],
-                    questXP: 0, questLevel: 1, createdAt: new Date().toISOString(), startedCycleAt: new Date().toISOString() };
+                    createdAt: new Date().toISOString(), startedCycleAt: new Date().toISOString() };
                 getProjects().push(proj);
                 // Tech Tree quest accept: link the node and materialize any
                 // pending new-activity leaves now that the builder saved.
@@ -19205,3 +19419,4975 @@
                 // Deliberately not re-armed: the next back press exits.
             });
         })();
+
+
+        // ════════════════════════════════════════════════════════════════════
+        // ══ GRIT CURRENCY SYSTEM ════════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════════
+        //
+        // Self-contained. Everything below is namespaced `grit*` and reaches
+        // the rest of the app through four surgical hook points only:
+        //
+        //   predictCompletionXP()  — reads the armed XP boost (×2)
+        //   completeActivity()     — one call to gritOnCompletion()
+        //   retroactiveComplete()  — one call to gritOnRetroComplete()
+        //   retroactiveDelete()    — one call to gritOnRetroDelete()
+        //   processStreakPauses()  — one call to gritOnLogin()
+        //
+        // Balance and state live in `userData.grit` (rides the existing
+        // saveUserData full-document write). The ledger lives in the
+        // `users/{uid}/gritLedger` SUBCOLLECTION so saveUserData's setDoc
+        // can never clobber it and it never bloats the user document.
+        //
+        // NOTHING here touches the tech tree's unsealing, modes, quests or
+        // social features (§8.12). It reads `techTreeMasteredAt` — a value
+        // the tech tree already writes — and nothing else.
+        // ════════════════════════════════════════════════════════════════════
+
+        // ── Rate card ─────────────────────────────────────────────────────
+        // Single source of truth for every number in the system.
+        const GRIT_SCHEMA_VERSION   = 1;
+        const GRIT_DRIP             = 1;      // §4.1 per completion
+        const GRIT_CADENCE_BONUS    = 5;      // §4.2 occasional on-rhythm
+        const GRIT_CADENCE_MIN_PRIOR = 4;     // §4.2 prior completions required
+        const GRIT_CADENCE_SAMPLE   = 6;      // §4.2 last N completions for the median
+        const GRIT_CADENCE_LO       = 0.5;    // §4.2 window around the median
+        const GRIT_CADENCE_HI       = 1.5;
+        const GRIT_STREAK_TIERS     = [       // §4.3 [days, grit]
+            [7, 10], [14, 20], [30, 40], [60, 60], [100, 100]
+        ];
+        const GRIT_MASTERY_FLOOR    = 40;     // §4.4 1 per required rep, clamped
+        const GRIT_MASTERY_CAP      = 120;
+        const GRIT_SHIELD_COST      = 40;     // §5.1 uncapped
+        const GRIT_BOOST_COST       = 50;     // §5.2
+        const GRIT_BOOST_PER_MONTH  = 1;      // §5.2 calendar-month cap
+
+        // ── Gifting rate card (gifting spec §3.2) ─────────────────────────
+        // A gifted item ALWAYS costs half the self-purchase price. That ratio
+        // is the standing rule for every future giftable item — it exists to
+        // push people toward bringing friends in rather than self-servicing,
+        // so derive it, never hand-write a second number.
+        const GRIT_GIFT_RATIO           = 0.5;
+        const GRIT_GIFT_SHIELD_COST     = Math.round(GRIT_SHIELD_COST * GRIT_GIFT_RATIO);  // 20
+        const GRIT_GIFT_BOOST_COST      = Math.round(GRIT_BOOST_COST  * GRIT_GIFT_RATIO);  // 25
+        const GRIT_GIFT_BOOST_PER_MONTH = 3;  // gifted boosts, counted separately
+                                              // from the 1 self-purchase
+
+        const GRIT_RATIO_CAP        = 1.30;   // §3.5
+
+        // §3.5 / rate card §1.2 — weekly bonus curve, [ratio, grit], linearly
+        // interpolated between anchors and rounded to whole Grit.
+        //
+        // Below 20% the payout is a hard zero, NOT an interpolation down to
+        // nothing: the rate card lists "Below 20% → 0" as its own row, so 19%
+        // pays nothing and 20% pays 30. The cliff is deliberate — it is the
+        // floor that makes the bonus mean "you showed up this week".
+        const GRIT_WEEKLY_MIN_RATIO = 0.20;
+        const GRIT_WEEKLY_CURVE = [
+            [0.20,  30],
+            [0.30,  36],
+            [0.40,  42],
+            [0.50,  48],
+            [0.60,  54],
+            [0.70,  60],
+            [0.80,  65],
+            [0.90,  70],
+            [1.00,  75],
+            [1.10,  83],
+            [1.20,  91],
+            [1.30, 100]
+        ];
+
+        // ── State access ──────────────────────────────────────────────────
+        // Returns the live grit object, creating it on first touch. Never
+        // returns null: callers that run before sign-in get a throwaway that
+        // is discarded when userData loads.
+        function gritState() {
+            if (!window.userData) return null;
+            var g = window.userData.grit;
+            if (!g || typeof g !== 'object') {
+                g = window.userData.grit = {
+                    schemaVersion: GRIT_SCHEMA_VERSION,
+                    balance: 0, lifetimeEarned: 0, lifetimeSpent: 0,
+                    shieldPool: 0,
+                    week: null,
+                    awarded: {},
+                    boostPurchases: [],
+                    cadence: {},
+                    pendingBoost: null
+                };
+            }
+            if (g.schemaVersion !== GRIT_SCHEMA_VERSION) g.schemaVersion = GRIT_SCHEMA_VERSION;
+            if (typeof g.balance !== 'number' || !isFinite(g.balance)) g.balance = 0;
+            if (typeof g.lifetimeEarned !== 'number') g.lifetimeEarned = 0;
+            if (typeof g.lifetimeSpent !== 'number') g.lifetimeSpent = 0;
+            if (typeof g.shieldPool !== 'number') g.shieldPool = 0;
+            if (!g.awarded || typeof g.awarded !== 'object') g.awarded = {};
+            if (!Array.isArray(g.boostPurchases)) g.boostPurchases = [];
+            if (!g.cadence || typeof g.cadence !== 'object') g.cadence = {};
+            return g;
+        }
+
+        function gritBalance() { var g = gritState(); return g ? g.balance : 0; }
+        window.gritBalance = gritBalance;
+
+        // ── Ledger (users/{uid}/gritLedger) ───────────────────────────────
+        // Append-only. Never mutated, never deleted. Entry ids are
+        // timestamp-prefixed so the raw collection reads chronologically and
+        // ids never collide; the Rewards tab pages newest-first by ordering
+        // on the `at` field (see gritReadLedger for why not by id).
+        let _gritLedgerBuffer = [];
+        let _gritLedgerTimer  = null;
+        let _gritLedgerSeq    = 0;
+
+        function gritLedgerId(atISO) {
+            // 2026-08-22T09:14:07.221Z → 20260822T091407221 + seq + rand,
+            // so ids sort chronologically and never collide inside one ms.
+            var stamp = String(atISO).replace(/[-:.]/g, '').replace('Z', '');
+            _gritLedgerSeq = (_gritLedgerSeq + 1) % 1000;
+            return stamp + '-' + String(_gritLedgerSeq).padStart(3, '0') + '-' +
+                   Math.random().toString(36).slice(2, 7);
+        }
+
+        // Buffers an entry. §2.2: the per-completion drip fires constantly, so
+        // we never write a document per tap — the balance in userData updates
+        // immediately and the ledger catches up on a debounce, on tab blur,
+        // and on unload.
+        function gritLedgerWrite(delta, balanceAfter, reason, meta) {
+            var at = new Date().toISOString();
+            var entry = {
+                at: at, delta: delta, balanceAfter: balanceAfter, reason: reason,
+                meta: meta || {}
+            };
+            _gritLedgerBuffer.push({ id: gritLedgerId(at), data: entry });
+            clearTimeout(_gritLedgerTimer);
+            _gritLedgerTimer = setTimeout(function () { gritFlushLedger(); }, 5000);
+            return entry;
+        }
+
+        async function gritFlushLedger() {
+            clearTimeout(_gritLedgerTimer);
+            _gritLedgerTimer = null;
+            if (!_gritLedgerBuffer.length) return;
+            if (!canPersistUserData('gritLedger')) return;   // keep buffered; retry later
+            var pending = _gritLedgerBuffer;
+            _gritLedgerBuffer = [];
+            try {
+                var uid = window.currentUser.uid;
+                // Firestore caps a batch at 500 writes.
+                for (var i = 0; i < pending.length; i += 400) {
+                    var slice = pending.slice(i, i + 400);
+                    var batch = writeBatch(db);
+                    slice.forEach(function (e) {
+                        batch.set(doc(db, 'users', uid, 'gritLedger', e.id), e.data);
+                    });
+                    await batch.commit();
+                }
+                _gritLogCache = null;
+            } catch (err) {
+                // Put them back — the ledger is append-only and must not lose
+                // entries. Balance is already correct in userData either way.
+                console.warn('Grit ledger flush failed, re-buffering:', err && err.message);
+                _gritLedgerBuffer = pending.concat(_gritLedgerBuffer);
+            }
+        }
+
+        async function gritReadLedger(max) {
+            if (!canPersistUserData('gritLedgerRead')) return [];
+            try {
+                var col = collection(db, 'users', window.currentUser.uid, 'gritLedger');
+                // Ordered by the `at` field, NOT by document id: Firestore
+                // refuses a descending key scan outright
+                // (failed-precondition), so orderBy(documentId(), 'desc')
+                // throws on every call. `at` is an ISO-8601 UTC string, so
+                // lexicographic order is chronological order, and a single
+                // field plus a limit is served by the automatic single-field
+                // index — still no composite index to configure.
+                var snap = await getDocs(query(col, orderBy('at', 'desc'), limit(max || 20)));
+                var out = [];
+                snap.forEach(function (d) { out.push(d.data()); });
+                return out;
+            } catch (err) {
+                console.warn('Grit ledger read failed:', err && err.message);
+                return [];
+            }
+        }
+
+        // ── Balance arithmetic ────────────────────────────────────────────
+        // §8.4 the balance never goes negative; §8.6 every change writes a
+        // ledger entry with an attributable reason.
+        function gritApplyDelta(delta, reason, meta) {
+            var g = gritState();
+            if (!g) return 0;
+            delta = Math.round(delta || 0);
+            if (!delta) return g.balance;
+
+            var raw = g.balance + delta;
+            if (raw < 0) {
+                // Should be unreachable — every spend path checks first. If we
+                // get here the arithmetic is wrong somewhere, so clamp and say
+                // so in the ledger rather than silently carrying a negative.
+                var shortfall = -raw;
+                var applied = delta + shortfall;          // what actually moved
+                console.warn('Grit: clamped a negative balance (' + raw + ') from ' + reason);
+                g.balance = 0;
+                if (delta < 0) g.lifetimeSpent += -applied;
+                gritLedgerWrite(applied, 0, reason, meta || {});
+                // The correction carries delta 0 on purpose: nothing was
+                // credited, so summing every delta in the ledger still lands
+                // exactly on the balance. It is a note in the record of a
+                // clamp that happened, with the arithmetic that caused it.
+                gritLedgerWrite(0, 0, 'correction', {
+                    note: 'clamped to zero', attemptedFrom: reason,
+                    attemptedDelta: delta, shortfall: shortfall
+                });
+                gritRefreshUI();
+                return 0;
+            }
+
+            g.balance = raw;
+            if (delta > 0) g.lifetimeEarned += delta; else g.lifetimeSpent += -delta;
+            gritLedgerWrite(delta, g.balance, reason, meta || {});
+            gritRefreshUI();
+            return g.balance;
+        }
+
+        // Persists userData and reports success honestly. §5.3 requires
+        // persistence to precede the grant, so purchases need a save they can
+        // actually check — saveUserData() swallows its error and alerts.
+        async function gritPersist() {
+            if (!canPersistUserData('gritPersist')) return false;
+            try {
+                await setDoc(doc(db, 'users', window.currentUser.uid), window.userData);
+                return true;
+            } catch (err) {
+                console.error('Grit persist failed:', err);
+                return false;
+            }
+        }
+
+        // ── Dates ─────────────────────────────────────────────────────────
+        // All Grit dates are local YYYY-MM-DD via the app's existing
+        // toLocalDateStr(). completionHistory stores full ISO timestamps, so
+        // every comparison goes through this pair.
+        function gritDayOf(isoOrDate) {
+            return toLocalDateStr(isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate));
+        }
+
+        // Monday 00:00 local of the week containing `d` (§3.1).
+        function gritWeekAnchorOf(d) {
+            var dt = d ? new Date(d.getTime()) : new Date();
+            dt.setHours(0, 0, 0, 0);
+            dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7));   // 0=Sun → back 6
+            return dt;
+        }
+        function gritWeekAnchorStr(d) { return toLocalDateStr(gritWeekAnchorOf(d)); }
+
+        function gritDaysBetween(aISO, bISO) {
+            return (new Date(bISO).getTime() - new Date(aISO).getTime()) / 86400000;
+        }
+
+        // ── Activity classification ───────────────────────────────────────
+        function gritAllActivities() {
+            var out = [];
+            ((window.userData && window.userData.dimensions) || []).forEach(function (dim) {
+                (dim.paths || []).forEach(function (path) {
+                    (path.activities || []).forEach(function (act) { out.push(act); });
+                });
+            });
+            return out;
+        }
+
+        function gritFindActivity(id) {
+            var hit = null;
+            gritAllActivities().some(function (a) { if (a.id === id) { hit = a; return true; } return false; });
+            return hit;
+        }
+
+        function gritIsOccasional(a) {
+            return a.frequency === 'occasional' || a.frequency === 'one-time' || !a.frequency;
+        }
+
+        // A perform-mode negative habit costs XP when done. Putting one in the
+        // denominator would pay the user to do the thing they are trying to
+        // stop, so it is excluded from BOTH the quota and the drip. Skip-mode
+        // negatives (isSkipNegative) pay positive XP when performed and are
+        // treated as ordinary activities.
+        function gritIsPunitive(a) {
+            return !!(a.isNegative && !a.isSkipNegative);
+        }
+
+        function gritIsCountable(a) {
+            return !!a && !a.archived && !a.deleted && !gritIsPunitive(a);
+        }
+
+        // §3.2 — lookback window for liveness, in days.
+        //   daily / weekly → 7; anything longer → its own cycle length.
+        function gritLookbackDays(a) {
+            switch (a.frequency) {
+                case 'daily':    return 7;
+                case 'weekly':   return 7;
+                case 'biweekly': return 14;
+                case 'monthly':  return 30;
+                case 'custom':
+                    if (a.customSubtype === 'days') return 7;   // day-pinned: weekly window
+                    return Math.max(7, a.customDays || 1);
+                default:         return 7;
+            }
+        }
+
+        // §3.3 — weekly quota units this activity contributes.
+        //   daily 7 · weekly 1 · biweekly 0.5 · monthly 7/30
+        //   custom cycle: 7 × timesPerCycle ÷ customDays
+        //   custom day-pinned: 1 per required completion, NOT one per eligible
+        //     day — pinning narrows WHEN, not HOW MUCH
+        //   occasional / one-time / no frequency: 0, always (§8.8)
+        function gritQuotaUnits(a) {
+            if (!gritIsCountable(a)) return 0;
+            if (gritIsOccasional(a)) return 0;
+            switch (a.frequency) {
+                case 'daily':    return 7;
+                case 'weekly':   return 1;
+                case 'biweekly': return 7 / 14;
+                case 'monthly':  return 7 / 30;
+                case 'custom': {
+                    var n = Math.max(1, a.timesPerCycle || 1);
+                    if (a.customSubtype === 'days') {
+                        // No eligible day pinned → nothing is owed this week.
+                        if (!a.scheduledDays || !a.scheduledDays.length) return 0;
+                        return n;
+                    }
+                    var d = Math.max(1, a.customDays || 1);
+                    return 7 * n / d;
+                }
+                default: return 0;
+            }
+        }
+
+        // §3.2 — at least one completion inside the lookback window, counted
+        // backward from the week anchor. No dormant flag, no user toggle: an
+        // activity you stopped doing quietly leaves the denominator.
+        function gritIsLive(a, refDate) {
+            var backMs = refDate.getTime() - gritLookbackDays(a) * 86400000;
+            var refMs  = refDate.getTime();
+            var hist = a.completionHistory || [];
+            // Scanned newest-first but WITHOUT an early exit on the first
+            // too-old entry. completionHistory is kept sorted everywhere it is
+            // written, but liveness decides whether an activity is in the
+            // denominator at all — too load-bearing to rest on an ordering
+            // invariant maintained somewhere else. 365 entries at most.
+            for (var i = hist.length - 1; i >= 0; i--) {
+                var e = hist[i];
+                if (!e || e.isPenalty || (e.xp || 0) <= 0) continue;
+                var t = new Date(e.date).getTime();
+                if (t >= backMs && t < refMs) return true;
+            }
+            return false;
+        }
+
+        // Builds the frozen denominator for the week starting `anchorDate`.
+        function gritBuildWeekQuota(anchorDate) {
+            var contributors = [];
+            var quota = 0;
+            gritAllActivities().forEach(function (a) {
+                if (!gritIsCountable(a)) return;
+                var units = gritQuotaUnits(a);
+                if (units <= 0) return;
+                if (!gritIsLive(a, anchorDate)) return;
+                quota += units;
+                contributors.push({
+                    activityId: a.id,
+                    title: a.name || 'Activity',
+                    quotaUnits: Math.round(units * 100) / 100
+                });
+            });
+            return { quota: Math.round(quota * 100) / 100, contributors: contributors };
+        }
+
+        // ── The weekly quota engine (§3) ──────────────────────────────────
+
+        function gritNewWeek(anchorStr) {
+            // Liveness is measured backward from the moment the week actually
+            // opens. On a Monday-morning open that is the anchor, exactly as
+            // §3.2 describes. When the week is opened LATE — a cold start on a
+            // Wednesday, a first run after deploy, a user returning mid-week —
+            // the anchor is already in the past, and measuring from it would
+            // ignore everything they have done since Monday and hand them an
+            // empty denominator for a week they were plainly active in. The
+            // reference is therefore the later of the anchor and now.
+            var anchorDate = new Date(anchorStr + 'T00:00:00');
+            var now = new Date();
+            var built = gritBuildWeekQuota(now > anchorDate ? now : anchorDate);
+            return {
+                anchor: anchorStr,
+                quota: built.quota,
+                completions: 0,
+                byActivity: {},          // numerator split, so §3.4 deletions
+                                         // can be subtracted from it
+                contributors: built.contributors,
+                reconciledAt: null
+            };
+        }
+
+        // §3.5 — payout curve, linearly interpolated between anchors and
+        // rounded to whole Grit.
+        function gritCurve(ratio) {
+            var c = GRIT_WEEKLY_CURVE;
+            if (!c.length) return 0;
+            if (ratio < GRIT_WEEKLY_MIN_RATIO) return 0;   // the cliff, not a ramp
+            if (ratio <= c[0][0]) return Math.round(c[0][1]);
+            for (var i = 1; i < c.length; i++) {
+                if (ratio <= c[i][0]) {
+                    var span = c[i][0] - c[i - 1][0];
+                    var f = span > 0 ? (ratio - c[i - 1][0]) / span : 0;
+                    return Math.round(c[i - 1][1] + f * (c[i][1] - c[i - 1][1]));
+                }
+            }
+            return Math.round(c[c.length - 1][1]);
+        }
+
+        // §3.5 — ratio = min(completions / quota, 1.30). A zero denominator
+        // is NOT a divide-by-zero and NOT a payout: it is "nothing has a
+        // frequency set", which the UI says plainly (§8.9).
+        function gritWeekRatio(week) {
+            if (!week || !week.quota || week.quota <= 0) return null;
+            return Math.min(week.completions / week.quota, GRIT_RATIO_CAP);
+        }
+
+        function gritProjectedBonus(week) {
+            var r = gritWeekRatio(week);
+            return r === null ? 0 : gritCurve(r);
+        }
+
+        // §3.4 — activities deleted mid-week leave the denominator immediately
+        // and take their completions out of the numerator with them. Done
+        // lazily (on every week touch and every render) rather than by hooking
+        // the several delete paths, so no deletion route can miss it.
+        function gritReconcileContributors(g) {
+            var w = g.week;
+            if (!w || !Array.isArray(w.contributors)) return false;
+            var changed = false;
+            var kept = [];
+            w.contributors.forEach(function (c) {
+                if (gritFindActivity(c.activityId)) { kept.push(c); return; }
+                w.quota = Math.max(0, Math.round((w.quota - c.quotaUnits) * 100) / 100);
+                changed = true;
+            });
+            if (changed) w.contributors = kept;
+
+            // Numerator: drop the completions of activities that no longer
+            // exist. deleteOnComplete activities are excluded — they are
+            // *meant* to vanish on completion and their completion was real.
+            var by = w.byActivity || (w.byActivity = {});
+            Object.keys(by).forEach(function (id) {
+                if (by[id] && by[id].keepOnDelete) return;
+                if (gritFindActivity(id)) return;
+                var n = (typeof by[id] === 'number') ? by[id] : (by[id].n || 0);
+                if (n > 0) { w.completions = Math.max(0, w.completions - n); changed = true; }
+                delete by[id];
+            });
+            return changed;
+        }
+
+        function gritBumpNumerator(g, activity, delta) {
+            var w = g.week;
+            if (!w) return;
+            w.completions = Math.max(0, w.completions + delta);
+            var by = w.byActivity || (w.byActivity = {});
+            var cur = by[activity.id];
+            var rec = (cur && typeof cur === 'object') ? cur : { n: (typeof cur === 'number' ? cur : 0) };
+            rec.n = Math.max(0, (rec.n || 0) + delta);
+            // An occasional activity with deleteOnComplete removes itself the
+            // instant it is completed. Mark the tally so the reconcile pass
+            // above doesn't then take the completion back.
+            if (activity.deleteOnComplete) rec.keepOnDelete = true;
+            if (rec.n === 0 && !rec.keepOnDelete) delete by[activity.id]; else by[activity.id] = rec;
+        }
+
+        // §3.6 — rollover. Called on login and before every write that touches
+        // the week. Returns true when anything changed.
+        let _gritEnsuring = false;
+        function gritEnsureWeek(opts) {
+            var g = gritState();
+            if (!g || _gritEnsuring) return false;
+            _gritEnsuring = true;
+            try { return gritEnsureWeekInner(g); } finally { _gritEnsuring = false; }
+        }
+
+        function gritEnsureWeekInner(g) {
+            var nowAnchor = gritWeekAnchorStr(new Date());
+            var changed = false;
+
+            if (!g.week || !g.week.anchor) {
+                g.week = gritNewWeek(nowAnchor);
+                return true;
+            }
+
+            if (g.week.anchor === nowAnchor) {
+                return gritReconcileContributors(g) || changed;
+            }
+
+            // ── A boundary has passed ─────────────────────────────────────
+            // The stored week is the most recent week the app actually
+            // observed. §3.6: reconcile that one and only that one. If the
+            // user was away for a month, the weeks in between were never
+            // observed, have no frozen denominator and no completions — they
+            // pay nothing and are not reconstructed.
+            var closed = g.week;
+            gritReconcileContributors(g);
+            var marker = 'weekly:' + closed.anchor;
+            if (!g.awarded[marker]) {
+                g.awarded[marker] = true;
+                var ratio = gritWeekRatio(closed);
+                var payout = ratio === null ? 0 : gritCurve(ratio);
+                closed.reconciledAt = new Date().toISOString();
+                if (payout > 0) {
+                    gritApplyDelta(payout, 'weekly_bonus', {
+                        ratio: Math.round(ratio * 1000) / 1000,
+                        quota: closed.quota,
+                        completions: closed.completions,
+                        anchor: closed.anchor
+                    });
+                    gritBurstAdd('Weekly consistency (' + Math.round(ratio * 100) + '% of target)', payout);
+                }
+                g.lastClosedWeek = {
+                    anchor: closed.anchor, quota: closed.quota,
+                    completions: closed.completions,
+                    ratio: ratio, payout: payout
+                };
+            }
+
+            // §3.6.3–4 — rebuild the denominator against current activities,
+            // reset the numerator, advance straight to the current Monday.
+            g.week = gritNewWeek(nowAnchor);
+            return true;
+        }
+
+        // ── Earn: idempotency ─────────────────────────────────────────────
+        // §8.5 — every award path is idempotent by explicit marker, never by
+        // assuming single execution. Mastery and streak evaluation each run on
+        // login, after every completion AND on every render.
+        function gritAwardOnce(marker, amount, reason, meta, toastLabel) {
+            var g = gritState();
+            if (!g || g.awarded[marker]) return false;
+            g.awarded[marker] = true;
+            gritApplyDelta(amount, reason, meta);
+            if (toastLabel) gritBurstAdd(toastLabel, amount);
+            return true;
+        }
+
+        // ── Earn: streak milestones (§4.3) ────────────────────────────────
+        // Awards every unpaid tier at or below the current streak, so a
+        // retroactive edit that jumps a streak from 5 to 31 pays 7, 14 and 30
+        // once each. A rebuilt streak never re-pays: the marker lives for the
+        // life of the activity (§4.3).
+        function gritCheckStreakMilestones(activity) {
+            if (!gritIsCountable(activity) || gritIsOccasional(activity)) return false;
+            var streak = activity.streak || 0;
+            if (streak <= 0) return false;
+            var any = false;
+            GRIT_STREAK_TIERS.forEach(function (tier) {
+                if (streak < tier[0]) return;
+                var paid = gritAwardOnce(
+                    'streak:' + activity.id + ':' + tier[0], tier[1], 'streak_milestone',
+                    { activityId: activity.id, activityTitle: activity.name, streakDays: tier[0] },
+                    tier[0] + '-day streak on ' + (activity.name || 'activity')
+                );
+                if (paid) any = true;
+            });
+            return any;
+        }
+
+        // ── Earn: mastery (§4.4) ──────────────────────────────────────────
+        // 1 Grit per required rep, floored at 40 and capped at 120. The
+        // required rep count is techTreeMastery.count — the same figure
+        // ttMasteryProgress() measures against. The tech-tree node that
+        // resolves alongside mastery pays nothing extra: one event, one payout.
+        function gritMasteryReps(activity) {
+            var th = activity.techTreeMastery ||
+                     (typeof ttMasteryDefaultFor === 'function'
+                        ? ttMasteryDefaultFor(activity.frequency) : null);
+            return Math.max(1, (th && th.count) || 1);
+        }
+
+        function gritCheckMastery() {
+            var g = gritState();
+            if (!g) return false;
+            var any = false;
+            gritAllActivities().forEach(function (a) {
+                if (!a.techTreeMasteredAt) return;
+                if (g.awarded['mastery:' + a.id]) return;
+                var reps = gritMasteryReps(a);
+                var pay = Math.min(GRIT_MASTERY_CAP, Math.max(GRIT_MASTERY_FLOOR, reps));
+                if (gritAwardOnce('mastery:' + a.id, pay, 'mastery',
+                        { activityId: a.id, activityTitle: a.name, masteryReps: reps },
+                        'Mastered ' + (a.name || 'activity'))) any = true;
+            });
+            return any;
+        }
+
+        // ── Earn: occasional cadence bonus (§4.2) ─────────────────────────
+        // +5 when an occasional activity lands inside its established rhythm.
+        // Needs ≥4 PRIOR completions before it activates, so a rhythm can't be
+        // faked quickly; gaps are fractional days, so completing something
+        // twice in one day falls below the 50% floor and pays nothing.
+        function gritMedian(nums) {
+            if (!nums.length) return 0;
+            var s = nums.slice().sort(function (a, b) { return a - b; });
+            var m = Math.floor(s.length / 2);
+            return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+        }
+
+        function gritCheckCadence(activity, thisCompletionISO) {
+            var g = gritState();
+            if (!g || !gritIsOccasional(activity) || !gritIsCountable(activity)) return 0;
+
+            // Prior completions only — this one is already in history.
+            var hist = (activity.completionHistory || [])
+                .filter(function (e) { return !e.isPenalty && (e.xp || 0) > 0; })
+                .map(function (e) { return e.date; })
+                .sort();
+            var idx = hist.lastIndexOf(thisCompletionISO);
+            var prior = idx === -1 ? hist.slice(0, -1) : hist.slice(0, idx);
+            if (prior.length < GRIT_CADENCE_MIN_PRIOR) return 0;
+
+            var sample = prior.slice(-GRIT_CADENCE_SAMPLE);
+            var gaps = [];
+            for (var i = 1; i < sample.length; i++) gaps.push(gritDaysBetween(sample[i - 1], sample[i]));
+            if (!gaps.length) return 0;
+            var median = gritMedian(gaps);
+
+            var currentGap = gritDaysBetween(prior[prior.length - 1], thisCompletionISO);
+            var onRhythm = median > 0 &&
+                currentGap >= median * GRIT_CADENCE_LO &&
+                currentGap <= median * GRIT_CADENCE_HI;
+
+            // §4.2 — refresh the stored cadence after every completion,
+            // whether or not the bonus paid.
+            var allGaps = [];
+            var full = prior.concat([thisCompletionISO]).slice(-(GRIT_CADENCE_SAMPLE + 1));
+            for (var j = 1; j < full.length; j++) allGaps.push(gritDaysBetween(full[j - 1], full[j]));
+            g.cadence[activity.id] = {
+                medianGapDays: Math.round(gritMedian(allGaps) * 10) / 10,
+                sampleCount: full.length
+            };
+
+            if (!onRhythm) return 0;
+            gritApplyDelta(GRIT_CADENCE_BONUS, 'cadence_bonus', {
+                activityId: activity.id, activityTitle: activity.name,
+                medianGapDays: Math.round(median * 10) / 10,
+                gapDays: Math.round(currentGap * 10) / 10
+            });
+            return GRIT_CADENCE_BONUS;
+        }
+
+        // ── Earn: the completion drip (§4.1) ──────────────────────────────
+        // The single hook completeActivity() calls, in the same beat as XP.
+        function gritOnCompletion(activity) {
+            var g = gritState();
+            if (!g || !activity) return;
+            if (!gritIsCountable(activity)) return;   // perform-mode negatives earn nothing
+
+            gritEnsureWeek();
+
+            gritApplyDelta(GRIT_DRIP, 'completion',
+                { activityId: activity.id, activityTitle: activity.name });
+            gritBumpNumerator(g, activity, +1);
+            gritBurstAdd(activity.name || 'Completion', GRIT_DRIP);
+
+            var tail = (activity.completionHistory || [])
+                .filter(function (e) { return e && !e.isPenalty && (e.xp || 0) > 0; }).slice(-1)[0];
+            var cad = gritCheckCadence(activity,
+                tail ? tail.date : (activity.lastCompleted || new Date().toISOString()));
+            if (cad) gritBurstAdd('On rhythm — ' + (activity.name || 'activity'), cad);
+
+            gritCheckStreakMilestones(activity);
+            gritConsumeBoost(activity);
+            // Deliberately NOT flushed here. Mastery is evaluated by the tech
+            // tree a few milliseconds after completeActivity returns, so the
+            // burst's own debounce is what lets a completion that also crosses
+            // a streak threshold AND completes a mastery read as one toast
+            // instead of three (§6.2).
+            gritRefreshUI();
+        }
+
+        // §4.1 — a backdated completion pays its drip either way. Landing it
+        // inside the CURRENT week also feeds the numerator; landing it in a
+        // CLOSED week does not retroactively move that week's ratio and never
+        // triggers a re-reconcile. Backdating stays free and unlimited (§8.3).
+        function gritOnRetroComplete(activity, dateStr) {
+            var g = gritState();
+            if (!g || !activity || !gritIsCountable(activity)) return;
+            gritEnsureWeek();
+            gritApplyDelta(GRIT_DRIP, 'completion',
+                { activityId: activity.id, activityTitle: activity.name, backdatedTo: dateStr });
+            if (g.week && dateStr >= g.week.anchor) gritBumpNumerator(g, activity, +1);
+            gritBurstAdd((activity.name || 'Completion') + ' (' + dateStr + ')', GRIT_DRIP);
+            gritCheckStreakMilestones(activity);
+            gritRefreshUI();
+        }
+
+        // Deleting a completion inside the current week takes it back out of
+        // the numerator, mirroring the add. The drip already paid is NOT
+        // reclaimed — no spec path claws Grit back, and doing so would make
+        // history editing feel punitive.
+        function gritOnRetroDelete(activity, dateStr) {
+            var g = gritState();
+            if (!g || !activity || !g.week) return;
+            if (dateStr >= g.week.anchor) gritBumpNumerator(g, activity, -1);
+            gritRefreshUI();
+        }
+
+        // ── Login pass ────────────────────────────────────────────────────
+        // Rides processStreakPauses(), which has already recomputed every
+        // streak from history by the time this runs. Returns true when
+        // anything changed so the caller's single write picks it up.
+        function gritOnLogin() {
+            var g = gritState();
+            if (!g) return false;
+            var changed = false;
+            if (gritMigrateLocalBalance()) changed = true;
+            if (gritEnsureWeek()) changed = true;
+            gritAllActivities().forEach(function (a) {
+                if (gritCheckStreakMilestones(a)) changed = true;
+            });
+            if (gritCheckMastery()) changed = true;
+            gritFlushBurst();
+            gritRefreshUI();
+            return changed;
+        }
+
+        // §1.1 — one-time migration off the placeholder's localStorage key.
+        // Firestore wins if both exist; the key is dropped either way.
+        function gritMigrateLocalBalance() {
+            var g = gritState();
+            if (!g) return false;
+            var raw = null;
+            try { raw = localStorage.getItem('mk_grit_balance'); } catch (e) { return false; }
+            if (raw === null) return false;
+            var seeded = false;
+            var n = parseInt(raw, 10);
+            if (!g.awarded['migration'] && !isNaN(n) && n > 0 && g.balance === 0 &&
+                g.lifetimeEarned === 0 && g.lifetimeSpent === 0) {
+                g.awarded['migration'] = true;
+                gritApplyDelta(n, 'migration', { note: 'seeded from local placeholder balance' });
+                seeded = true;
+            }
+            try { localStorage.removeItem('mk_grit_balance'); } catch (e) {}
+            return seeded;
+        }
+
+        // ── Spend (§5) ────────────────────────────────────────────────────
+        // Every purchase: check against the PERSISTED balance, refuse cleanly
+        // rather than ever going negative, decrement → ledger → persist →
+        // THEN grant, and roll the whole thing back if the write fails.
+        // Double-tap is blocked by _gritPurchaseLock plus the caller
+        // disabling the button until the write resolves.
+        let _gritPurchaseLock = false;
+
+        function gritMonthKey(d) {
+            var dt = d || new Date();
+            return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0');
+        }
+
+        // §5.2 / gifting §3.2 — remaining boost allowance this calendar month.
+        // `kind` was added when gifting landed; entries written before that are
+        // all self-purchases, so a missing kind reads as 'self'.
+        function gritBoostsUsedThisMonth(kind) {
+            var g = gritState();
+            if (!g) return 0;
+            var mk = gritMonthKey();
+            return g.boostPurchases.filter(function (p) {
+                return p && p.month === mk && (p.kind || 'self') === kind;
+            }).length;
+        }
+
+        function gritBoostsLeftThisMonth() {
+            return Math.max(0, GRIT_BOOST_PER_MONTH - gritBoostsUsedThisMonth('self'));
+        }
+
+        function gritGiftBoostsLeftThisMonth() {
+            return Math.max(0, GRIT_GIFT_BOOST_PER_MONTH - gritBoostsUsedThisMonth('gift'));
+        }
+        window.gritGiftBoostsLeftThisMonth = gritGiftBoostsLeftThisMonth;
+
+        async function gritPurchase(cost, reason, grant, revert, meta) {
+            var g = gritState();
+            if (!g) return { ok: false, message: 'Not signed in.' };
+            if (_gritPurchaseLock) return { ok: false, message: 'Hold on — a purchase is still going through.' };
+            if (g.balance < cost) {
+                return { ok: false, message: 'You need ' + (cost - g.balance) + ' more Grit for that.' };
+            }
+            _gritPurchaseLock = true;
+
+            var before = { balance: g.balance, lifetimeSpent: g.lifetimeSpent };
+            var bufferMark = _gritLedgerBuffer.length;
+            try {
+                gritApplyDelta(-cost, reason, meta || {});
+                grant(g);
+                var saved = await gritPersist();
+                if (!saved) {
+                    // §5.3 — persistence precedes the grant. It didn't land,
+                    // so nothing happened: unwind state and the ledger entry.
+                    revert(g);
+                    g.balance = before.balance;
+                    g.lifetimeSpent = before.lifetimeSpent;
+                    _gritLedgerBuffer.length = bufferMark;
+                    gritRefreshUI();
+                    return { ok: false, message: 'Could not save that purchase. Nothing was spent.' };
+                }
+                gritFlushLedger();
+                gritRefreshUI();
+                return { ok: true };
+            } finally {
+                _gritPurchaseLock = false;
+            }
+        }
+
+        // §5.1 — Streak shield, 40 Grit, uncapped. Buys into the pool.
+        // Purchase and placement stay separate decisions: this only fills the
+        // pool. gritApplyShield() below moves one onto an activity.
+        window.gritBuyShield = async function () {
+            var res = await gritPurchase(GRIT_SHIELD_COST, 'shield_purchase',
+                function (g) { g.shieldPool = (g.shieldPool || 0) + 1; },
+                function (g) { g.shieldPool = Math.max(0, (g.shieldPool || 0) - 1); },
+                { item: 'streak_shield' });
+            showToast(res.ok ? '🛡 Shield added to your pool — 40 Grit' : res.message,
+                      res.ok ? 'green' : 'red');
+            gritRenderRewards();
+            return res.ok;
+        };
+
+        // §5.2 — Double XP on the next completion, 50 Grit, once per calendar
+        // month. Armed, not assigned: buy it, then tap whichever completion
+        // you want doubled.
+        window.gritBuyBoost = async function () {
+            var g = gritState();
+            if (!g) return false;
+            if (g.pendingBoost) {
+                showToast('You already have a double-XP boost armed.', 'olive');
+                return false;
+            }
+            if (gritBoostsLeftThisMonth() <= 0) {
+                showToast('Double XP is limited to once a calendar month.', 'red');
+                return false;
+            }
+            var mk = gritMonthKey();
+            var res = await gritPurchase(GRIT_BOOST_COST, 'xp_boost_purchase',
+                function (gg) {
+                    gg.pendingBoost = { activityId: null, purchasedAt: new Date().toISOString() };
+                    gg.boostPurchases.push({ month: mk, at: new Date().toISOString(), kind: 'self' });
+                    if (gg.boostPurchases.length > 24) gg.boostPurchases = gg.boostPurchases.slice(-24);
+                },
+                function (gg) {
+                    gg.pendingBoost = null;
+                    for (var i = gg.boostPurchases.length - 1; i >= 0; i--) {
+                        if (gg.boostPurchases[i] && gg.boostPurchases[i].month === mk &&
+                            (gg.boostPurchases[i].kind || 'self') === 'self') {
+                            gg.boostPurchases.splice(i, 1); break;
+                        }
+                    }
+                },
+                { item: 'xp_boost', month: mk });
+            showToast(res.ok ? '⚡ Double XP armed — your next completion counts twice' : res.message,
+                      res.ok ? 'green' : 'red');
+            gritRenderRewards();
+            return res.ok;
+        };
+
+        // ── Applying a pooled shield to an activity ───────────────────────
+        // The mechanism is one appended event; the two shield folds already
+        // read it through shieldFloorFor(). Nothing about the existing streak
+        // grant, the consumption rule, or the backdating reconciliation is
+        // touched — this adds an event type and moves the cap, nothing else.
+        //
+        // Shields only do anything on an activity whose streak can break, so
+        // occasional activities and perform-mode negatives are not offered:
+        // neither accrues a streak for a shield to protect.
+        function gritShieldEligible(a) {
+            return !!a && !a.archived && !a.deleted &&
+                   !gritIsOccasional(a) && !gritIsPunitive(a);
+        }
+        window.gritShieldEligible = gritShieldEligible;
+
+        function gritShieldEventId() {
+            return 'sa-' + Date.now().toString(36) + '-' +
+                   Math.random().toString(36).slice(2, 9);
+        }
+
+        // The pool decrement and the event append are ONE write to
+        // users/{uid} — they are both fields of the same document, so a single
+        // setDoc makes "both or neither" a property of Firestore rather than a
+        // sequence we have to unwind. If the write fails, the in-memory pool
+        // and the event are both rolled back and nothing was spent.
+        let _gritApplyLock = false;
+        window.gritApplyShield = async function (activityId) {
+            var g = gritState();
+            if (!g) return { ok: false, message: 'Not signed in.' };
+            if (_gritApplyLock) return { ok: false, message: 'Hold on — that is still going through.' };
+
+            var a = gritFindActivity(activityId);
+            if (!a) return { ok: false, message: 'That activity no longer exists.' };
+            if (!gritShieldEligible(a)) {
+                return { ok: false, message: (a.name || 'That activity') + ' does not keep a streak, so a shield has nothing to protect.' };
+            }
+            if ((g.shieldPool || 0) <= 0) {
+                return { ok: false, message: 'No shields in your pool. Buy one for ' + GRIT_SHIELD_COST + ' Grit.' };
+            }
+            if (shieldCapNow(a) >= SHIELD_ABS_CAP) {
+                return { ok: false, message: (a.name || 'That activity') + ' is already at ' + SHIELD_ABS_CAP + ' shields — the maximum.' };
+            }
+
+            _gritApplyLock = true;
+            var prevPool = g.shieldPool;
+            var prevCap  = a.shieldCapUsed;
+            var hadArray = Array.isArray(a.shieldEvents);
+            var ev = { type: 'shield_applied', id: gritShieldEventId(), at: toLocalDateStr(new Date()) };
+            try {
+                if (!hadArray) a.shieldEvents = [];
+                a.shieldEvents.push(ev);
+                g.shieldPool = prevPool - 1;
+                // Refresh the stored capacity so the count is right on screen
+                // immediately; the next login walk derives the same number.
+                a.shieldCapUsed = shieldCapNow(a);
+
+                var saved = await gritPersist();
+                if (!saved) {
+                    // Neither half happened. Put everything back exactly.
+                    var at = a.shieldEvents.indexOf(ev);
+                    if (at !== -1) a.shieldEvents.splice(at, 1);
+                    if (!hadArray) delete a.shieldEvents;
+                    g.shieldPool = prevPool;
+                    a.shieldCapUsed = prevCap;
+                    gritLedgerWrite(0, g.balance, 'correction', {
+                        note: 'shield apply failed to persist; pool restored',
+                        activityId: a.id, activityTitle: a.name
+                    });
+                    gritRefreshUI();
+                    return { ok: false, message: 'Could not save that. Your shield is still in the pool.' };
+                }
+                gritFlushLedger();
+                try { updateDashboard(); } catch (e) {}
+                gritRefreshUI();
+                return { ok: true, cap: shieldCapNow(a), title: a.name };
+            } finally {
+                _gritApplyLock = false;
+            }
+        };
+
+        // Read by predictCompletionXP. Exactly ×2, never more, and never on a
+        // perform-mode negative (doubling a penalty is not a reward).
+        function gritIsBoostArmed(activity) {
+            var g = window.userData && window.userData.grit;
+            if (!g || !g.pendingBoost) return false;
+            if (!activity || !gritIsCountable(activity)) return false;
+            if (g.pendingBoost.activityId && g.pendingBoost.activityId !== activity.id) return false;
+            return true;
+        }
+        window.gritIsBoostArmed = gritIsBoostArmed;
+
+        function gritConsumeBoost(activity) {
+            var g = gritState();
+            if (!g || !gritIsBoostArmed(activity)) return false;
+            g.pendingBoost = null;
+            gritBurstNote('⚡ Double XP spent on ' + (activity.name || 'that completion'));
+            return true;
+        }
+
+        // ── Award feedback (§6.2) ─────────────────────────────────────────
+        // One attributed toast per beat, not one per award: a completion that
+        // also crosses a streak threshold reads as a single line. Awards are
+        // collected across the whole tick (completion → streak → mastery, each
+        // fired from a different place) and flushed together.
+        let _gritBurst = [];
+        let _gritBurstNotes = [];
+        let _gritBurstTimer = null;
+
+        function gritBurstAdd(label, amount) {
+            _gritBurst.push({ label: label, amount: amount });
+            clearTimeout(_gritBurstTimer);
+            _gritBurstTimer = setTimeout(gritFlushBurst, 120);
+        }
+        function gritBurstNote(text) {
+            _gritBurstNotes.push(text);
+            clearTimeout(_gritBurstTimer);
+            _gritBurstTimer = setTimeout(gritFlushBurst, 120);
+        }
+
+        function gritFlushBurst() {
+            clearTimeout(_gritBurstTimer);
+            _gritBurstTimer = null;
+            var items = _gritBurst; _gritBurst = [];
+            var notes = _gritBurstNotes; _gritBurstNotes = [];
+            notes.forEach(function (n) { try { showToast(n, 'blue'); } catch (e) {} });
+            if (!items.length) return;
+            var total = items.reduce(function (s, i) { return s + i.amount; }, 0);
+            if (total <= 0) return;
+            var msg;
+            if (items.length === 1) {
+                msg = items[0].label + ' — +' + total + ' Grit';
+            } else {
+                var top = items.slice().sort(function (a, b) { return b.amount - a.amount; });
+                var named = top.slice(0, 3);
+                var rest = top.length - named.length;
+                msg = named.map(function (i) { return i.label + ' +' + i.amount; }).join(' · ') +
+                      (rest > 0 ? ' · and ' + rest + ' more' : '') +
+                      ' — +' + total + ' Grit';
+            }
+            try { showToast('◆ ' + msg, 'green'); } catch (e) {}
+        }
+
+        // ── UI plumbing ───────────────────────────────────────────────────
+        function gritRefreshUI() {
+            try { if (typeof window.mkRenderGrit === 'function') window.mkRenderGrit(); } catch (e) {}
+            gritRenderRewards();
+        }
+        window.gritRefreshUI = gritRefreshUI;
+
+        function gritFillColor(ratio) {
+            if (ratio === null) return 'var(--color-progress-track)';
+            var t = Math.max(0, Math.min(1, ratio));      // 0 → target
+            // Hue travels the SHORT way round the wheel — 356° up through
+            // 0/amber to 96° green. Interpolating 356 → 96 directly runs
+            // backwards through blue, which is not a progress colour.
+            var hue = (356 + 100 * t) % 360;              // red → amber → green
+            var sat = 58 + 6 * t;
+            var lit = 46 + 6 * t;
+            if (ratio > 1) { hue = 96; sat = 62; lit = 52; }   // overshoot: hold green
+            return 'hsl(' + hue.toFixed(0) + ' ' + sat.toFixed(0) + '% ' + lit.toFixed(0) + '%)';
+        }
+
+        function gritEsc(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        // Human phrasing for a ledger row (§6.1 "Recent activity").
+        function gritLedgerPhrase(e) {
+            var m = e.meta || {};
+            var title = m.activityTitle || 'an activity';
+            switch (e.reason) {
+                case 'completion':       return m.backdatedTo
+                                            ? 'Logged ' + title + ' for ' + m.backdatedTo
+                                            : 'Completed ' + title;
+                case 'cadence_bonus':    return 'On rhythm — ' + title;
+                case 'weekly_bonus':     return 'Weekly bonus — ' +
+                                            (m.ratio != null ? Math.round(m.ratio * 100) + '% of target' : 'consistency');
+                case 'streak_milestone': return m.streakDays + '-day streak on ' + title;
+                case 'mastery':          return 'Mastered ' + title;
+                case 'node_reveal':      return 'Revealed ' + (m.nodeTitle
+                                            ? '"' + m.nodeTitle + '" on your map' : 'a node on your map');
+                case 'tree_regen':       return 'Regenerated your map';
+                case 'shield_purchase':  return 'Bought a streak shield';
+                case 'xp_boost_purchase':return 'Bought double XP';
+                case 'gift_shield':      return 'Sent a shield to ' + (m.receiverName || 'a friend');
+                case 'gift_xp_boost':    return 'Sent double XP to ' + (m.receiverName || 'a friend');
+                case 'leaderboard_payout': return (m.place ? gritOrdinal(m.place) + ' place' : 'Placed') +
+                                            ' on your leaderboard';
+                case 'migration':        return 'Balance carried over';
+                case 'correction':       return 'Balance correction';
+                default:                 return e.reason;
+            }
+        }
+
+        function gritRelTime(iso) {
+            var mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+            if (mins < 1)    return 'just now';
+            if (mins < 60)   return mins + 'm ago';
+            var h = Math.round(mins / 60);
+            if (h < 24)      return h + 'h ago';
+            var d = Math.round(h / 24);
+            return d < 7 ? d + 'd ago' : gritDayOf(iso);
+        }
+
+        // ── The Rewards tab (§6) ──────────────────────────────────────────
+        // Lives under More, adjacent to Analytics. The home of the whole
+        // currency system: balance, the live weekly bar, the frozen breakdown,
+        // the shop, the explainer and recent history.
+        let _gritRewardsBusy = false;
+
+        function gritRewardsVisible() {
+            var el = document.getElementById('mkEmptyMoreRewards');
+            return !!(el && el.classList.contains('active'));
+        }
+
+        let _gritRendering = false;
+        function gritRenderRewards(force) {
+            var host = document.getElementById('gritRewardsRoot');
+            if (!host || _gritRendering) return;
+            if (!force && !gritRewardsVisible()) return;
+            _gritRendering = true;
+            try { gritRenderRewardsInner(host, force); } finally { _gritRendering = false; }
+        }
+
+        function gritRenderRewardsInner(host, force) {
+            var g = gritState();
+            if (!g) { host.innerHTML = '<div class="grit-empty">Sign in to see your Grit.</div>'; return; }
+            gritEnsureWeek();
+
+            var w = g.week || gritNewWeek(gritWeekAnchorStr(new Date()));
+            var ratio = gritWeekRatio(w);
+            var pct = ratio === null ? 0 : Math.min(1, ratio / GRIT_RATIO_CAP);
+            var projected = gritProjectedBonus(w);
+            var atTarget = ratio !== null && ratio >= 1;
+
+            var html = '';
+
+            // ── Balance header + the live weekly bar ──────────────────────
+            html += '<div class="grit-head">' +
+                      '<div class="grit-bal-label">Grit balance</div>' +
+                      '<div class="grit-bal-num">' + (g.balance || 0).toLocaleString() + '</div>' +
+                      '<div class="grit-bal-sub">' +
+                        (g.lifetimeEarned || 0).toLocaleString() + ' earned · ' +
+                        (g.lifetimeSpent || 0).toLocaleString() + ' spent' +
+                      '</div>' +
+                    '</div>';
+
+            html += '<button type="button" class="grit-week" id="gritWeekBar" ' +
+                        'aria-expanded="false" aria-controls="gritBreakdown">';
+            if (ratio === null) {
+                html += '<div class="grit-week-top">' +
+                          '<span class="grit-week-title">This week</span>' +
+                          '<span class="grit-week-amt">No bonus</span>' +
+                        '</div>' +
+                        '<div class="grit-week-track"><span class="grit-week-fill" style="width:0%"></span></div>' +
+                        '<div class="grit-week-note">None of your activities have a frequency set, ' +
+                          'so there is no weekly target to measure against — and no weekly bonus. ' +
+                          'Give an activity a frequency and it starts counting next Monday.</div>';
+            } else {
+                html += '<div class="grit-week-top">' +
+                          '<span class="grit-week-title">This week</span>' +
+                          '<span class="grit-week-amt' + (atTarget ? ' is-target' : '') + '">+' + projected + ' Grit</span>' +
+                        '</div>' +
+                        '<div class="grit-week-track' + (atTarget ? ' is-target' : '') + '">' +
+                          '<span class="grit-week-fill" style="width:' + (pct * 100).toFixed(1) + '%;' +
+                            'background:' + gritFillColor(ratio) + '"></span>' +
+                          '<span class="grit-week-target" style="left:' + (100 / GRIT_RATIO_CAP).toFixed(1) + '%"></span>' +
+                        '</div>' +
+                        '<div class="grit-week-note">' +
+                          w.completions + ' of ' + (Math.round(w.quota * 10) / 10) + ' — ' +
+                          Math.round(ratio * 100) + '% of target. Tap for the breakdown.' +
+                        '</div>';
+            }
+            html += '</button>';
+
+            // ── Weekly breakdown (frozen contributors) ────────────────────
+            html += '<div class="grit-breakdown" id="gritBreakdown" hidden>';
+            if (!w.contributors || !w.contributors.length) {
+                html += '<div class="grit-empty">Nothing is in this week\'s target. ' +
+                        'Activities join the denominator on the Monday after you start doing them.</div>';
+            } else {
+                html += '<div class="grit-bd-head"><span>Activity</span><span>Done</span><span>Target</span></div>';
+                w.contributors.forEach(function (c) {
+                    var rec = (w.byActivity || {})[c.activityId];
+                    var done = rec == null ? 0 : (typeof rec === 'number' ? rec : (rec.n || 0));
+                    html += '<div class="grit-bd-row">' +
+                              '<span class="grit-bd-name">' + gritEsc(c.title) + '</span>' +
+                              '<span class="grit-bd-done">' + done + '</span>' +
+                              '<span class="grit-bd-quota">' + (Math.round(c.quotaUnits * 10) / 10) + '</span>' +
+                            '</div>';
+                });
+                html += '<div class="grit-bd-foot">' +
+                          (ratio === null
+                            ? 'No target set, so no bonus this week.'
+                            : 'At ' + Math.round(ratio * 100) + '% of target you are on track for ' +
+                              '<strong>+' + projected + ' Grit</strong> when the week closes on Sunday.') +
+                        '</div>';
+            }
+            html += '</div>';
+
+            // ── Shop ─────────────────────────────────────────────────────
+            var boostsLeft = gritBoostsLeftThisMonth();
+            html += '<h4 class="grit-h">Shop</h4><div class="grit-shop">';
+
+            var pool = g.shieldPool || 0;
+            html += '<div class="grit-item' + (g.balance < GRIT_SHIELD_COST ? ' is-poor' : '') + '">' +
+                      '<div class="grit-item-main">' +
+                        '<div class="grit-item-name">🛡 Streak shield</div>' +
+                        '<div class="grit-item-sub">Absorbs one missed window before your ' +
+                          'streak breaks. Bought into your pool, then placed on whichever ' +
+                          'activity you want protected.' +
+                          '<br><span class="grit-item-gift-note">Gift one to a friend for ' +
+                            GRIT_GIFT_SHIELD_COST + ' — it drops straight into their pool.</span></div>' +
+                      '</div>' +
+                      '<div class="grit-buy-pair">' +
+                        '<button type="button" class="grit-buy" id="gritBuyShieldBtn"' +
+                          (g.balance < GRIT_SHIELD_COST ? ' disabled' : '') + '>' +
+                          GRIT_SHIELD_COST + '</button>' +
+                        '<button type="button" class="grit-gift-buy" id="gritGiftShieldBtn"' +
+                          (g.balance < GRIT_GIFT_SHIELD_COST ? ' disabled' : '') +
+                          ' title="Gift a shield to a friend">Gift ' + GRIT_GIFT_SHIELD_COST + '</button>' +
+                      '</div>' +
+                    '</div>';
+
+            // ── The pool: hold it, then place it ─────────────────────────
+            html += '<div class="grit-pool' + (pool > 0 ? ' has-shields' : '') + '">' +
+                      '<div class="grit-pool-row">' +
+                        '<span class="grit-pool-count">' + pool + '</span>' +
+                        '<span class="grit-pool-label">' +
+                          (pool === 1 ? 'shield in your pool' : 'shields in your pool') +
+                        '</span>' +
+                        (pool > 0
+                          ? '<button type="button" class="grit-pool-apply" id="gritApplyOpenBtn">Place one</button>'
+                          : '') +
+                      '</div>' +
+                      (pool > 0 ? '<div class="grit-pool-pick" id="gritApplyPick" hidden></div>' : '') +
+                    '</div>';
+
+            var boostBlocked = g.balance < GRIT_BOOST_COST || boostsLeft <= 0 || !!g.pendingBoost;
+            var giftBoostsLeft   = gritGiftBoostsLeftThisMonth();
+            var giftBoostBlocked = g.balance < GRIT_GIFT_BOOST_COST || giftBoostsLeft <= 0;
+            html += '<div class="grit-item' + (boostBlocked ? ' is-poor' : '') + '">' +
+                      '<div class="grit-item-main">' +
+                        '<div class="grit-item-name">⚡ Double XP</div>' +
+                        '<div class="grit-item-sub">' +
+                          (g.pendingBoost
+                            ? 'Armed — your next completion counts twice.'
+                            : 'Arms a ×2 on the next completion you choose. ' +
+                              boostsLeft + ' of ' + GRIT_BOOST_PER_MONTH + ' left this month.') +
+                          '<br><span class="grit-item-gift-note">Gifted: ' + giftBoostsLeft + ' of ' +
+                            GRIT_GIFT_BOOST_PER_MONTH + ' left this month — it lands as a surprise ' +
+                            'on their next completion.</span>' +
+                        '</div>' +
+                      '</div>' +
+                      '<div class="grit-buy-pair">' +
+                        '<button type="button" class="grit-buy" id="gritBuyBoostBtn"' +
+                          (boostBlocked ? ' disabled' : '') + '>' +
+                          GRIT_BOOST_COST + '</button>' +
+                        '<button type="button" class="grit-gift-buy" id="gritGiftBoostBtn"' +
+                          (giftBoostBlocked ? ' disabled' : '') +
+                          ' title="Gift double XP to a friend">Gift ' + GRIT_GIFT_BOOST_COST + '</button>' +
+                      '</div>' +
+                    '</div>';
+            html += '</div>';
+
+            // ── How Grit works ───────────────────────────────────────────
+            html += '<h4 class="grit-h">How Grit works</h4>' +
+                    '<ul class="grit-explain">' +
+                      '<li>You earn 1 Grit every time you complete an activity.</li>' +
+                      '<li>Each week, you earn a bonus based on what fraction of your frequency targets you hit.</li>' +
+                      '<li>Streaks and mastery pay out separately as you reach them.</li>' +
+                    '</ul>';
+
+            // ── Recent activity ──────────────────────────────────────────
+            html += '<h4 class="grit-h">Recent activity</h4>' +
+                    '<div class="grit-log" id="gritLog"><div class="grit-empty">Loading…</div></div>';
+
+            host.innerHTML = html;
+
+            var bar = document.getElementById('gritWeekBar');
+            var bd  = document.getElementById('gritBreakdown');
+            if (bar && bd) bar.addEventListener('click', function () {
+                var open = !bd.hidden;
+                bd.hidden = open;
+                bar.setAttribute('aria-expanded', String(!open));
+            });
+            var sb = document.getElementById('gritBuyShieldBtn');
+            if (sb) sb.addEventListener('click', function () {
+                sb.disabled = true;                      // §5.4 — no double-tap
+                window.gritBuyShield().finally(function () { gritRenderRewards(); });
+            });
+            var ao = document.getElementById('gritApplyOpenBtn');
+            if (ao) ao.addEventListener('click', function () {
+                var pick = document.getElementById('gritApplyPick');
+                if (!pick) return;
+                if (!pick.hidden) { pick.hidden = true; ao.textContent = 'Place one'; return; }
+                gritRenderShieldPicker(pick);
+                pick.hidden = false;
+                ao.textContent = 'Cancel';
+            });
+            var bb = document.getElementById('gritBuyBoostBtn');
+            if (bb) bb.addEventListener('click', function () {
+                bb.disabled = true;
+                window.gritBuyBoost().finally(function () { gritRenderRewards(); });
+            });
+            var gs = document.getElementById('gritGiftShieldBtn');
+            if (gs) gs.addEventListener('click', function () { giftOpenPicker(null, 'shield'); });
+            var gb = document.getElementById('gritGiftBoostBtn');
+            if (gb) gb.addEventListener('click', function () { giftOpenPicker(null, 'xp_boost'); });
+
+            gritRenderLog();
+        }
+
+        let _gritLogCache = null;
+        let _gritLogCacheAt = 0;
+        const GRIT_LOG_CACHE_MS = 30000;
+
+        // Lists every activity a shield can actually protect, with its current
+        // shield count, and refuses the ones already at the cap in place
+        // rather than after the tap.
+        function gritRenderShieldPicker(host) {
+            var eligible = gritAllActivities().filter(gritShieldEligible);
+            if (!eligible.length) {
+                host.innerHTML = '<div class="grit-empty">No activity here keeps a streak yet. ' +
+                    'Shields protect daily, weekly and custom-frequency activities.</div>';
+                return;
+            }
+            eligible.sort(function (a, b) { return (b.streak || 0) - (a.streak || 0); });
+            host.innerHTML = eligible.map(function (a) {
+                var cap  = shieldCapNow(a);
+                var full = cap >= SHIELD_ABS_CAP;
+                var used = getShieldsUsedDisplay(a);
+                return '<button type="button" class="grit-pick-row' + (full ? ' is-full' : '') + '"' +
+                         ' data-act="' + gritEsc(a.id) + '"' + (full ? ' disabled' : '') + '>' +
+                         '<span class="grit-pick-name">' + gritEsc(a.name || 'Activity') + '</span>' +
+                         '<span class="grit-pick-meta">' +
+                           (a.streak ? (a.streak + '-day streak · ') : '') +
+                           cap + '/' + SHIELD_ABS_CAP + ' shields' +
+                           (used ? ' · ' + used + ' used' : '') +
+                         '</span>' +
+                         '<span class="grit-pick-cta">' + (full ? 'Full' : '🛡 +1') + '</span>' +
+                       '</button>';
+            }).join('');
+
+            host.querySelectorAll('.grit-pick-row').forEach(function (btn) {
+                btn.addEventListener('click', async function () {
+                    // Disabled between click and write resolution (spec §6).
+                    host.querySelectorAll('.grit-pick-row').forEach(function (b) { b.disabled = true; });
+                    var res = await window.gritApplyShield(btn.getAttribute('data-act'));
+                    showToast(res.ok
+                        ? '🛡 Shield placed on ' + res.title + ' — now ' + res.cap + ' of ' + SHIELD_ABS_CAP
+                        : res.message, res.ok ? 'green' : 'red');
+                    gritRenderRewards(true);
+                });
+            });
+        }
+
+        async function gritRenderLog() {
+            var el = document.getElementById('gritLog');
+            if (!el || _gritRewardsBusy) return;
+            _gritRewardsBusy = true;
+            try {
+                var stored;
+                if (_gritLogCache && (Date.now() - _gritLogCacheAt) < GRIT_LOG_CACHE_MS) {
+                    stored = _gritLogCache;
+                } else {
+                    stored = await gritReadLedger(20);
+                    _gritLogCache = stored;
+                    _gritLogCacheAt = Date.now();
+                }
+                // Entries still sitting in the write buffer are real and already
+                // reflected in the balance — show them rather than a gap.
+                var pending = _gritLedgerBuffer.map(function (b) { return b.data; }).reverse();
+                var rows = pending.concat(stored).slice(0, 20);
+                var live = document.getElementById('gritLog');
+                if (!live) return;
+                if (!rows.length) {
+                    live.innerHTML = '<div class="grit-empty">Nothing yet. Complete an activity to start earning.</div>';
+                    return;
+                }
+                live.innerHTML = rows.map(function (e) {
+                    var sign = e.delta > 0 ? '+' : '';
+                    return '<div class="grit-log-row">' +
+                             '<span class="grit-log-what">' + gritEsc(gritLedgerPhrase(e)) + '</span>' +
+                             '<span class="grit-log-when">' + gritEsc(gritRelTime(e.at)) + '</span>' +
+                             '<span class="grit-log-amt ' + (e.delta > 0 ? 'is-up' : 'is-down') + '">' +
+                               sign + e.delta + '</span>' +
+                           '</div>';
+                }).join('');
+            } finally {
+                _gritRewardsBusy = false;
+            }
+        }
+
+        // Called by the v5 nav when it activates More › Rewards.
+        window.gritOpenRewards = function () {
+            var host = document.getElementById('gritRewardsRoot');
+            if (!host) return;
+            try { if (typeof window.mkRenderGrit === 'function') window.mkRenderGrit(); } catch (e) {}
+            gritRenderRewards(true);
+        };
+        window.gritRenderRewards = gritRenderRewards;
+
+        // ── Ledger durability ─────────────────────────────────────────────
+        // The buffer must not die with the tab. Flush on blur and on unload;
+        // `visibilitychange` is the reliable one on mobile, where `unload`
+        // frequently never fires.
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'hidden') gritFlushLedger();
+        });
+        window.addEventListener('pagehide', function () { gritFlushLedger(); });
+        window.addEventListener('blur', function () { gritFlushLedger(); });
+
+        // ════════════════════════════════════════════════════════════════════
+        // ══ END GRIT CURRENCY SYSTEM ════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════════
+
+
+        // ════════════════════════════════════════════════════════════════════
+        // ══ TECH TREE v5 — THE REVEAL LOOP ══════════════════════════════════
+        // ════════════════════════════════════════════════════════════════════
+        //
+        // v4 generated a map you read once. v5 makes it a place you come back
+        // to, because most of it is dark and Grit is what turns the lights on.
+        //
+        // The whole tree is visible from the first day — every node, as a
+        // silhouette. Shape, dimension colour, goal thread and position are
+        // all there. Titles and descriptions are not. Revealing a node tells
+        // you what it is; adopting it still requires mastering its
+        // prerequisite.
+        //
+        //   Grit buys information.  Mastery buys access.
+        //
+        // Those are separate currencies for separate things, and conflating
+        // them was the mistake v4 made. A user can reveal five nodes deep
+        // without having mastered anything — they simply cannot adopt them
+        // yet. Adoption itself is free and always has been.
+        //
+        // Reveal state is orthogonal to lifecycle. `lifecycle` tracks
+        // progression (locked → available → active → resolved); `revealed`
+        // tracks information. Neither is derived from the other, and nothing
+        // here overloads one to mean the other.
+        //
+        // Everything below is client-written and lives inside
+        // userData.techTree, which is safe under saveUserData()'s full
+        // document overwrite. Any future SERVER-side reveal would have to
+        // move to a subcollection instead — see §3.3.
+        // ════════════════════════════════════════════════════════════════════
+
+        const TT_REVEAL_COST  = 40;    // §5.2 flat, every node past tier 1
+        const TT_REGEN_COST   = 200;   // §6
+        const TT_REGEN_MASTERIES = 1;  // §6 the gate that actually matters
+
+        // §3.1/§10.2 — which nodes are born revealed. The spec defines tier 1
+        // as "empty prerequisites[]", which in this generator's output means
+        // the anchors (the user's own activities) and the wildcard. The
+        // roadmap's first tier hangs off an anchor via an
+        // `activity_mastered` prerequisite, so it costs like everything else.
+        //
+        // If reveals ever feel too punishing on a fresh map, flipping this to
+        // 'tier' frees the whole first roadmap rank instead. It is one
+        // constant precisely so that is a one-line decision.
+        const TT_FREE_TIER_RULE = 'no-prerequisites';   // | 'tier'
+
+        function ttIsFreeTier(node, tt) {
+            if (TT_FREE_TIER_RULE === 'tier') {
+                if (node._tier == null && tt) ttComputeTiers((tt.nodes || []).filter(function (n) {
+                    return n.lifecycle !== 'archived';
+                }));
+                return (node._tier || 1) <= 1;
+            }
+            return !(node.prerequisites || []).length;
+        }
+
+        // ── Migration (§9 step 2) ─────────────────────────────────────────
+        // Runs exactly once per tree, marked by revealMigratedAt rather than
+        // schemaVersion: the generation worker writes schemaVersion 3 on
+        // every result, so keying off it would re-run the generous pass after
+        // every generation and hand out free reveals forever.
+        //
+        // The one-time pass is deliberately generous — every node whose
+        // prerequisites are already met is marked revealed, because the user
+        // can already read those and charging retroactively for what they can
+        // see would be a theft. Nodes arriving AFTER migration follow §3.1:
+        // free only if they have no prerequisites at all.
+        function ttEnsureRevealFields(tt) {
+            if (!tt || !Array.isArray(tt.nodes)) return false;
+            var changed = false;
+            var firstPass = !tt.revealMigratedAt;
+
+            if (tt.lastRegenAt === undefined)       { tt.lastRegenAt = null; changed = true; }
+            if (typeof tt.masteriesSinceRegen !== 'number') { tt.masteriesSinceRegen = 0; changed = true; }
+
+            tt.nodes.forEach(function (n) {
+                if (!n) return;
+                if (typeof n.revealCost !== 'number') { n.revealCost = TT_REVEAL_COST; changed = true; }
+                if (n.revealedAt === undefined)       { n.revealedAt = null; changed = true; }
+                if (typeof n.revealed !== 'boolean') {
+                    n.revealed = firstPass ? ttNodeUnlocked(n, tt) : ttIsFreeTier(n, tt);
+                    // Anything the user has already accepted or finished is
+                    // theirs and is never dark, whichever pass we are in.
+                    if (n.lifecycle === 'active' || n.resolvedAt || n.source === 'user') n.revealed = true;
+                    if (n.revealed && !n.revealedAt) n.revealedAt = n.createdAt || new Date().toISOString();
+                    changed = true;
+                }
+            });
+
+            if (firstPass) { tt.revealMigratedAt = new Date().toISOString(); changed = true; }
+            if (ttSyncMasteryGate(tt)) changed = true;
+            return changed;
+        }
+
+        // §6's gate, DERIVED rather than counted. Mastery is declared in two
+        // places — the evaluation pass, and ttFinishLink's retroactive resolve
+        // when a linked activity already has the history — so an incrementing
+        // counter silently misses the second one and tells a user who just
+        // mastered something that they have not. Reading it off the
+        // activities' own timestamps cannot drift, and self-corrects a
+        // counter that already has.
+        //
+        // A tree that has never been regenerated counts every mastery the
+        // user has ever earned: "since the last regeneration" with no last
+        // regeneration means since the beginning, and they did do the work.
+        function ttSyncMasteryGate(tt) {
+            if (!tt) return false;
+            var since = tt.lastRegenAt ? new Date(tt.lastRegenAt).getTime() : 0;
+            var n = 0;
+            ttAllActivities().forEach(function (e) {
+                var at = e.activity.techTreeMasteredAt;
+                if (at && new Date(at).getTime() > since) n++;
+            });
+            if (tt.masteriesSinceRegen === n) return false;
+            tt.masteriesSinceRegen = n;
+            return true;
+        }
+
+        // ── The three states (§4) ─────────────────────────────────────────
+        // Derived, never stored twice.
+        function ttRevealState(node, tt) {
+            if (!node.revealed) return 'silhouette';
+            return ttNodeUnlocked(node, tt || ensureTechTree()) ? 'adoptable' : 'revealed';
+        }
+        function ttIsSilhouette(node) { return !node.revealed; }
+
+        // §5.1 — a silhouette is revealable only if every node it depends on
+        // is already revealed. Reveal propagates along the edges outward from
+        // the free tier: you cannot buy the leaf of a branch without buying
+        // the branch.
+        //
+        // This is a LINEAGE rule, not a mastery rule. An archived ancestor is
+        // transparent to it — see ttRejectNode, which re-points around the
+        // rejection so a branch is never stranded behind one.
+        function ttRevealBlockers(node, tt) {
+            var out = [];
+            var byId = {}, anchorByAct = {};
+            (tt.nodes || []).forEach(function (n) {
+                byId[n.id] = n;
+                if (n.payload && n.payload.activityId && !anchorByAct[n.payload.activityId]) {
+                    anchorByAct[n.payload.activityId] = n;
+                }
+            });
+            (node.prerequisites || []).forEach(function (pr) {
+                var src = pr.type === 'node_mastered' ? byId[pr.nodeId]
+                        : pr.type === 'activity_mastered' ? anchorByAct[pr.activityId] : null;
+                if (!src || src.id === node.id) return;          // dangling — never brick a branch
+                if (src.lifecycle === 'archived') return;        // rejected — transparent
+                if (!src.revealed) out.push(src);
+            });
+            return out;
+        }
+        function ttRevealable(node, tt) {
+            return ttIsSilhouette(node) && ttRevealBlockers(node, tt).length === 0;
+        }
+
+        function ttRevealCost(node) {
+            return typeof node.revealCost === 'number' ? node.revealCost : TT_REVEAL_COST;
+        }
+
+        function ttDarkCount(tt) {
+            return (tt.nodes || []).filter(function (n) {
+                return n.lifecycle !== 'archived' && ttIsSilhouette(n);
+            }).length;
+        }
+
+        // ── Reveal purchase (§5.3) ────────────────────────────────────────
+
+        window.ttOpenRevealSheet = function (nodeId) {
+            var tt = ensureTechTree();
+            var node = (tt.nodes || []).find(function (n) { return n.id === nodeId; });
+            if (!node) return;
+            if (!ttIsSilhouette(node)) { ttOpenNode(nodeId); return; }
+
+            var cost = ttRevealCost(node);
+            var bal  = gritBalance();
+            var blockers = ttRevealBlockers(node, tt);
+            var goals = ttNodeGoals(node);
+            var goalChips = goals.map(function (g) {
+                return '<span class="tt-mini-chip" style="--gc:' + (g.color || '#888') + '">' +
+                       escapeHtml(g.shortName || 'Goal') + '</span>';
+            }).join('');
+
+            // Everything on this sheet is about the PURCHASE. Nothing about
+            // the node — no title, no teaser, no partial text (§10.9). The
+            // whole value of the transaction is the information.
+            var body = '<div class="tt-sheet-body" id="ttRevealSheetBody">'
+                + '<div class="tt-sheet-kicker tt-reveal-kicker">Unrevealed</div>'
+                + '<div class="tt-reveal-mark">' + ttSilhouettePreview(node) + '</div>'
+                + '<h3 class="tt-sheet-title tt-reveal-title">Something is here</h3>';
+
+            if (blockers.length) {
+                body += '<p class="tt-sheet-desc">Reveal what comes before it first — the map opens outward from what you already know.</p>'
+                     +  '<div class="tt-locked-note">' + ttIcon('lock', 12) + ' '
+                     +  blockers.length + ' node' + (blockers.length === 1 ? '' : 's')
+                     +  ' before this one ' + (blockers.length === 1 ? 'is' : 'are') + ' still dark</div>'
+                     +  '<div class="tt-sheet-actions"><button class="tt-btn tt-btn-ghost" onclick="ttCloseSheet()">Close</button></div>';
+            } else {
+                var short = bal < cost;
+                body += '<p class="tt-sheet-desc">Spend Grit to find out what it is. Revealing tells you what a node '
+                     +  'is — it does not unlock it. Adoption still costs mastery, and adoption is free.</p>'
+                     +  (goalChips ? '<div class="tt-goal-feed">Feeds ' + goalChips + '</div>' : '')
+                     +  '<div class="tt-reveal-price">'
+                     +    '<div><span>Reveal</span><strong>' + cost + ' Grit</strong></div>'
+                     +    '<div><span>Your balance</span><strong class="' + (short ? 'tt-short' : '') + '">' + bal + ' Grit</strong></div>'
+                     +  '</div>'
+                     +  (short
+                          ? '<div class="tt-locked-note tt-short">' + ttIcon('lock', 12) + ' ' +
+                            (cost - bal) + ' Grit short. Keep showing up — the map will wait.</div>'
+                          : '')
+                     +  '<div class="tt-sheet-actions">'
+                     +    '<button class="tt-btn tt-btn-primary" id="ttRevealBtn" onclick="ttConfirmReveal(\'' + node.id + '\')"'
+                     +      (short ? ' disabled' : '') + '>' + ttIcon('spark', 13) + '<span>Reveal · ' + cost + '</span></button>'
+                     +    '<button class="tt-btn tt-btn-ghost" onclick="ttCloseSheet()">Not yet</button>'
+                     +  '</div>';
+            }
+            ttShowSheet(body + '</div>');
+        };
+
+        // The glyph alone, at sheet scale — the same silhouette the map shows,
+        // so the purchase is visibly about THAT node without naming it.
+        function ttSilhouettePreview(node) {
+            var color = ttNodeColor(node);
+            var defs = [];
+            var g = ttGlyph(node, 30, 30, color, defs);
+            return '<svg width="60" height="60" viewBox="0 0 60 60" class="tt-sil-preview">'
+                 + '<defs>' + defs.join('') + '</defs><g class="tt-silhouette">' + g + '</g></svg>';
+        }
+
+        window.ttConfirmReveal = async function (nodeId) {
+            var tt = ensureTechTree();
+            var node = (tt.nodes || []).find(function (n) { return n.id === nodeId; });
+            if (!node || !ttIsSilhouette(node)) return;
+            if (!ttRevealable(node, tt)) { showToast('Reveal what comes before it first', 'olive'); return; }
+
+            var cost = ttRevealCost(node);
+            if (gritBalance() < cost) {
+                showToast('You are ' + (cost - gritBalance()) + ' Grit short of that reveal', 'red');
+                return;
+            }
+
+            // Disable between tap and write resolution (§5.3) — a double tap
+            // must not be able to charge twice.
+            var btn = document.getElementById('ttRevealBtn');
+            if (btn) { btn.disabled = true; btn.innerHTML = '<span>Revealing…</span>'; }
+
+            // §10.4 — persistence precedes the reveal. The debit and the
+            // reveal go into ONE write and the user is shown nothing until it
+            // lands: charge-then-persist-then-grant would leave a window
+            // where a failed second write takes the Grit and gives back
+            // nothing. If the write fails, both halves roll back together.
+            gritApplyDelta(-cost, 'node_reveal', { nodeId: node.id, nodeTitle: node.title });
+            node.revealed   = true;
+            node.revealedAt = new Date().toISOString();
+
+            var ok = await gritPersist();
+            if (!ok) {
+                node.revealed   = false;
+                node.revealedAt = null;
+                gritApplyDelta(cost, 'correction', {
+                    note: 'reveal write failed, stake returned', nodeId: node.id
+                });
+                showToast('Could not save that reveal — your Grit is untouched', 'red');
+                if (btn) { btn.disabled = false; btn.innerHTML = '<span>Reveal · ' + cost + '</span>'; }
+                return;
+            }
+
+            // §8.4 — the emotional beat. Gold flash, then the sheet turns
+            // over in place. Never close and reopen.
+            try { ttGoldFlash(); } catch (e) {}
+            window._ttFlashNodeId = node.id;
+            ttOpenNode(node.id);
+            ttRenderIfVisible();
+        };
+
+        // ── Regeneration (§6) ─────────────────────────────────────────────
+        // The mastery gate matters more than the price. Cost alone is the
+        // wrong lever — it means the most consistent users regenerate most
+        // often, and it rewards hoarding that starves every other sink.
+        // Requiring a mastery means someone who has not done the work cannot
+        // regenerate no matter how rich they are.
+
+        function ttRegenStatus() {
+            var tt = ensureTechTree();
+            var masteries = tt.masteriesSinceRegen || 0;
+            return {
+                masteries: masteries,
+                needed: TT_REGEN_MASTERIES,
+                masteryMet: masteries >= TT_REGEN_MASTERIES,
+                cost: TT_REGEN_COST,
+                balance: gritBalance(),
+                affordable: gritBalance() >= TT_REGEN_COST,
+                pending: !!tt.pendingRequest
+            };
+        }
+
+        window.ttOpenRegenSheet = function () {
+            var s = ttRegenStatus();
+            var tt = ensureTechTree();
+            var dark = ttDarkCount(tt);
+            var keep = (tt.nodes || []).filter(function (n) {
+                return n.lifecycle !== 'archived' && (n.revealed || n.resolvedAt || n.lifecycle === 'active');
+            }).length;
+
+            var body = '<div class="tt-sheet-body">'
+                + '<div class="tt-sheet-kicker" style="color:' + TT_GOLD + '">Regenerate</div>'
+                + '<h3 class="tt-sheet-title">A new frontier</h3>'
+                + '<p class="tt-sheet-desc">The tree is finite. Regenerating replaces what is still dark with a fresh '
+                + 'set of branches grown from where you actually are now — not from the goal you typed months ago.</p>'
+                + '<div class="tt-regen-table">'
+                +   '<div><span>Kept</span><strong>' + keep + ' node' + (keep === 1 ? '' : 's') + '</strong></div>'
+                +   '<div><span>Replaced</span><strong>' + dark + ' silhouette' + (dark === 1 ? '' : 's') + '</strong></div>'
+                +   '<div><span>Cost</span><strong>' + s.cost + ' Grit</strong></div>'
+                +   '<div><span>Your balance</span><strong class="' + (s.affordable ? '' : 'tt-short') + '">' + s.balance + ' Grit</strong></div>'
+                + '</div>'
+                + '<p class="tt-muted">Anything you have adopted, mastered, or paid to reveal is kept. '
+                + 'Regeneration replaces the unexplored frontier, not the journey.</p>';
+
+            if (!s.masteryMet) {
+                body += '<div class="tt-locked-note">' + ttIcon('lock', 12) +
+                        ' Master one activity since your last regeneration first. ' +
+                        'No balance unlocks this — the work does.</div>';
+            } else if (!s.affordable) {
+                body += '<div class="tt-locked-note tt-short">' + ttIcon('lock', 12) + ' ' +
+                        (s.cost - s.balance) + ' Grit short.</div>';
+            }
+
+            body += '<div class="tt-sheet-actions">'
+                 +   '<button class="tt-btn tt-btn-primary" id="ttRegenBtn" onclick="ttConfirmRegen()"'
+                 +     ((s.masteryMet && s.affordable && !s.pending) ? '' : ' disabled') + '>'
+                 +     ttIcon('refresh', 13) + '<span>Regenerate · ' + s.cost + '</span></button>'
+                 +   '<button class="tt-btn tt-btn-ghost" onclick="ttCloseSheet()">Close</button>'
+                 + '</div></div>';
+            ttShowSheet(body);
+        };
+
+        window.ttConfirmRegen = async function () {
+            var s = ttRegenStatus();
+            if (!s.masteryMet || !s.affordable || s.pending) return;
+            var tt = ensureTechTree();
+            var btn = document.getElementById('ttRegenBtn');
+            if (btn) { btn.disabled = true; btn.innerHTML = '<span>Weaving…</span>'; }
+
+            // Same ordering discipline as a reveal: the charge and the
+            // request land in one write, or neither does.
+            gritApplyDelta(-TT_REGEN_COST, 'tree_regen', { nodes: (tt.nodes || []).length });
+            var prevMasteries = tt.masteriesSinceRegen || 0;
+            tt.masteriesSinceRegen = 0;
+            tt.lastRegenAt = new Date().toISOString();
+            tt.loadBudget = { current: ttWeeklyLoad(), updatedAt: new Date().toISOString() };
+            tt.pendingRequest = {
+                requestedAt: new Date().toISOString(), attempts: 0, type: 'generate',
+                payload: { reason: 'regen', keepNodeIds: (tt.nodes || []).filter(function (n) {
+                    return n.revealed || n.resolvedAt || n.lifecycle === 'active';
+                }).map(function (n) { return n.id; }) }
+            };
+            tt.status = 'generating';
+            delete tt.lastError;
+
+            var ok = await gritPersist();
+            if (!ok) {
+                tt.pendingRequest = null;
+                tt.status = 'ready';
+                tt.masteriesSinceRegen = prevMasteries;
+                tt.lastRegenAt = null;
+                gritApplyDelta(TT_REGEN_COST, 'correction', { note: 'regeneration write failed, cost returned' });
+                showToast('Could not start that regeneration — your Grit is untouched', 'red');
+                if (btn) { btn.disabled = false; btn.innerHTML = '<span>Regenerate · ' + TT_REGEN_COST + '</span>'; }
+                return;
+            }
+            ttCloseSheet();
+            ttEnsureListener();
+            renderTechTree();
+            showToast('🕸️ Reweaving the frontier — we\'ll ping you', 'blue');
+        };
+
+        // ── Sky / Branch (§8) ─────────────────────────────────────────────
+        // Sky is the label-free overview: shape, colour, thread, depth, and
+        // nothing else. It is where silhouettes do their work — the contrast
+        // between explored and unexplored territory is the single most
+        // important thing on that screen, and text would dilute it.
+        //
+        // Branch is where words live: one readable column at 360px, titles
+        // for revealed nodes, glyph and a lock affordance with the price for
+        // the rest.
+
+        function ttViewMode() {
+            var tt = ensureTechTree();
+            return tt.viewMode === 'branch' ? 'branch' : 'sky';
+        }
+
+        window.ttSetView = function (mode, focusNodeId) {
+            var tt = ensureTechTree();
+            tt.viewMode = (mode === 'branch') ? 'branch' : 'sky';
+            if (mode === 'branch' && focusNodeId) window._ttBranchFocus = focusNodeId;
+            debouncedSaveUserData();
+            renderTechTree();
+            // §8.3 — entering Branch from a Sky tap scrolls to that node;
+            // returning to Sky preserves scroll position.
+            if (tt.viewMode === 'branch' && window._ttBranchFocus) {
+                var id = window._ttBranchFocus;
+                window._ttBranchFocus = null;
+                requestAnimationFrame(function () {
+                    var el = document.getElementById('ttb-' + id);
+                    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                });
+            } else if (tt.viewMode === 'sky' && window._ttSkyScroll) {
+                requestAnimationFrame(function () {
+                    var sc = document.querySelector('.tt-web-scroll');
+                    if (sc) sc.scrollLeft = window._ttSkyScroll;
+                });
+            }
+        };
+
+        function ttViewToggleHtml() {
+            var m = ttViewMode();
+            return '<div class="tt-viewtoggle" role="tablist">'
+                 +   '<button class="tt-vt-btn' + (m === 'sky' ? ' on' : '') + '" role="tab" onclick="ttSetView(\'sky\')">'
+                 +     ttIcon('map', 12) + '<span>Sky</span></button>'
+                 +   '<button class="tt-vt-btn' + (m === 'branch' ? ' on' : '') + '" role="tab" onclick="ttSetView(\'branch\')">'
+                 +     ttIcon('branch', 12) + '<span>Branch</span></button>'
+                 + '</div>';
+        }
+
+        // How much of the map is still dark — the number that makes the
+        // reveal economy legible at a glance, and that visibly shrinks.
+        function ttDarkStripHtml(tt) {
+            var alive = (tt.nodes || []).filter(function (n) { return n.lifecycle !== 'archived'; });
+            if (!alive.length) return '';
+            var dark = alive.filter(ttIsSilhouette).length;
+            var lit  = alive.length - dark;
+            var pct  = Math.round((lit / alive.length) * 100);
+            var bal  = gritBalance();
+            return '<div class="tt-darkstrip">'
+                 +   '<div class="tt-darkbar"><div class="tt-darkbar-fill" style="width:' + pct + '%"></div></div>'
+                 +   '<div class="tt-darkmeta">'
+                 +     '<span><b>' + lit + '</b> revealed · <b>' + dark + '</b> still dark</span>'
+                 +     '<span class="tt-darkbal">' + bal + ' Grit</span>'
+                 +   '</div>'
+                 + '</div>';
+        }
+
+        // ── Branch view (§8.2) ────────────────────────────────────────────
+        // A single column through the lineages, ordered by tier so a chain
+        // reads top to bottom. Optional goal filter — the threads are the
+        // natural way to slice a web into branches.
+
+        window.ttBranchFilter = function (goalId) {
+            window._ttBranchGoal = goalId || null;
+            renderTechTree();
+        };
+
+        function ttBranchHtml(tt) {
+            var alive = (tt.nodes || []).filter(function (n) { return n.lifecycle !== 'archived'; });
+            if (!alive.length) return '';
+            ttComputeTiers(alive);
+
+            var goals = ttActiveGoals();
+            var filter = window._ttBranchGoal || null;
+            if (filter && !goals.some(function (g) { return g.id === filter; })) filter = window._ttBranchGoal = null;
+
+            var shown = filter
+                ? alive.filter(function (n) { return (n.goalIds || []).indexOf(filter) !== -1; })
+                : alive;
+
+            shown = shown.slice().sort(function (a, b) {
+                if (a._tier !== b._tier) return a._tier - b._tier;
+                return String(a.dimensionId).localeCompare(String(b.dimensionId));
+            });
+
+            var chips = '';
+            if (goals.length > 1) {
+                chips = '<div class="tt-goal-legend tt-branch-filter">'
+                      + '<button class="tt-goal-chip' + (!filter ? ' on' : '') + '" onclick="ttBranchFilter(null)">All</button>'
+                      + goals.map(function (g) {
+                          return '<button class="tt-goal-chip' + (filter === g.id ? ' on' : '') + '" onclick="ttBranchFilter(\'' + g.id + '\')">'
+                               + '<span class="tt-goal-chip-dot" style="background:' + (g.color || '#888') + '"></span>'
+                               + escapeHtml(g.shortName || 'Goal') + '</button>';
+                        }).join('')
+                      + '</div>';
+            }
+
+            var lastTier = null;
+            var rows = shown.map(function (n) {
+                var head = '';
+                if (n._tier !== lastTier) {
+                    lastTier = n._tier;
+                    head = '<div class="tt-branch-tier">Tier ' + n._tier + '</div>';
+                }
+                return head + ttBranchRow(n, tt);
+            }).join('');
+
+            return chips + '<div class="tt-branch">' + rows + '</div>';
+        }
+
+        function ttBranchRow(node, tt) {
+            var color = ttNodeColor(node);
+            var sil   = ttIsSilhouette(node);
+            var state = ttRevealState(node, tt);
+            var defs  = [];
+            var glyph = '<svg width="34" height="34" viewBox="0 0 34 34" class="tt-branch-glyph' + (sil ? ' tt-silhouette' : '') + '">'
+                      + '<defs>' + defs.join('') + '</defs>'
+                      + ttGlyph(node, 17, 17, color, defs) + '</svg>';
+
+            var body;
+            if (sil) {
+                // Glyph and a lock affordance with the cost. Nothing else —
+                // no title, no teaser, no partial text (§10.9).
+                var can = ttRevealable(node, tt);
+                var afford = gritBalance() >= ttRevealCost(node);
+                body = '<span class="tt-branch-name tt-branch-dark">Unrevealed</span>'
+                     + '<span class="tt-branch-sub">' + (can
+                          ? (afford ? 'Tap to reveal' : 'Not enough Grit yet')
+                          : 'Reveal what comes before it') + '</span>';
+                var price = '<span class="tt-branch-price' + (can && afford ? '' : ' tt-branch-price-off') + '">'
+                          + ttIcon('lock', 11) + ttRevealCost(node) + '</span>';
+                return '<button class="tt-branch-row tt-branch-row-dark" id="ttb-' + node.id + '"'
+                     + ' style="--rc:' + color + '" onclick="ttOpenRevealSheet(\'' + node.id + '\')">'
+                     + glyph + '<span class="tt-branch-col">' + body + '</span>' + price + '</button>';
+            }
+
+            // Progression state wins over reveal state here: something the
+            // user has already adopted or mastered is never "open to accept",
+            // however its prerequisites read.
+            var badge = node.resolvedAt
+                ? '<span class="tt-seg-badge tt-seg-gold">mastered</span>'
+                : (node.lifecycle === 'active' ? '<span class="tt-seg-badge">doing</span>'
+                : (state === 'adoptable' ? '<span class="tt-seg-badge tt-seg-open">open</span>'
+                : '<span class="tt-seg-badge tt-seg-locked">' + escapeHtml(ttShort(ttLockReason(node, tt), 26)) + '</span>'));
+
+            body = '<span class="tt-branch-name">' + escapeHtml(node.title) + '</span>'
+                 + '<span class="tt-branch-sub">' + escapeHtml(ttShort(ttNodeSublabel(node, tt), 40)) + '</span>';
+
+            return '<button class="tt-branch-row" id="ttb-' + node.id + '" style="--rc:' + color + '"'
+                 + ' onclick="ttOpenNode(\'' + node.id + '\')">'
+                 + glyph + '<span class="tt-branch-col">' + body + '</span>' + badge + '</button>';
+        }
+
+        // ── Rejection fallback (§5.4) ─────────────────────────────────────
+        // The piece most likely to be skipped and most likely to strand
+        // users. Before v5, rejecting a node archived it and ttPrereqMet
+        // returned false for archived targets forever — every child behind it
+        // was permanently unreachable, and anyone who had paid to reveal one
+        // had bought a dead end.
+        //
+        // Now the rejected node's own prerequisites are spliced into each
+        // child in its place, so a child inherits the nearest non-archived
+        // ancestor. A rejected tier-1 node leaves its children with no
+        // prerequisite at all, which is correct: there is nothing left to
+        // master before them.
+        //
+        // Rejection stays free, and it never refunds the reveal — the user
+        // got the information, which is what they paid for.
+        function ttRepointChildrenOf(node, tt) {
+            var inherited = (node.prerequisites || []).slice();
+            var changed = false;
+            (tt.nodes || []).forEach(function (child) {
+                if (!child || child.id === node.id) return;
+                var prereqs = child.prerequisites || [];
+                if (!prereqs.some(function (pr) { return pr.type === 'node_mastered' && pr.nodeId === node.id; })) return;
+
+                var next = [];
+                prereqs.forEach(function (pr) {
+                    if (pr.type === 'node_mastered' && pr.nodeId === node.id) {
+                        inherited.forEach(function (up) {
+                            var dup = next.some(function (x) {
+                                return x.type === up.type && x.nodeId === up.nodeId && x.activityId === up.activityId;
+                            });
+                            // Never inherit a prerequisite pointing back at
+                            // the child — a rejection must not create a cycle.
+                            if (!dup && !(up.type === 'node_mastered' && up.nodeId === child.id)) {
+                                next.push(Object.assign({}, up));
+                            }
+                        });
+                    } else {
+                        next.push(pr);
+                    }
+                });
+                child.prerequisites = next;
+                changed = true;
+            });
+            return changed;
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        // ══ VERSUS CHALLENGES ═══════════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════════
+        //
+        // A wagered two-player contest built on top of the existing Challenges
+        // surface. Solo challenges (window.userData.challenges) are untouched
+        // and keep their own code path — nothing below reads or writes them.
+        //
+        // Placement: a TOP-LEVEL `challenges` collection. Two accounts read and
+        // write the same document; a document under users/{uid} could not be
+        // granted to the other side without widening that user's rules far past
+        // what is safe. The challenge document is the ONLY cross-account
+        // surface: no participant is ever granted read access to the other's
+        // user document, activity list, completion history or Grit balance.
+        // Everything the opponent sees is mirrored into it by its owner, and
+        // that mirror is counters and agreed names only (§2.3).
+        //
+        // Hooks into the rest of the app (all of them wrappers — no core
+        // function is restructured):
+        //   completeActivity()  → vsOnCompletion(activityId)
+        //   undoActivity()      → vsOnUndo(activityId)
+        //   deleteActivity()    → forfeit warning (vsGuardActivityDelete)
+        //   saveActivity()      → picks up an activity created inside the
+        //                         accept walkthrough (same creation path, no fork)
+        //   switchSubTab()      → renders the Versus sub-tab
+        //   login              → vsOnLogin()
+        //
+        // Grit invariant: every Grit that leaves a balance is either escrowed
+        // in a challenge document's `pot` or recorded in `payout` waiting to be
+        // claimed. Nothing evaporates and nothing is created. Balance moves
+        // happen inside runTransaction() so a debit and the pot it funds land
+        // together or not at all.
+        // ════════════════════════════════════════════════════════════════════
+
+        const VS_COL             = 'challenges';
+        const VS_SCHEMA_VERSION  = 2;
+        const VS_STAKE_MIN       = 25;     // §3.1, rate card reserved table
+        const VS_STAKE_MAX       = 100;
+        const VS_STAKE_STEP      = 25;
+        const VS_INVITE_DAYS     = 7;      // §2.2 expiresAt = createdAt + 7d
+        const VS_CACHE_TTL_MS    = 60000;  // §5 re-fetch if the cache is older
+        const VS_MAX_REQS        = 5;
+        const VS_ARCHIVE_DAYS    = 3;      // §8.7 resolved cards linger, then hide
+
+        // §3.1 concurrency cap. There is no free/Pro tier in this codebase —
+        // the only gating pattern that exists is level-based (TAB_UNLOCKS,
+        // getActivityLimit). Rather than invent a paid tier, this is a single
+        // tunable constant, counted over pending + active combined.
+        const VS_MAX_CONCURRENT  = 3;
+
+        const VS_TERMINAL = ['resolved', 'expired', 'declined', 'cancelled'];
+        const VS_ALL_STATUSES = ['pending', 'active'].concat(VS_TERMINAL);
+
+        // ── In-memory read model (§5) ─────────────────────────────────────
+        // One getDocs on login / tab open, cached. No listener is attached in
+        // the list view; exactly one is attached while a detail view is open.
+        let _vsCache      = { at: 0, list: [], uid: null };
+        let _vsFetchInFlight = null;
+        let _vsDetailUnsub   = null;
+        let _vsDetailId      = null;
+        let _vsIndexMissing  = false;   // fall back to the unfiltered query once
+
+        function vsUid() { return (window.currentUser && window.currentUser.uid) || null; }
+        function vsNow() { return Date.now(); }
+
+        function vsOther(ch, uid) {
+            var p = ch.participants || [];
+            return p[0] === uid ? p[1] : p[0];
+        }
+
+        function vsName(ch, uid) {
+            return (ch.names && ch.names[uid]) || 'Opponent';
+        }
+
+        function vsIsTerminal(status) { return VS_TERMINAL.indexOf(status) !== -1; }
+
+        // Sum of every requirement's target — the score a side needs to win
+        // outright, and the denominator for their bar.
+        function vsTargetTotal(ch) {
+            return (ch.requirements || []).reduce(function (s, r) {
+                return s + (r.targetCount || 0);
+            }, 0);
+        }
+
+        function vsProgressOf(ch, uid) {
+            return (ch.progress && ch.progress[uid]) || {};
+        }
+
+        function vsMappingOf(ch, uid) {
+            return (ch.mapping && ch.mapping[uid]) || {};
+        }
+
+        // Capped per requirement (§4.2): excess completions never inflate a
+        // total. The stored counters are already capped on write; this is the
+        // read-side belt to the same braces, and what resolution compares.
+        function vsCappedTotal(ch, uid) {
+            var prog = vsProgressOf(ch, uid);
+            return (ch.requirements || []).reduce(function (s, r) {
+                return s + Math.min(prog[r.reqId] || 0, r.targetCount || 0);
+            }, 0);
+        }
+
+        function vsHasCompleted(ch, uid) {
+            var prog = vsProgressOf(ch, uid);
+            var reqs = ch.requirements || [];
+            if (!reqs.length) return false;
+            return reqs.every(function (r) { return (prog[r.reqId] || 0) >= (r.targetCount || 0); });
+        }
+
+        // Every activity id this user has committed to a live challenge.
+        // §3.3: an activity may be mapped into at most one active challenge at
+        // a time — without it, one completion feeds several wagers.
+        function vsCommittedActivityIds(excludeChallengeId) {
+            var uid = vsUid();
+            var out = new Set();
+            if (!uid) return out;
+            _vsCache.list.forEach(function (ch) {
+                if (ch.id === excludeChallengeId) return;
+                if (ch.status !== 'active' && ch.status !== 'pending') return;
+                var m = vsMappingOf(ch, uid);
+                Object.keys(m).forEach(function (reqId) {
+                    if (m[reqId] && m[reqId].activityId) out.add(m[reqId].activityId);
+                });
+            });
+            return out;
+        }
+
+        // ── Fetch (§5) ────────────────────────────────────────────────────
+
+        async function vsFetch(force) {
+            var uid = vsUid();
+            if (!uid || !canPersistUserData('vsFetch')) return [];
+            if (_vsCache.uid !== uid) { _vsCache = { at: 0, list: [], uid: uid }; }
+            if (!force && _vsCache.at && (vsNow() - _vsCache.at) < VS_CACHE_TTL_MS) {
+                return _vsCache.list;
+            }
+            if (_vsFetchInFlight) return _vsFetchInFlight;
+
+            _vsFetchInFlight = (async function () {
+                var list = [];
+                var col  = collection(db, VS_COL);
+                try {
+                    // participants array-contains + status in — needs the
+                    // composite index declared in firestore.indexes.json.
+                    //
+                    // The status list is every status on purpose. A refund
+                    // owed on a declined or expired invite lives in a terminal
+                    // document, and the side that is owed it is not
+                    // necessarily the side that made the transition — so
+                    // narrowing this filter to the statuses the UI draws would
+                    // leave escrowed Grit unclaimable. Nothing is filtered out
+                    // that anyone could still be owed money from.
+                    var q = _vsIndexMissing
+                        ? query(col, where('participants', 'array-contains', uid))
+                        : query(col, where('participants', 'array-contains', uid),
+                                     where('status', 'in', VS_ALL_STATUSES));
+                    var snap = await getDocs(q);
+                    snap.forEach(function (d) { list.push(Object.assign({ id: d.id }, d.data())); });
+                } catch (err) {
+                    if (!_vsIndexMissing && err && (err.code === 'failed-precondition' ||
+                        /index/i.test(err.message || ''))) {
+                        // The composite index has not been built yet. Fall back
+                        // to the single-field query and filter in memory so the
+                        // feature still works, permanently for this session.
+                        console.warn('Versus: composite index missing, falling back to unfiltered query.');
+                        _vsIndexMissing = true;
+                        _vsFetchInFlight = null;
+                        return vsFetch(true);
+                    }
+                    console.warn('Versus fetch failed:', err && err.message);
+                    return _vsCache.list;
+                }
+                _vsCache = { at: vsNow(), list: list, uid: uid };
+                return list;
+            })();
+
+            try { return await _vsFetchInFlight; }
+            finally { _vsFetchInFlight = null; }
+        }
+
+        function vsCacheReplace(ch) {
+            var i = _vsCache.list.findIndex(function (c) { return c.id === ch.id; });
+            if (i === -1) _vsCache.list.push(ch); else _vsCache.list[i] = ch;
+        }
+
+        function vsCacheGet(id) {
+            return _vsCache.list.find(function (c) { return c.id === id; }) || null;
+        }
+
+        // ── Grit escrow (§3.1, §3.3) ──────────────────────────────────────
+        // The balance lives in userData.grit.balance, which normally rides the
+        // full-document setDoc in saveUserData(). A stake is not allowed to be
+        // that loose: debit and pot must land together. So the debit is a
+        // dotted-path transaction.update on the user document inside the same
+        // runTransaction as the challenge write, and the in-memory balance is
+        // mirrored from the committed value afterwards.
+        //
+        // Callers MUST flush pending in-memory state first (vsFlushBeforeStake)
+        // so a debounced full-document save cannot land on top of the debit.
+
+        async function vsFlushBeforeStake() {
+            try { cancelPendingUserDataSave(); } catch (e) {}
+            await saveUserData();
+        }
+
+        function vsMirrorBalance(newBalance, delta, reason, meta) {
+            var g = gritState();
+            if (!g) return;
+            g.balance = newBalance;
+            if (delta < 0) g.lifetimeSpent  = (g.lifetimeSpent  || 0) + (-delta);
+            else           g.lifetimeEarned = (g.lifetimeEarned || 0) + delta;
+            gritLedgerWrite(delta, newBalance, reason, meta || {});
+            try { gritRefreshUI(); } catch (e) {}
+            debouncedSaveUserData();
+        }
+
+        // Reads the authoritative balance out of the user document inside a
+        // transaction. Returns { ref, balance, spent }.
+        async function vsReadBalance(tx, uid) {
+            var ref  = doc(db, 'users', uid);
+            var snap = await tx.get(ref);
+            if (!snap.exists()) throw new Error('vs/no-user-doc');
+            var g = snap.data().grit || {};
+            return {
+                ref: ref,
+                balance: (typeof g.balance === 'number' && isFinite(g.balance)) ? g.balance : 0,
+                spent:   (typeof g.lifetimeSpent === 'number') ? g.lifetimeSpent : 0,
+                earned:  (typeof g.lifetimeEarned === 'number') ? g.lifetimeEarned : 0
+            };
+        }
+
+        // ── Create (§3.1) ─────────────────────────────────────────────────
+
+        function vsNewId() {
+            return 'vs-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+        }
+
+        function vsCountLive() {
+            var uid = vsUid();
+            return _vsCache.list.filter(function (c) {
+                return (c.status === 'pending' || c.status === 'active') &&
+                       (c.participants || []).indexOf(uid) !== -1;
+            }).length;
+        }
+
+        // opponentUid must be a friend; requirements is
+        // [{ reqId, name, targetCount, activityId, activityName }] — the
+        // activity fields are the CREATOR's own mapping, filled in inline at
+        // authoring time because they are mapping activities they already own.
+        async function vsCreateChallenge(opts) {
+            var uid = vsUid();
+            if (!uid) throw new Error('Not signed in.');
+            if (!canPersistUserData('vsCreate')) throw new Error('Your account is not loaded yet.');
+
+            var opponentUid = opts.opponentUid;
+            if (!opponentUid || opponentUid === uid) throw new Error('Pick a friend to challenge.');
+            if (((window.userData.friends) || []).indexOf(opponentUid) === -1) {
+                throw new Error('You can only challenge someone on your friends list.');
+            }
+
+            var stake = Math.round(opts.stake || 0);
+            if (stake < VS_STAKE_MIN || stake > VS_STAKE_MAX) {
+                throw new Error('Stake must be between ' + VS_STAKE_MIN + ' and ' + VS_STAKE_MAX + ' Grit.');
+            }
+            var durationDays = Math.max(1, Math.round(opts.durationDays || 0));
+            var reqs = (opts.requirements || []).filter(function (r) { return r && r.name && r.activityId; });
+            if (!reqs.length) throw new Error('Add at least one requirement.');
+            if (reqs.length > VS_MAX_REQS) throw new Error('At most ' + VS_MAX_REQS + ' requirements.');
+
+            await vsFetch(true);
+            if (vsCountLive() >= VS_MAX_CONCURRENT) {
+                throw new Error('You already have ' + VS_MAX_CONCURRENT +
+                                ' versus challenges running. Finish one first.');
+            }
+            var committed = vsCommittedActivityIds(null);
+            var clash = reqs.find(function (r) { return committed.has(r.activityId); });
+            if (clash) {
+                throw new Error('"' + clash.activityName + '" is already committed to another challenge.');
+            }
+
+            var myName  = (window.userData.profile && window.userData.profile.username) ||
+                          (window.currentUser && window.currentUser.displayName) || 'You';
+            var oppName = opts.opponentName || 'Opponent';
+
+            var now = vsNow();
+            var id  = vsNewId();
+            var chRef = doc(db, VS_COL, id);
+
+            var mappingMine = {};
+            var payload = {
+                schemaVersion: VS_SCHEMA_VERSION,
+                mode: 'versus',
+                createdBy: uid,
+                opponent: opponentUid,
+                participants: [uid, opponentUid],
+                status: 'pending',
+                name: String(opts.name || '').slice(0, 80),
+                description: String(opts.description || '').slice(0, 300),
+                stake: stake,
+                pot: stake,
+                bonusXP: Math.max(1, Math.round(opts.bonusXP || 1)),
+                durationDays: durationDays,
+                createdAt: now,
+                expiresAt: now + VS_INVITE_DAYS * 86400000,
+                startedAt: null,
+                endsAt: null,
+                resolvedAt: null,
+                requirements: reqs.map(function (r) {
+                    mappingMine[r.reqId] = {
+                        activityId: r.activityId,
+                        activityName: r.activityName   // snapshot at mapping time (§2.2)
+                    };
+                    return { reqId: r.reqId, name: String(r.name).slice(0, 60),
+                             targetCount: Math.max(1, Math.round(r.targetCount || 1)) };
+                }),
+                mapping:       (function () { var m = {}; m[uid] = mappingMine; m[opponentUid] = {}; return m; })(),
+                progress:      (function () { var m = {}; m[uid] = {}; m[opponentUid] = {}; return m; })(),
+                totals:        (function () { var m = {}; m[uid] = 0;  m[opponentUid] = 0;  return m; })(),
+                winner: null,
+                outcome: null,
+                payout:        (function () { var m = {}; m[uid] = 0;  m[opponentUid] = 0;  return m; })(),
+                payoutClaimed: (function () { var m = {}; m[uid] = false; m[opponentUid] = false; return m; })(),
+                seen:          (function () { var m = {}; m[uid] = now; m[opponentUid] = 0; return m; })(),
+                names:         (function () { var m = {}; m[uid] = myName; m[opponentUid] = oppName; return m; })()
+            };
+
+            await vsFlushBeforeStake();
+
+            var committedBalance = null;
+            await runTransaction(db, async function (tx) {
+                var bal = await vsReadBalance(tx, uid);
+                if (bal.balance < stake) {
+                    throw new Error('SHORTFALL:' + (stake - bal.balance));
+                }
+                committedBalance = bal.balance - stake;
+                tx.update(bal.ref, {
+                    'grit.balance': committedBalance,
+                    'grit.lifetimeSpent': bal.spent + stake
+                });
+                tx.set(chRef, payload);
+            });
+
+            vsMirrorBalance(committedBalance, -stake, 'challenge_stake',
+                { challengeId: id, challengeName: payload.name, role: 'creator' });
+
+            vsCacheReplace(Object.assign({ id: id }, payload));
+            return id;
+        }
+
+        // ── Accept / decline / cancel / expire (§3.3, §3.4) ────────────────
+
+        async function vsAcceptChallenge(id, mappingMine) {
+            var uid = vsUid();
+            if (!uid) throw new Error('Not signed in.');
+            if (!canPersistUserData('vsAccept')) throw new Error('Your account is not loaded yet.');
+
+            await vsFetch(true);
+            if (vsCountLive() > VS_MAX_CONCURRENT) {
+                throw new Error('You already have ' + VS_MAX_CONCURRENT +
+                                ' versus challenges running. Finish one first.');
+            }
+            var committed = vsCommittedActivityIds(id);
+            var clashId = Object.keys(mappingMine).find(function (k) {
+                return committed.has(mappingMine[k].activityId);
+            });
+            if (clashId) {
+                throw new Error('"' + mappingMine[clashId].activityName +
+                                '" is already committed to another challenge.');
+            }
+
+            await vsFlushBeforeStake();
+
+            var chRef = doc(db, VS_COL, id);
+            var committedBalance = null, stake = 0, chName = '', started = 0, ends = 0;
+
+            await runTransaction(db, async function (tx) {
+                // Every read must precede every write in a transaction.
+                var chSnap = await tx.get(chRef);
+                if (!chSnap.exists()) throw new Error('This challenge no longer exists.');
+                var ch = chSnap.data();
+                if (ch.status !== 'pending') throw new Error('This challenge is no longer open.');
+                if (ch.opponent !== uid)     throw new Error('This invite is not yours to accept.');
+                if (vsNow() > ch.expiresAt)  throw new Error('This invite has expired.');
+                var missing = (ch.requirements || []).some(function (r) {
+                    return !mappingMine[r.reqId] || !mappingMine[r.reqId].activityId;
+                });
+                if (missing) throw new Error('Every requirement needs an activity before you can accept.');
+
+                var bal = await vsReadBalance(tx, uid);
+                stake = ch.stake;
+                chName = ch.name;
+                if (bal.balance < stake) throw new Error('SHORTFALL:' + (stake - bal.balance));
+
+                started = vsNow();
+                ends    = started + ch.durationDays * 86400000;
+                committedBalance = bal.balance - stake;
+
+                tx.update(bal.ref, {
+                    'grit.balance': committedBalance,
+                    'grit.lifetimeSpent': bal.spent + stake
+                });
+                var patch = {
+                    status: 'active',
+                    pot: stake * 2,
+                    startedAt: started,
+                    endsAt: ends
+                };
+                patch['mapping.' + uid] = mappingMine;
+                patch['seen.' + uid]    = started;
+                tx.update(chRef, patch);
+            });
+
+            vsMirrorBalance(committedBalance, -stake, 'challenge_stake',
+                { challengeId: id, challengeName: chName, role: 'opponent' });
+
+            var cached = vsCacheGet(id);
+            if (cached) {
+                cached.status = 'active';
+                cached.pot = stake * 2;
+                cached.startedAt = started;
+                cached.endsAt = ends;
+                cached.mapping = cached.mapping || {};
+                cached.mapping[uid] = mappingMine;
+            }
+            return true;
+        }
+
+        // Decline, expire and cancel refund identically (§3.4): terminal
+        // status, the pot recorded as owed back to whoever paid it, pot zeroed.
+        // The claim path in §6.4 returns it. Guarded on status == 'pending' so
+        // two clients racing cannot both refund.
+        async function vsTerminatePending(id, nextStatus, outcome) {
+            var uid = vsUid();
+            var chRef = doc(db, VS_COL, id);
+            var didRun = false;
+            await runTransaction(db, async function (tx) {
+                var snap = await tx.get(chRef);
+                if (!snap.exists()) return;
+                var ch = snap.data();
+                if (ch.status !== 'pending') return;   // someone else got here first
+                if ((ch.participants || []).indexOf(uid) === -1) return;
+                if (nextStatus === 'declined'  && ch.opponent  !== uid) return;
+                if (nextStatus === 'cancelled' && ch.createdBy !== uid) return;
+                if (nextStatus === 'expired'   && vsNow() <= ch.expiresAt) return;
+
+                var payout = {};
+                (ch.participants || []).forEach(function (p) { payout[p] = 0; });
+                // Only the challenger has paid while a challenge is pending —
+                // escrow at invite (§3.1) means the pot is exactly one stake.
+                payout[ch.createdBy] = ch.pot;
+
+                tx.update(chRef, {
+                    status: nextStatus,
+                    outcome: outcome,
+                    winner: null,
+                    resolvedAt: vsNow(),
+                    pot: 0,
+                    payout: payout
+                });
+                didRun = true;
+            });
+            if (didRun) { await vsFetch(true); }
+            return didRun;
+        }
+
+        window.vsDecline = async function (id) {
+            if (!confirm('Decline this challenge? Their stake goes back to them.')) return;
+            try {
+                await vsTerminatePending(id, 'declined', 'declined_refund');
+                showToast('Challenge declined.', 'olive');
+                vsRenderTab();
+            } catch (e) { showToast(vsErrText(e), 'red'); }
+        };
+
+        window.vsCancel = async function (id) {
+            if (!confirm('Withdraw this invite? Your stake is returned.')) return;
+            try {
+                await vsTerminatePending(id, 'cancelled', 'cancelled_refund');
+                showToast('Invite withdrawn — your stake is on its way back.', 'olive');
+                await vsRunMaintenance();
+                vsRenderTab();
+            } catch (e) { showToast(vsErrText(e), 'red'); }
+        };
+
+        // ── Resolution (§6) ───────────────────────────────────────────────
+        //
+        // Resolution never moves Grit. The loser's client cannot write to the
+        // winner's balance and is never granted the ability to. It records what
+        // is owed in `payout` and zeroes the pot; each side then claims its own
+        // (§6.4). Every resolving transaction is guarded on the status it
+        // expects, so whichever client gets there first wins the race and the
+        // second is a no-op — two clients resolving at once cannot double-pay.
+
+        function vsBuildResolution(ch, winnerUid, outcome) {
+            var p = ch.participants || [];
+            var payout = {};
+            p.forEach(function (u) { payout[u] = 0; });
+            if (winnerUid) {
+                payout[winnerUid] = ch.pot;
+            } else {
+                // Tie or refund: both stakes go home whole. No coin flip — a
+                // wager where nobody lost should not manufacture a loser.
+                p.forEach(function (u) { payout[u] = Math.round(ch.pot / p.length); });
+            }
+            return {
+                status: 'resolved',
+                winner: winnerUid || null,
+                outcome: outcome,
+                resolvedAt: vsNow(),
+                pot: 0,
+                payout: payout
+            };
+        }
+
+        // Applies one qualifying completion AND resolves in the same
+        // transaction when it crosses the final target (§6.1 rule 1, §6.3).
+        // Returns 'won' | 'progressed' | null.
+        async function vsCommitProgress(id, reqId, delta) {
+            var uid = vsUid();
+            var chRef = doc(db, VS_COL, id);
+            var result = null;
+            await runTransaction(db, async function (tx) {
+                var snap = await tx.get(chRef);
+                if (!snap.exists()) return;
+                var ch = snap.data();
+                if (ch.status !== 'active') return;
+                var now = vsNow();
+                if (now < ch.startedAt || now > ch.endsAt) return;
+
+                var req = (ch.requirements || []).find(function (r) { return r.reqId === reqId; });
+                if (!req) return;
+
+                var prog = Object.assign({}, (ch.progress || {})[uid] || {});
+                var before = prog[reqId] || 0;
+                var after  = Math.max(0, Math.min(req.targetCount, before + delta));
+                if (after === before) return;   // already at target, or already zero
+                prog[reqId] = after;
+
+                var total = (ch.requirements || []).reduce(function (s, r) {
+                    return s + Math.min(prog[r.reqId] || 0, r.targetCount || 0);
+                }, 0);
+
+                var patch = {};
+                patch['progress.' + uid + '.' + reqId] = after;
+                patch['totals.' + uid] = total;
+
+                var complete = (ch.requirements || []).every(function (r) {
+                    return (prog[r.reqId] || 0) >= (r.targetCount || 0);
+                });
+                if (complete && delta > 0) {
+                    Object.assign(patch, vsBuildResolution(ch, uid, 'completed_first'));
+                    result = 'won';
+                } else {
+                    result = 'progressed';
+                }
+                tx.update(chRef, patch);
+            });
+            return result;
+        }
+
+        // §6.1 rules 2 and 3 — evaluated lazily on any client load of an
+        // `active` challenge whose deadline has passed. Guarded on
+        // status == 'active'.
+        async function vsResolveDeadline(id) {
+            var chRef = doc(db, VS_COL, id);
+            var fired = false;
+            await runTransaction(db, async function (tx) {
+                var snap = await tx.get(chRef);
+                if (!snap.exists()) return;
+                var ch = snap.data();
+                if (ch.status !== 'active') return;
+                if (vsNow() <= ch.endsAt) return;
+
+                var p = ch.participants || [];
+                var a = p[0], b = p[1];
+                // Re-derive both totals from the counters rather than trusting
+                // the denormalised value, and re-apply the per-requirement cap.
+                var ta = vsCappedTotal(ch, a), tb = vsCappedTotal(ch, b);
+
+                // A side that quietly reached every target without the
+                // resolving write landing still wins outright.
+                var doneA = vsHasCompleted(ch, a), doneB = vsHasCompleted(ch, b);
+                var patch;
+                if (doneA && !doneB)      patch = vsBuildResolution(ch, a, 'completed_first');
+                else if (doneB && !doneA) patch = vsBuildResolution(ch, b, 'completed_first');
+                else if (ta > tb)         patch = vsBuildResolution(ch, a, 'deadline_lead');
+                else if (tb > ta)         patch = vsBuildResolution(ch, b, 'deadline_lead');
+                else                      patch = vsBuildResolution(ch, null, 'tie_refund');
+
+                // Neither side's denormalised totals are rewritten here: a
+                // participant may only ever write their own keys, and the
+                // comparison above is derived from the counters regardless.
+                tx.update(chRef, patch);
+                fired = true;
+            });
+            return fired;
+        }
+
+        // §6.2 — forfeiting hands the whole pot to the opponent. Reachable by
+        // deleting or unmapping an activity that is committed to a live
+        // challenge, or by explicitly forfeiting.
+        async function vsForfeit(id, reason) {
+            var uid = vsUid();
+            var chRef = doc(db, VS_COL, id);
+            var done = false;
+            await runTransaction(db, async function (tx) {
+                var snap = await tx.get(chRef);
+                if (!snap.exists()) return;
+                var ch = snap.data();
+                if (ch.status !== 'active') return;
+                if ((ch.participants || []).indexOf(uid) === -1) return;
+                var opp = vsOther(ch, uid);
+                var patch = vsBuildResolution(ch, opp, 'forfeit');
+                patch.forfeitedBy = uid;
+                if (reason) patch.forfeitReason = String(reason).slice(0, 80);
+                tx.update(chRef, patch);
+                done = true;
+            });
+            if (done) await vsFetch(true);
+            return done;
+        }
+        window.vsForfeit = vsForfeit;
+
+        // ── Payout claim (§6.4) ───────────────────────────────────────────
+        // Runs automatically on load — no button. `payoutClaimed[myUid]` is the
+        // only key in that map this user may write, and only false → true, so
+        // the claim is idempotent no matter how many times a client retries.
+        async function vsClaimPayout(ch) {
+            var uid = vsUid();
+            if (!uid) return 0;
+            var owed = (ch.payout && ch.payout[uid]) || 0;
+            if (owed <= 0) return 0;
+            if (ch.payoutClaimed && ch.payoutClaimed[uid]) return 0;
+
+            await vsFlushBeforeStake();
+
+            var chRef = doc(db, VS_COL, ch.id);
+            var credited = 0, newBalance = null, reason = 'challenge_payout';
+
+            await runTransaction(db, async function (tx) {
+                var snap = await tx.get(chRef);
+                if (!snap.exists()) return;
+                var live = snap.data();
+                var amount = (live.payout && live.payout[uid]) || 0;
+                if (amount <= 0) return;
+                if (live.payoutClaimed && live.payoutClaimed[uid]) return;
+
+                var bal = await vsReadBalance(tx, uid);
+                newBalance = bal.balance + amount;
+                credited   = amount;
+                reason = (live.winner === uid && live.outcome !== 'tie_refund')
+                       ? 'challenge_payout' : 'challenge_refund';
+
+                tx.update(bal.ref, {
+                    'grit.balance': newBalance,
+                    'grit.lifetimeEarned': bal.earned + amount
+                });
+                var patch = {};
+                patch['payoutClaimed.' + uid] = true;
+                tx.update(chRef, patch);
+            });
+
+            if (credited > 0) {
+                vsMirrorBalance(newBalance, credited, reason,
+                    { challengeId: ch.id, challengeName: ch.name });
+                if (ch.payoutClaimed) ch.payoutClaimed[uid] = true;
+            }
+            return credited;
+        }
+
+        // ── Lazy maintenance (§3.4, §6.3, §6.4) ───────────────────────────
+        // There is no scheduler in this build. Expiry, deadline resolution and
+        // payout claims are all evaluated whenever a client loads the list.
+        // A scheduled Cloud Function that resolves overdue challenges is a
+        // worthwhile hardening pass and is deliberately NOT a dependency here.
+        let _vsMaintaining = false;
+
+        async function vsRunMaintenance() {
+            if (_vsMaintaining) return;
+            _vsMaintaining = true;
+            try {
+                var uid = vsUid();
+                if (!uid) return;
+                var list = await vsFetch(false);
+                var touched = false;
+
+                for (var i = 0; i < list.length; i++) {
+                    var ch = list[i];
+                    try {
+                        if (ch.status === 'pending' && vsNow() > ch.expiresAt) {
+                            if (await vsTerminatePending(ch.id, 'expired', 'expired_refund')) touched = true;
+                        } else if (ch.status === 'active' && vsNow() > ch.endsAt) {
+                            if (await vsResolveDeadline(ch.id)) touched = true;
+                        }
+                    } catch (e) { console.warn('Versus maintenance step failed:', e && e.message); }
+                }
+                if (touched) list = await vsFetch(true);
+
+                for (var j = 0; j < list.length; j++) {
+                    var c = list[j];
+                    if (!vsIsTerminal(c.status)) continue;
+                    try {
+                        var got = await vsClaimPayout(c);
+                        if (got > 0) {
+                            touched = true;
+                            showToast('+' + got + ' Grit returned from "' + c.name + '"', 'olive');
+                        }
+                    } catch (e) { console.warn('Versus claim failed:', e && e.message); }
+                }
+                if (touched) await vsFetch(true);
+                vsAnnounceResults();
+                vsPrune();
+                vsUpdateBadges();
+            } finally {
+                _vsMaintaining = false;
+            }
+        }
+
+        // A terminal challenge that owes this user nothing, or has already paid
+        // them, is dead weight in memory. It stays in Firestore — documents are
+        // never deleted — but there is no reason to carry it in the cache the
+        // completion path walks on every tap.
+        function vsPrune() {
+            var uid = vsUid();
+            if (!uid) return;
+            _vsCache.list = _vsCache.list.filter(function (c) {
+                if (!vsIsTerminal(c.status)) return true;
+                var owed    = (c.payout && c.payout[uid]) || 0;
+                var claimed = !!(c.payoutClaimed && c.payoutClaimed[uid]);
+                if (owed > 0 && !claimed) return true;                 // still owed
+                if (c.status === 'resolved' &&
+                    (vsNow() - (c.resolvedAt || 0)) < VS_ARCHIVE_DAYS * 86400000) return true;
+                return false;
+            });
+        }
+
+        // §6.5 — both sides get told, plainly, on next load. Seen results are
+        // remembered in userData so the message fires once, not every render.
+        function vsAnnounceResults() {
+            var uid = vsUid();
+            if (!uid || !window.userData) return;
+            if (!window.userData.vsSeenResults) window.userData.vsSeenResults = {};
+            var seen = window.userData.vsSeenResults;
+            var changed = false;
+
+            _vsCache.list.forEach(function (ch) {
+                if (ch.status !== 'resolved') return;
+                if (seen[ch.id]) return;
+                seen[ch.id] = true;
+                changed = true;
+                var opp = vsOther(ch, uid);
+                var mine = vsCappedTotal(ch, uid), theirs = vsCappedTotal(ch, opp);
+                var line;
+                if (ch.outcome === 'tie_refund') {
+                    line = '🤝 "' + ch.name + '" ended level — ' + mine + '–' + theirs +
+                           '. Both stakes returned.';
+                } else if (ch.winner === uid) {
+                    line = '🏆 You won "' + ch.name + '" ' + mine + '–' + theirs +
+                           ' · +' + ((ch.payout && ch.payout[uid]) || 0) + ' Grit';
+                } else {
+                    line = '"' + ch.name + '" went to ' + vsName(ch, opp) + ' — ' +
+                           mine + '–' + theirs + '. Your stake is gone.';
+                }
+                showToast(line, ch.winner === uid ? 'olive' : 'red');
+            });
+            if (changed) debouncedSaveUserData();
+        }
+
+        // ── Progress accounting (§4) ──────────────────────────────────────
+        //
+        // A completion counts only when: the challenge is active, now is inside
+        // [startedAt, endsAt], the activity is mapped to a requirement FOR THIS
+        // USER, and the completion is live rather than backdated.
+        //
+        // The fourth rule is why this hooks completeActivity() and nothing
+        // else. completeActivity is the live path; retroactiveComplete() is the
+        // backdating path and is deliberately NOT hooked. Backdating stays free
+        // and unlimited everywhere else — it still awards XP, still feeds
+        // streaks, still counts in analytics. It simply does not move a wager.
+        //
+        // Cost (§4.3): one small write per qualifying completion, only while a
+        // challenge is active, only for mapped activities. The mapping lookup
+        // resolves against the in-memory cache — there is no read on the
+        // completion hot path. A stale cache can miss a challenge accepted
+        // seconds ago; that is acceptable and self-corrects on next refresh.
+
+        function vsLiveMappingsFor(activityId) {
+            var uid = vsUid();
+            var out = [];
+            if (!uid) return out;
+            var now = vsNow();
+            _vsCache.list.forEach(function (ch) {
+                if (ch.status !== 'active') return;
+                if (now < ch.startedAt || now > ch.endsAt) return;
+                var m = vsMappingOf(ch, uid);
+                Object.keys(m).forEach(function (reqId) {
+                    if (m[reqId] && m[reqId].activityId === activityId) {
+                        out.push({ ch: ch, reqId: reqId });
+                    }
+                });
+            });
+            return out;
+        }
+
+        async function vsOnCompletion(activityId) {
+            var hits = vsLiveMappingsFor(activityId);
+            if (!hits.length) return;
+            var uid = vsUid();
+            for (var i = 0; i < hits.length; i++) {
+                var ch = hits[i].ch, reqId = hits[i].reqId;
+                var req = (ch.requirements || []).find(function (r) { return r.reqId === reqId; });
+                if (!req) continue;
+                var cur = (vsProgressOf(ch, uid))[reqId] || 0;
+                if (cur >= req.targetCount) continue;   // capped — no write at all
+                try {
+                    var res = await vsCommitProgress(ch.id, reqId, +1);
+                    if (res) {
+                        // Mirror into the cache so the next completion caps
+                        // correctly without a re-read.
+                        ch.progress = ch.progress || {};
+                        ch.progress[uid] = ch.progress[uid] || {};
+                        ch.progress[uid][reqId] = cur + 1;
+                        ch.totals = ch.totals || {};
+                        ch.totals[uid] = vsCappedTotal(ch, uid);
+                    }
+                    if (res === 'won') {
+                        await vsFetch(true);
+                        showToast('🏆 You finished "' + ch.name + '" first — the pot is yours.', 'olive');
+                        await vsRunMaintenance();
+                    }
+                } catch (e) { console.warn('Versus progress write failed:', e && e.message); }
+            }
+            vsRenderIfVisible();
+        }
+
+        // §4.2 — undo must mirror. undoActivity only ever reverses a completion
+        // made today, which is exactly the set of completions that could have
+        // incremented a challenge, so the symmetry is clean. Clamped at zero.
+        async function vsOnUndo(activityId) {
+            var hits = vsLiveMappingsFor(activityId);
+            if (!hits.length) return;
+            var uid = vsUid();
+            for (var i = 0; i < hits.length; i++) {
+                var ch = hits[i].ch, reqId = hits[i].reqId;
+                var cur = (vsProgressOf(ch, uid))[reqId] || 0;
+                if (cur <= 0) continue;
+                try {
+                    await vsCommitProgress(ch.id, reqId, -1);
+                    ch.progress[uid][reqId] = cur - 1;
+                    ch.totals[uid] = vsCappedTotal(ch, uid);
+                } catch (e) { console.warn('Versus undo write failed:', e && e.message); }
+            }
+            vsRenderIfVisible();
+        }
+
+        // ── Detail listener (§5) ──────────────────────────────────────────
+        // The one place a live socket is warranted: the detail view is the one
+        // place the user is actually looking at the opponent's bar. Never in
+        // the list — several active challenges would otherwise hold several
+        // sockets open for bars nobody is watching.
+        function vsAttachDetail(id) {
+            vsDetachDetail();
+            _vsDetailId = id;
+            try {
+                _vsDetailUnsub = onSnapshot(doc(db, VS_COL, id), function (snap) {
+                    if (!snap.exists()) return;
+                    var ch = Object.assign({ id: snap.id }, snap.data());
+                    vsCacheReplace(ch);
+                    if (_vsDetailId === id) vsRenderDetail(id);
+                }, function (err) { console.warn('Versus detail listener:', err && err.message); });
+            } catch (e) { console.warn('Versus listener attach failed:', e && e.message); }
+        }
+
+        function vsDetachDetail() {
+            if (_vsDetailUnsub) { try { _vsDetailUnsub(); } catch (e) {} }
+            _vsDetailUnsub = null;
+            _vsDetailId = null;
+        }
+
+        function vsErrText(e) {
+            var m = (e && e.message) || String(e);
+            if (m.indexOf('SHORTFALL:') === 0) {
+                return 'You are ' + m.split(':')[1] + ' Grit short of this stake.';
+            }
+            if (/permission|insufficient/i.test(m)) {
+                return 'Firestore rules rejected that write — the versus rules may not be deployed yet.';
+            }
+            return m;
+        }
+
+        // ── UI (§8) ───────────────────────────────────────────────────────
+        // The existing Challenges visual language is kept as-is: ch-card,
+        // ch-bar, ch-act-row-v2 and the design tokens they hang off. The
+        // additions are the opponent's bar (visually subordinate to the user's
+        // own), the per-side breakdown, the stake display, and the invite,
+        // accept and resolved states.
+
+        function vsFmtLeft(ms) {
+            if (ms <= 0) return 'ended';
+            var d = Math.floor(ms / 86400000);
+            if (d >= 1) return d + (d === 1 ? ' day left' : ' days left');
+            var h = Math.floor(ms / 3600000);
+            if (h >= 1) return h + 'h left';
+            return Math.max(1, Math.floor(ms / 60000)) + 'm left';
+        }
+
+        function vsBar(label, current, target, tone) {
+            var pct = target > 0 ? Math.min(100, (current / target) * 100) : 0;
+            return '' +
+                '<div class="vs-barblock ' + tone + '">' +
+                    '<div class="vs-barhead">' +
+                        '<span class="vs-barname">' + escapeHtml(label) + '</span>' +
+                        '<span class="vs-barcount">' + current + '/' + target + '</span>' +
+                    '</div>' +
+                    '<div class="ch-bar"><div class="ch-bar-inner" style="width:' + pct + '%;"></div></div>' +
+                '</div>';
+        }
+
+        function vsBreakdown(ch, uid, heading) {
+            var prog = vsProgressOf(ch, uid), map = vsMappingOf(ch, uid);
+            var rows = (ch.requirements || []).map(function (r) {
+                var target = r.targetCount || 1;
+                var cur    = Math.min(prog[r.reqId] || 0, target);
+                var pct    = Math.min(100, (cur / target) * 100);
+                var done   = cur >= target;
+                var act    = map[r.reqId];
+                var sub    = act ? act.activityName : 'not mapped yet';
+                return '' +
+                    '<div class="ch-act-row-v2">' +
+                        '<div class="ch-act-row-top">' +
+                            '<span class="ch-act-row-name-v2' + (done ? ' done' : '') + '">' +
+                                escapeHtml(r.name) +
+                                '<span class="vs-act-sub"> · ' + escapeHtml(sub) + '</span>' +
+                            '</span>' +
+                            '<span class="ch-act-row-count-v2">' + cur + '/' + target + '</span>' +
+                        '</div>' +
+                        '<div class="ch-act-bar-v2"><div class="ch-act-bar-v2-fill' +
+                            (done ? ' done' : '') + '" style="width:' + pct + '%;"></div></div>' +
+                    '</div>';
+            }).join('');
+            return '<div class="vs-breakdown-group"><div class="vs-breakdown-head">' +
+                   escapeHtml(heading) + '</div>' + rows + '</div>';
+        }
+
+        // ── Cards ─────────────────────────────────────────────────────────
+
+        function vsPendingCard(ch, uid) {
+            var mine    = ch.createdBy === uid;
+            var opp     = vsOther(ch, uid);
+            var left    = vsFmtLeft(ch.expiresAt - vsNow());
+            var reqLine = (ch.requirements || []).map(function (r) {
+                return escapeHtml(r.name) + ' ×' + r.targetCount;
+            }).join(' · ');
+
+            var actions = mine
+                ? '<button class="vs-btn vs-btn-ghost" onclick="vsCancel(\'' + ch.id + '\')">Withdraw</button>'
+                : '<button class="vs-btn vs-btn-primary" onclick="vsOpenAccept(\'' + ch.id + '\')">Accept</button>' +
+                  '<button class="vs-btn vs-btn-ghost" onclick="vsDecline(\'' + ch.id + '\')">Decline</button>';
+
+            return '' +
+            '<div class="ch-card vs-card vs-card-pending">' +
+                '<div class="vs-ribbon">' + (mine ? 'Invite sent' : 'Challenge received') + '</div>' +
+                '<div class="ch-card-head">' +
+                    '<div class="ch-card-titlecol">' +
+                        '<h3 class="ch-card-title">' + escapeHtml(ch.name) + '</h3>' +
+                        (ch.description ? '<div class="ch-subtitle-row"><p class="ch-card-desc">' +
+                            escapeHtml(ch.description) + '</p></div>' : '') +
+                        '<div class="ch-meta">' +
+                            '<span>' + (mine ? 'To ' : 'From ') + escapeHtml(vsName(ch, opp)) + '</span>' +
+                            '<span class="ch-meta-sep">·</span>' +
+                            '<span class="vs-stake">' + ch.stake + ' Grit each</span>' +
+                            '<span class="ch-meta-sep">·</span>' +
+                            '<span>' + ch.durationDays + ' days</span>' +
+                            '<span class="ch-meta-sep">·</span>' +
+                            '<span class="vs-expiry">' + left + '</span>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="vs-reqline">' + reqLine + '</div>' +
+                '<div class="vs-liveonly">Only completions logged on the day they happen count toward this challenge.</div>' +
+                '<div class="vs-actions">' + actions + '</div>' +
+            '</div>';
+        }
+
+        function vsActiveCard(ch, uid) {
+            var opp    = vsOther(ch, uid);
+            var target = vsTargetTotal(ch);
+            var mine   = vsCappedTotal(ch, uid);
+            var theirs = vsCappedTotal(ch, opp);
+            var open   = _vsDetailId === ch.id;
+            var left   = vsFmtLeft(ch.endsAt - vsNow());
+            var leadKey = mine > theirs ? 'ahead' : (mine < theirs ? 'behind' : 'level');
+            var leadTxt = leadKey === 'ahead' ? 'you lead'
+                        : (leadKey === 'behind' ? 'you trail' : 'level');
+
+            return '' +
+            '<div class="ch-card vs-card" data-state="active">' +
+                '<div class="ch-card-head">' +
+                    '<div class="ch-card-titlecol">' +
+                        '<h3 class="ch-card-title">' + escapeHtml(ch.name) + '</h3>' +
+                        (ch.description ? '<div class="ch-subtitle-row"><p class="ch-card-desc">' +
+                            escapeHtml(ch.description) + '</p></div>' : '') +
+                        '<div class="ch-meta">' +
+                            '<span class="vs-pot">Pot ' + ch.pot + ' Grit</span>' +
+                            '<span class="ch-meta-sep">·</span>' +
+                            '<span>' + ch.stake + ' each</span>' +
+                            '<span class="ch-meta-sep">·</span>' +
+                            '<span class="ch-meta-xp">+' + ch.bonusXP + ' XP</span>' +
+                            '<span class="ch-meta-sep">·</span>' +
+                            '<span>' + left + '</span>' +
+                            '<span class="ch-meta-sep">·</span>' +
+                            '<span class="vs-lead vs-lead-' + leadKey + '">' + leadTxt + '</span>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>' +
+                vsBar('You', mine, target, 'vs-bar-mine') +
+                vsBar(vsName(ch, opp), theirs, target, 'vs-bar-theirs') +
+                '<div class="ch-action-row">' +
+                    '<button class="ch-breakdown-btn" type="button" onclick="vsToggleDetail(\'' + ch.id + '\')">' +
+                        '<span>' + (open ? 'Hide breakdown' : 'Breakdown') + '</span>' +
+                        '<svg class="ch-breakdown-chev' + (open ? ' expanded' : '') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>' +
+                    '</button>' +
+                    '<button class="vs-btn vs-btn-quiet" onclick="vsConfirmForfeit(\'' + ch.id + '\')">Forfeit</button>' +
+                '</div>' +
+                (open
+                    ? '<div class="vs-detail" id="vs-detail-' + ch.id + '">' +
+                        vsBreakdown(ch, uid, 'You') +
+                        vsBreakdown(ch, opp, vsName(ch, opp)) +
+                        '<div class="vs-liveonly">Only completions logged on the day they happen count toward this challenge.</div>' +
+                      '</div>'
+                    : '') +
+            '</div>';
+        }
+
+        function vsResolvedCard(ch, uid) {
+            var opp    = vsOther(ch, uid);
+            var target = vsTargetTotal(ch);
+            var mine   = vsCappedTotal(ch, uid);
+            var theirs = vsCappedTotal(ch, opp);
+            var won    = ch.winner === uid;
+            var tie    = !ch.winner;
+            var owed   = (ch.payout && ch.payout[uid]) || 0;
+            var claimed = !!(ch.payoutClaimed && ch.payoutClaimed[uid]);
+
+            var verdict, tone;
+            if (tie) {
+                verdict = 'Level at the deadline — both stakes returned.'; tone = 'vs-res-tie';
+            } else if (won) {
+                verdict = ch.outcome === 'forfeit'
+                    ? escapeHtml(vsName(ch, opp)) + ' forfeited. The pot is yours.'
+                    : (ch.outcome === 'completed_first'
+                        ? 'You finished first.' : 'You were ahead at the deadline.');
+                tone = 'vs-res-won';
+            } else {
+                verdict = ch.outcome === 'forfeit'
+                    ? 'You forfeited. ' + escapeHtml(vsName(ch, opp)) + ' took the pot.'
+                    : (ch.outcome === 'completed_first'
+                        ? escapeHtml(vsName(ch, opp)) + ' finished first.'
+                        : escapeHtml(vsName(ch, opp)) + ' was ahead at the deadline.');
+                tone = 'vs-res-lost';
+            }
+
+            var gritLine = owed > 0
+                ? '<span class="vs-grit-moved">' + (claimed ? '+' + owed + ' Grit banked' : '+' + owed + ' Grit incoming') + '</span>'
+                : '<span class="vs-grit-lost">−' + ch.stake + ' Grit</span>';
+
+            return '' +
+            '<div class="ch-card vs-card ' + tone + '" data-state="completed">' +
+                '<div class="vs-ribbon ' + tone + '">' + (tie ? 'Draw' : (won ? 'Won' : 'Lost')) + '</div>' +
+                '<div class="ch-card-head">' +
+                    '<div class="ch-card-titlecol">' +
+                        '<h3 class="ch-card-title">' + escapeHtml(ch.name) + '</h3>' +
+                        '<div class="ch-meta"><span>' + verdict + '</span>' +
+                            '<span class="ch-meta-sep">·</span>' + gritLine + '</div>' +
+                    '</div>' +
+                '</div>' +
+                vsBar('You', mine, target, 'vs-bar-mine') +
+                vsBar(vsName(ch, opp), theirs, target, 'vs-bar-theirs') +
+            '</div>';
+        }
+
+        // ── Tab render ────────────────────────────────────────────────────
+
+        window.vsRenderTab = async function () {
+            var host = document.getElementById('versusContent');
+            if (!host) return;
+            var uid = vsUid();
+            if (!uid) { host.innerHTML = ''; return; }
+
+            if (!_vsCache.at) {
+                host.innerHTML = '<div class="vs-loading">Loading…</div>';
+            }
+            await vsFetch(false);
+            await vsRunMaintenance();
+            vsPaint();
+        };
+
+        function vsPaint() {
+            var host = document.getElementById('versusContent');
+            if (!host) return;
+            var uid = vsUid();
+            if (!uid) return;
+
+            var list = _vsCache.list.slice();
+            var pending  = list.filter(function (c) { return c.status === 'pending'; });
+            var active   = list.filter(function (c) { return c.status === 'active'; });
+            var resolved = list.filter(function (c) {
+                return c.status === 'resolved' &&
+                       (vsNow() - (c.resolvedAt || 0)) < VS_ARCHIVE_DAYS * 86400000;
+            });
+            pending.sort(function (a, b) { return a.expiresAt - b.expiresAt; });
+            active.sort(function (a, b) { return a.endsAt - b.endsAt; });
+            resolved.sort(function (a, b) { return (b.resolvedAt || 0) - (a.resolvedAt || 0); });
+
+            var live = pending.length + active.length;
+            var html = '' +
+                '<div class="act-toolbar ch-toolbar">' +
+                    '<div class="tool-cluster">' +
+                        '<span class="vs-cap">' + live + ' / ' + VS_MAX_CONCURRENT + ' running</span>' +
+                    '</div>' +
+                    '<button class="act-tb-add-main"' +
+                        (live >= VS_MAX_CONCURRENT ? ' disabled title="You are at the limit"' : '') +
+                        ' onclick="vsOpenCreate()">' +
+                        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>' +
+                        'Challenge a friend' +
+                    '</button>' +
+                '</div>';
+
+            if (!live && !resolved.length) {
+                html += '<div class="ch-empty">' +
+                            '<div class="ch-empty-icon">⚔️</div>' +
+                            '<div class="ch-empty-text">No versus challenges. Stake Grit against a friend — ' +
+                            'first to finish takes the pot, and you can both watch the bars move.</div>' +
+                        '</div>';
+                host.innerHTML = html;
+                return;
+            }
+
+            function section(title, count, body) {
+                return '<div class="ch-section-head"><div class="ch-section-head-left">' +
+                       '<h3 class="ch-section-title">' + title + '</h3>' +
+                       '<span class="ch-section-count">' + count + '</span></div></div>' + body;
+            }
+            if (pending.length) {
+                html += section('Invites', pending.length,
+                    pending.map(function (c) { return vsPendingCard(c, uid); }).join(''));
+            }
+            if (active.length) {
+                html += section('Live', active.length,
+                    active.map(function (c) { return vsActiveCard(c, uid); }).join(''));
+            }
+            if (resolved.length) {
+                html += section('Finished', resolved.length,
+                    resolved.map(function (c) { return vsResolvedCard(c, uid); }).join(''));
+            }
+            host.innerHTML = html;
+            vsMarkSeen(pending.concat(active));
+        }
+
+        function vsRenderIfVisible() {
+            var panel = document.getElementById('challengesSubVersus');
+            if (panel && panel.style.display !== 'none' && window.currentTab === 'challenges') vsPaint();
+            vsUpdateBadges();
+        }
+
+        function vsRenderDetail(id) {
+            // The open card is re-rendered in place by repainting the list;
+            // the listener keeps the opponent's bar live while it is open.
+            vsPaint();
+        }
+
+        window.vsToggleDetail = function (id) {
+            if (_vsDetailId === id) { vsDetachDetail(); }
+            else { vsAttachDetail(id); }
+            vsPaint();
+        };
+
+        // §2.2 `seen` — drives the invite badge. Written at most once per
+        // challenge per session, own key only.
+        let _vsSeenWritten = {};
+        function vsMarkSeen(list) {
+            var uid = vsUid();
+            if (!uid) return;
+            list.forEach(function (ch) {
+                if (_vsSeenWritten[ch.id]) return;
+                if (ch.createdBy === uid && ch.status === 'pending') return;  // nothing new to see
+                _vsSeenWritten[ch.id] = true;
+                var patch = {};
+                patch['seen.' + uid] = vsNow();
+                updateDoc(doc(db, VS_COL, ch.id), patch).catch(function () {});
+                if (ch.seen) ch.seen[uid] = vsNow();
+            });
+            vsUpdateBadges();
+        }
+
+        // ── Badges (§3.2) ─────────────────────────────────────────────────
+        function vsPendingForMe() {
+            var uid = vsUid();
+            return _vsCache.list.filter(function (c) {
+                return c.status === 'pending' && c.opponent === uid && vsNow() < c.expiresAt;
+            }).length;
+        }
+
+        function vsUpdateBadges() {
+            var n = vsPendingForMe();
+            // Sub-tab pill
+            var pill = document.getElementById('vsSubTabBtn');
+            if (pill) {
+                var b = pill.querySelector('.vs-pill-badge');
+                if (n > 0) {
+                    if (!b) { b = document.createElement('span'); b.className = 'vs-pill-badge'; pill.appendChild(b); }
+                    b.textContent = n;
+                } else if (b) { b.remove(); }
+            }
+            // Challenges nav tab
+            document.querySelectorAll('.nav-tab').forEach(function (tab) {
+                var oc = tab.getAttribute('onclick') || '';
+                if (oc.indexOf("switchTab('challenges')") === -1) return;
+                var d = tab.querySelector('.vs-nav-dot');
+                if (n > 0) {
+                    if (!d) { d = document.createElement('span'); d.className = 'vs-nav-dot'; tab.appendChild(d); }
+                } else if (d) { d.remove(); }
+            });
+        }
+
+        // ── Sheet primitive ───────────────────────────────────────────────
+        // One reusable overlay, created on demand, styled with the app's
+        // existing modal tokens. Keeps index.html additions to the sub-tab.
+
+        function vsSheet(innerHtml) {
+            var el = document.getElementById('vsSheet');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'vsSheet';
+                el.className = 'modal-overlay vs-sheet-scrim';
+                el.addEventListener('click', function (ev) { if (ev.target === el) vsCloseSheet(); });
+                document.body.appendChild(el);
+            }
+            el.innerHTML = '<div class="modal pl-modal vs-sheet">' + innerHtml + '</div>';
+            el.classList.add('active');
+            el.style.display = 'flex';
+        }
+
+        window.vsCloseSheet = function () {
+            var el = document.getElementById('vsSheet');
+            if (el) { el.classList.remove('active'); el.style.display = 'none'; el.innerHTML = ''; }
+        };
+
+        function vsSheetHead(eyebrow, title) {
+            return '<div class="modal-header pl-modal-header">' +
+                     '<div><div class="pl-modal-eyebrow">' + escapeHtml(eyebrow) + '</div>' +
+                     '<h3 class="modal-title">' + escapeHtml(title) + '</h3></div>' +
+                     '<button class="pl-modal-close" type="button" onclick="vsCloseSheet()" aria-label="Close">' +
+                     '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+                     '</button></div>';
+        }
+
+        // ── Create flow (§8.4) ────────────────────────────────────────────
+        // Friend picker → the authoring form. The creator maps their own
+        // activities inline, because they already own them.
+
+        let _vsDraft = null;
+        let _vsFriendRows = [];
+
+        window.vsOpenCreate = async function () {
+            await vsFetch(false);
+            if (vsCountLive() >= VS_MAX_CONCURRENT) {
+                showToast('You already have ' + VS_MAX_CONCURRENT + ' versus challenges running.', 'red');
+                return;
+            }
+            var friends = (window.userData.friends || []);
+            vsSheet(vsSheetHead('Versus', 'Pick an opponent') +
+                    '<div class="modal-body pl-modal-body"><div class="vs-loading">Loading friends…</div></div>');
+
+            if (!friends.length) {
+                vsSheet(vsSheetHead('Versus', 'Pick an opponent') +
+                    '<div class="modal-body pl-modal-body">' +
+                    '<p class="vs-note">You need a friend to challenge. Add one from the Friends tab first.</p>' +
+                    '</div>');
+                return;
+            }
+
+            var rows = await Promise.all(friends.map(async function (uid) {
+                try {
+                    var s = await getDoc(doc(db, 'publicProfiles', uid));
+                    return { uid: uid, name: s.exists() ? (s.data().displayName || uid) : uid,
+                             level: s.exists() ? (s.data().level || 1) : null };
+                } catch (e) { return { uid: uid, name: uid, level: null }; }
+            }));
+            // Held in memory and addressed by index — a display name is never
+            // interpolated into an onclick attribute, where an apostrophe
+            // would break out of the handler.
+            _vsFriendRows = rows;
+
+            var body = rows.map(function (r, i) {
+                return '<button class="vs-friend-row" onclick="vsPickOpponent(' + i + ')">' +
+                       '<span class="vs-friend-name">' + escapeHtml(r.name) + '</span>' +
+                       (r.level ? '<span class="vs-friend-lvl">Lv ' + r.level + '</span>' : '') +
+                       '</button>';
+            }).join('');
+
+            vsSheet(vsSheetHead('Versus', 'Pick an opponent') +
+                    '<div class="modal-body pl-modal-body">' + body + '</div>');
+        };
+
+        window.vsPickOpponent = function (i) {
+            var r = _vsFriendRows[i];
+            if (!r) return;
+            _vsDraft = {
+                opponentUid: r.uid,
+                opponentName: r.name || 'Opponent',
+                rows: [],
+                durationDays: 14,
+                stake: VS_STAKE_MIN
+            };
+            vsDraftAddRow();
+            vsRenderCreateForm();
+        };
+
+        function vsDraftAddRow() {
+            if (_vsDraft.rows.length >= VS_MAX_REQS) return;
+            _vsDraft.rows.push({ reqId: 'r' + Math.random().toString(36).slice(2, 8),
+                                 activityId: '', name: '', targetCount: 5 });
+        }
+
+        window.vsAddRow = function () { vsReadCreateForm(); vsDraftAddRow(); vsRenderCreateForm(); };
+        window.vsDelRow = function (i) {
+            vsReadCreateForm();
+            if (_vsDraft.rows.length > 1) _vsDraft.rows.splice(i, 1);
+            vsRenderCreateForm();
+        };
+        window.vsRowChanged = function () { vsReadCreateForm(); vsRenderCreateForm(); };
+
+        function vsReadCreateForm() {
+            if (!_vsDraft) return;
+            var g = function (id) { var e = document.getElementById(id); return e ? e.value : ''; };
+            _vsDraft.name         = g('vsName');
+            _vsDraft.description  = g('vsDesc');
+            _vsDraft.durationDays = Math.max(1, parseInt(g('vsDuration'), 10) || 14);
+            _vsDraft.stake        = parseInt(g('vsStake'), 10) || VS_STAKE_MIN;
+            _vsDraft.rows.forEach(function (r, i) {
+                var a = document.getElementById('vsRowAct' + i);
+                var t = document.getElementById('vsRowTarget' + i);
+                var n = document.getElementById('vsRowName' + i);
+                if (a) r.activityId  = a.value;
+                if (t) r.targetCount = Math.max(1, parseInt(t.value, 10) || 1);
+                if (n) r.name        = n.value;
+            });
+        }
+
+        // Existing bonus-XP behaviour, unchanged (§9.12): 20% of the base XP
+        // the requirements are worth at their targets, floored at 1.
+        function vsDraftBonusXP() {
+            var total = 0;
+            _vsDraft.rows.forEach(function (r) {
+                var a = gritFindActivity(r.activityId);
+                if (a) total += (a.baseXP || 0) * (r.targetCount || 1);
+            });
+            return Math.max(1, Math.round(total * 0.2));
+        }
+
+        function vsRenderCreateForm() {
+            var committed = vsCommittedActivityIds(null);
+            var acts = gritAllActivities();
+            var used  = _vsDraft.rows.map(function (r) { return r.activityId; });
+
+            var rowsHtml = _vsDraft.rows.map(function (r, i) {
+                var opts = '<option value="">Choose one of your activities…</option>' +
+                    acts.map(function (a) {
+                        var lockedElsewhere = committed.has(a.id);
+                        var usedHere = used.indexOf(a.id) !== -1 && r.activityId !== a.id;
+                        if (lockedElsewhere || usedHere) {
+                            return '<option value="' + a.id + '" disabled>' + escapeHtml(a.name) +
+                                   ' — ' + (lockedElsewhere ? 'in another challenge' : 'already used above') +
+                                   '</option>';
+                        }
+                        return '<option value="' + a.id + '"' + (r.activityId === a.id ? ' selected' : '') +
+                               '>' + escapeHtml(a.name) + '</option>';
+                    }).join('');
+                var act = gritFindActivity(r.activityId);
+                var placeholder = act ? act.name : 'What the requirement is called';
+                return '' +
+                '<div class="vs-reqrow">' +
+                    '<div class="vs-reqrow-top">' +
+                        '<span class="vs-reqrow-idx">' + (i + 1) + '</span>' +
+                        (_vsDraft.rows.length > 1
+                            ? '<button type="button" class="vs-reqrow-del" onclick="vsDelRow(' + i + ')" aria-label="Remove">×</button>'
+                            : '') +
+                    '</div>' +
+                    '<select class="pl-input" id="vsRowAct' + i + '" onchange="vsRowChanged()">' + opts + '</select>' +
+                    '<div class="vs-reqrow-line">' +
+                        '<input class="pl-input" id="vsRowName' + i + '" placeholder="' +
+                            escapeHtml(placeholder) + '" value="' + escapeHtml(r.name || '') + '">' +
+                        '<input class="pl-input vs-target-input" id="vsRowTarget' + i +
+                            '" type="number" min="1" max="999" value="' + r.targetCount + '">' +
+                    '</div>' +
+                    '<div class="vs-reqrow-hint">Your opponent maps their own activity to this name.</div>' +
+                '</div>';
+            }).join('');
+
+            var stakeOpts = '';
+            for (var s = VS_STAKE_MIN; s <= VS_STAKE_MAX; s += VS_STAKE_STEP) {
+                stakeOpts += '<option value="' + s + '"' + (_vsDraft.stake === s ? ' selected' : '') +
+                             '>' + s + ' Grit</option>';
+            }
+            var bal = gritBalance();
+            var short = bal < _vsDraft.stake;
+
+            vsSheet(
+                vsSheetHead('Versus · ' + _vsDraft.opponentName, 'Set the terms') +
+                '<div class="modal-body pl-modal-body ay-modal-body">' +
+                    '<div class="ay-field"><label class="pl-field-label" for="vsName">Challenge name</label>' +
+                        '<input class="pl-input" id="vsName" placeholder="e.g. Two weeks of mornings" value="' +
+                        escapeHtml(_vsDraft.name || '') + '"></div>' +
+                    '<div class="ay-field"><label class="pl-field-label" for="vsDesc">Description</label>' +
+                        '<textarea class="pl-input ay-textarea" rows="2" id="vsDesc" placeholder="What is this about?">' +
+                        escapeHtml(_vsDraft.description || '') + '</textarea></div>' +
+
+                    '<div class="ay-field"><label class="pl-field-label">Requirements</label>' +
+                        rowsHtml +
+                        (_vsDraft.rows.length < VS_MAX_REQS
+                            ? '<button type="button" class="vs-btn vs-btn-ghost vs-addreq" onclick="vsAddRow()">+ Add requirement</button>'
+                            : '') +
+                    '</div>' +
+
+                    '<div class="vs-two">' +
+                        '<div class="ay-field"><label class="pl-field-label" for="vsDuration">Duration (days)</label>' +
+                            '<input class="pl-input" id="vsDuration" type="number" min="1" max="90" value="' +
+                            _vsDraft.durationDays + '"></div>' +
+                        '<div class="ay-field"><label class="pl-field-label" for="vsStake">Stake each</label>' +
+                            '<select class="pl-input" id="vsStake" onchange="vsRowChanged()">' + stakeOpts + '</select></div>' +
+                    '</div>' +
+
+                    '<div class="vs-summary">' +
+                        '<div><span>Pot if accepted</span><strong>' + (_vsDraft.stake * 2) + ' Grit</strong></div>' +
+                        '<div><span>Bonus XP</span><strong>+' + vsDraftBonusXP() + ' XP</strong></div>' +
+                        '<div><span>Your balance</span><strong class="' + (short ? 'vs-short' : '') + '">' +
+                            bal + ' Grit</strong></div>' +
+                    '</div>' +
+                    '<p class="vs-note">Your stake is escrowed the moment you send the invite, so the pot is real ' +
+                    'before they answer. If they decline or it expires, it comes straight back. ' +
+                    '<strong>Only completions logged on the day they happen count.</strong></p>' +
+                '</div>' +
+                '<div class="modal-footer pl-modal-footer">' +
+                    '<button class="vs-btn vs-btn-ghost" onclick="vsCloseSheet()">Cancel</button>' +
+                    '<button class="vs-btn vs-btn-primary" id="vsSendBtn" onclick="vsSubmitCreate()"' +
+                        (short ? ' disabled title="Not enough Grit"' : '') + '>Send invite</button>' +
+                '</div>'
+            );
+        }
+
+        window.vsSubmitCreate = async function () {
+            vsReadCreateForm();
+            var d = _vsDraft;
+            if (!d) return;
+            if (!d.name || !d.name.trim()) { showToast('Give the challenge a name.', 'red'); return; }
+            var reqs = [];
+            for (var i = 0; i < d.rows.length; i++) {
+                var r = d.rows[i];
+                if (!r.activityId) { showToast('Pick an activity for requirement ' + (i + 1) + '.', 'red'); return; }
+                var act = gritFindActivity(r.activityId);
+                if (!act) { showToast('That activity no longer exists.', 'red'); return; }
+                reqs.push({
+                    reqId: r.reqId,
+                    name: (r.name && r.name.trim()) || act.name,
+                    targetCount: r.targetCount,
+                    activityId: act.id,
+                    activityName: act.name
+                });
+            }
+            var btn = document.getElementById('vsSendBtn');
+            if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+            try {
+                await vsCreateChallenge({
+                    opponentUid: d.opponentUid,
+                    opponentName: d.opponentName,
+                    name: d.name.trim(),
+                    description: (d.description || '').trim(),
+                    stake: d.stake,
+                    durationDays: d.durationDays,
+                    bonusXP: vsDraftBonusXP(),
+                    requirements: reqs
+                });
+                vsCloseSheet();
+                _vsDraft = null;
+                showToast('Challenge sent — ' + d.stake + ' Grit escrowed.', 'blue');
+                await vsFetch(true);
+                vsPaint();
+            } catch (e) {
+                showToast(vsErrText(e), 'red');
+                if (btn) { btn.disabled = false; btn.textContent = 'Send invite'; }
+            }
+        };
+
+        // ── Accept walkthrough (§3.3, §8.5) ───────────────────────────────
+        // One requirement per screen with a progress indicator. There is no
+        // reject option on a requirement — rejecting one is declining the
+        // challenge. The accept button only enables once every requirement is
+        // resolved. Mapping work is kept in memory (and in userData, so it
+        // survives a reload) so a shortfall does not throw it away.
+
+        let _vsAccept = null;
+
+        window.vsOpenAccept = async function (id) {
+            await vsFetch(false);
+            var ch = vsCacheGet(id);
+            if (!ch) { showToast('That challenge is gone.', 'red'); return; }
+            if (ch.status !== 'pending') { showToast('That invite is no longer open.', 'red'); vsPaint(); return; }
+            // A saved draft can outlive the activities it points at.
+            var saved = ((window.userData && window.userData.vsDraftMappings) || {})[id] || {};
+            var mapping = {};
+            Object.keys(saved).forEach(function (reqId) {
+                var a = gritFindActivity(saved[reqId] && saved[reqId].activityId);
+                if (a) mapping[reqId] = { activityId: a.id, activityName: a.name };
+            });
+            _vsAccept = { id: id, step: 0, mapping: mapping };
+            vsRenderAcceptStep();
+        };
+
+        function vsPersistAcceptDraft() {
+            if (!_vsAccept || !window.userData) return;
+            if (!window.userData.vsDraftMappings) window.userData.vsDraftMappings = {};
+            window.userData.vsDraftMappings[_vsAccept.id] = _vsAccept.mapping;
+            debouncedSaveUserData();
+        }
+
+        function vsRenderAcceptStep() {
+            var ch = vsCacheGet(_vsAccept.id);
+            if (!ch) { vsCloseSheet(); return; }
+            var reqs = ch.requirements || [];
+            var i = Math.min(_vsAccept.step, reqs.length);
+            var uid = vsUid();
+
+            // Final screen — review and accept.
+            if (i >= reqs.length) {
+                var allMapped = reqs.every(function (r) { return _vsAccept.mapping[r.reqId]; });
+                var bal = gritBalance();
+                var short = bal < ch.stake;
+                var rows = reqs.map(function (r, idx) {
+                    var m = _vsAccept.mapping[r.reqId];
+                    return '<div class="vs-review-row">' +
+                        '<span class="vs-review-req">' + escapeHtml(r.name) + ' ×' + r.targetCount + '</span>' +
+                        '<span class="vs-review-act">' + (m ? escapeHtml(m.activityName) : '—') + '</span>' +
+                        '<button class="vs-review-edit" onclick="vsAcceptGoto(' + idx + ')">change</button>' +
+                        '</div>';
+                }).join('');
+                vsSheet(
+                    vsSheetHead('Accepting · ' + vsName(ch, vsOther(ch, uid)), ch.name) +
+                    '<div class="modal-body pl-modal-body">' +
+                        '<div class="vs-review">' + rows + '</div>' +
+                        '<div class="vs-summary">' +
+                            '<div><span>Your stake</span><strong>' + ch.stake + ' Grit</strong></div>' +
+                            '<div><span>Pot</span><strong>' + (ch.stake * 2) + ' Grit</strong></div>' +
+                            '<div><span>Your balance</span><strong class="' + (short ? 'vs-short' : '') + '">' +
+                                bal + ' Grit</strong></div>' +
+                            '<div><span>Runs for</span><strong>' + ch.durationDays + ' days</strong></div>' +
+                        '</div>' +
+                        '<p class="vs-note"><strong>Only completions logged on the day they happen count toward ' +
+                        'this challenge.</strong> Backdating still earns XP and feeds your streaks everywhere ' +
+                        'else — it just does not move this wager.</p>' +
+                        (short ? '<p class="vs-note vs-short">You are ' + (ch.stake - bal) +
+                                 ' Grit short. Your mapping is saved — come back when you have earned it.</p>' : '') +
+                    '</div>' +
+                    '<div class="modal-footer pl-modal-footer">' +
+                        '<button class="vs-btn vs-btn-ghost" onclick="vsAcceptGoto(' + (reqs.length - 1) + ')">Back</button>' +
+                        '<button class="vs-btn vs-btn-primary" id="vsAcceptBtn" onclick="vsSubmitAccept()"' +
+                            ((!allMapped || short) ? ' disabled' : '') + '>Accept · stake ' + ch.stake + '</button>' +
+                    '</div>'
+                );
+                return;
+            }
+
+            var req = reqs[i];
+            var chosen = _vsAccept.mapping[req.reqId];
+            var committed = vsCommittedActivityIds(ch.id);
+            var takenHere = Object.keys(_vsAccept.mapping)
+                .filter(function (k) { return k !== req.reqId; })
+                .map(function (k) { return _vsAccept.mapping[k].activityId; });
+
+            var acts = gritAllActivities();
+            var pickerRows = acts.map(function (a) {
+                var lockedElsewhere = committed.has(a.id);
+                var usedHere = takenHere.indexOf(a.id) !== -1;
+                if (lockedElsewhere || usedHere) {
+                    return '<div class="vs-pick-row vs-pick-locked">' +
+                        '<span>' + escapeHtml(a.name) + '</span>' +
+                        '<span class="vs-pick-why">' +
+                        (lockedElsewhere ? 'in another challenge' : 'used for another requirement') +
+                        '</span></div>';
+                }
+                return '<button class="vs-pick-row' + (chosen && chosen.activityId === a.id ? ' vs-pick-on' : '') +
+                       '" onclick="vsMapExisting(\'' + a.id + '\')">' +
+                       '<span>' + escapeHtml(a.name) + '</span>' +
+                       '<span class="vs-pick-xp">' + (a.baseXP || 0) + ' XP</span></button>';
+            }).join('');
+
+            vsSheet(
+                vsSheetHead('Requirement ' + (i + 1) + ' of ' + reqs.length, req.name) +
+                '<div class="modal-body pl-modal-body">' +
+                    '<div class="vs-stepdots">' + reqs.map(function (r, k) {
+                        return '<span class="vs-stepdot' + (k === i ? ' on' : '') +
+                               (_vsAccept.mapping[r.reqId] ? ' done' : '') + '"></span>';
+                    }).join('') + '</div>' +
+                    '<p class="vs-note">They need this done <strong>' + req.targetCount +
+                    '&times;</strong>. Point it at one of your activities, or add it.</p>' +
+                    '<button class="vs-btn vs-btn-primary vs-addact" onclick="vsCreateActivityFor()">' +
+                        '+ Add "' + escapeHtml(req.name) + '" to my activities</button>' +
+                    '<div class="vs-pick-head">I already do this</div>' +
+                    (acts.length ? '<div class="vs-picklist">' + pickerRows + '</div>'
+                                 : '<p class="vs-note">You have no activities yet.</p>') +
+                '</div>' +
+                '<div class="modal-footer pl-modal-footer">' +
+                    (i > 0 ? '<button class="vs-btn vs-btn-ghost" onclick="vsAcceptGoto(' + (i - 1) + ')">Back</button>'
+                           : '<button class="vs-btn vs-btn-ghost" onclick="vsCloseSheet()">Cancel</button>') +
+                    '<button class="vs-btn vs-btn-primary" onclick="vsAcceptGoto(' + (i + 1) + ')"' +
+                        (chosen ? '' : ' disabled') + '>' +
+                        (i + 1 >= reqs.length ? 'Review' : 'Next') + '</button>' +
+                '</div>'
+            );
+        }
+
+        window.vsAcceptGoto = function (step) {
+            if (!_vsAccept) return;
+            _vsAccept.step = Math.max(0, step);
+            vsRenderAcceptStep();
+        };
+
+        window.vsMapExisting = function (activityId) {
+            var ch = vsCacheGet(_vsAccept.id);
+            var req = (ch.requirements || [])[_vsAccept.step];
+            var act = gritFindActivity(activityId);
+            if (!req || !act) return;
+            _vsAccept.mapping[req.reqId] = { activityId: act.id, activityName: act.name };
+            vsPersistAcceptDraft();
+            vsAcceptGoto(_vsAccept.step + 1);
+        };
+
+        // "Add this to my activities" reuses the existing activity-creation
+        // path exactly — same modal, same defaults, same dimension/path
+        // prompts. Nothing is forked. The new activity is identified by
+        // diffing the id set across the save.
+        window.vsCreateActivityFor = function () {
+            var ch = vsCacheGet(_vsAccept.id);
+            var req = (ch.requirements || [])[_vsAccept.step];
+            if (!req) return;
+            window._vsPendingCreate = {
+                reqId: req.reqId,
+                before: new Set(gritAllActivities().map(function (a) { return a.id; }))
+            };
+            vsCloseSheet();
+            openActivityModal(null, null);
+            var nameEl = document.getElementById('activityName');
+            if (nameEl) nameEl.value = req.name;
+        };
+
+        window.vsSubmitAccept = async function () {
+            var btn = document.getElementById('vsAcceptBtn');
+            if (btn) { btn.disabled = true; btn.textContent = 'Staking…'; }
+            try {
+                await vsAcceptChallenge(_vsAccept.id, _vsAccept.mapping);
+                if (window.userData && window.userData.vsDraftMappings) {
+                    delete window.userData.vsDraftMappings[_vsAccept.id];
+                    debouncedSaveUserData();
+                }
+                vsCloseSheet();
+                _vsAccept = null;
+                showToast('Challenge accepted — the pot is live.', 'blue');
+                await vsFetch(true);
+                vsPaint();
+            } catch (e) {
+                showToast(vsErrText(e), 'red');
+                if (btn) { btn.disabled = false; btn.textContent = 'Accept'; }
+            }
+        };
+
+        // ── Forfeit confirmation (§6.2) ───────────────────────────────────
+        window.vsConfirmForfeit = async function (id) {
+            var ch = vsCacheGet(id);
+            if (!ch) return;
+            var uid = vsUid();
+            if (!confirm('Forfeit "' + ch.name + '"? ' + vsName(ch, vsOther(ch, uid)) +
+                         ' takes the whole ' + ch.pot + ' Grit pot. This cannot be undone.')) return;
+            try {
+                await vsForfeit(id, 'manual');
+                showToast('Forfeited. The pot went to your opponent.', 'red');
+                await vsRunMaintenance();
+                vsPaint();
+            } catch (e) { showToast(vsErrText(e), 'red'); }
+        };
+
+        // ── Hooks into existing flows ─────────────────────────────────────
+        // Every one of these is a wrapper. No existing function is
+        // restructured, and nothing here touches solo challenges.
+
+        // Completion → challenge progress. completeActivity is the LIVE path;
+        // retroactiveComplete is deliberately not wrapped (§4.1 rule 4).
+        (function () {
+            var _orig = window.completeActivity;
+            if (typeof _orig === 'function') {
+                window.completeActivity = async function () {
+                    var before = arguments;
+                    var act = null;
+                    try {
+                        act = window.userData.dimensions[arguments[0]]
+                                  .paths[arguments[1]].activities[arguments[2]];
+                    } catch (e) {}
+                    var countBefore = act ? (act.completionCount || 0) : null;
+                    await _orig.apply(this, before);
+                    // Only fire when a completion actually landed —
+                    // completeActivity returns early on a blocked tap.
+                    if (act && (act.completionCount || 0) > countBefore) {
+                        vsOnCompletion(act.id).catch(function () {});
+                    }
+                };
+            }
+        })();
+
+        (function () {
+            var _orig = window.undoActivity;
+            if (typeof _orig === 'function') {
+                window.undoActivity = async function () {
+                    var act = null;
+                    try {
+                        act = window.userData.dimensions[arguments[0]]
+                                  .paths[arguments[1]].activities[arguments[2]];
+                    } catch (e) {}
+                    var countBefore = act ? (act.completionCount || 0) : null;
+                    await _orig.apply(this, arguments);
+                    if (act && (act.completionCount || 0) < countBefore) {
+                        vsOnUndo(act.id).catch(function () {});
+                    }
+                };
+            }
+        })();
+
+        // §6.2 — deleting an activity that is committed to a live wager
+        // forfeits it. Say what it will cost BEFORE it happens, and only
+        // actually forfeit once the activity is really gone: deleteActivity
+        // runs its own confirm, and backing out there must not cost a pot.
+        (function () {
+            var _orig = window.deleteActivity;
+            if (typeof _orig !== 'function') return;
+            window.deleteActivity = async function (di, pi, ai) {
+                var act = null;
+                try { act = window.userData.dimensions[di].paths[pi].activities[ai]; } catch (e) {}
+                var uid = vsUid();
+                var hits = act ? _vsCache.list.filter(function (ch) {
+                    if (ch.status !== 'active') return false;
+                    var m = vsMappingOf(ch, uid);
+                    return Object.keys(m).some(function (k) { return m[k].activityId === act.id; });
+                }) : [];
+
+                if (hits.length) {
+                    var ch = hits[0];
+                    if (!confirm('"' + act.name + '" is committed to the live challenge "' + ch.name +
+                                 '". Deleting it forfeits the challenge — ' +
+                                 vsName(ch, vsOther(ch, uid)) + ' takes the ' + ch.pot +
+                                 ' Grit pot. Delete anyway?')) return;
+                }
+
+                var r = await _orig.call(this, di, pi, ai);
+
+                if (!hits.length) return r;
+                // The original asks for its own confirmation. If the activity
+                // is still there, the user backed out — nothing is forfeited.
+                if (gritFindActivity(act.id)) return r;
+                for (var i = 0; i < hits.length; i++) {
+                    try { await vsForfeit(hits[i].id, 'activity deleted'); } catch (e) {}
+                }
+                await vsRunMaintenance();
+                vsRenderIfVisible();
+                return r;
+            };
+        })();
+
+        // The accept walkthrough's "add this to my activities" hands off to the
+        // real activity modal. When it saves, pick up whichever activity is
+        // new and map it to the requirement that asked for it.
+        (function () {
+            var _orig = window.saveActivity;
+            if (typeof _orig !== 'function') return;
+            window.saveActivity = async function (event) {
+                // Claimed before the await: saveActivity closes the modal
+                // itself, and the close wrapper must not read this as the user
+                // backing out.
+                var pending = window._vsPendingCreate;
+                window._vsPendingCreate = null;
+                await _orig.call(this, event);
+                if (!pending) return;
+                if (!_vsAccept) return;
+                var fresh = gritAllActivities().filter(function (a) { return !pending.before.has(a.id); });
+                if (!fresh.length) {
+                    // Nothing was created (limit reached, or the form errored).
+                    // Put the walkthrough back rather than leaving them nowhere.
+                    vsRenderAcceptStep();
+                    return;
+                }
+                var act = fresh[fresh.length - 1];
+                _vsAccept.mapping[pending.reqId] = { activityId: act.id, activityName: act.name };
+                vsPersistAcceptDraft();
+                vsAcceptGoto(_vsAccept.step + 1);
+            };
+        })();
+
+        // Backing out of the activity modal mid-walkthrough must not strand
+        // the user: bring the accept sheet back where they left it.
+        (function () {
+            var _orig = window.closeActivityModal;
+            if (typeof _orig !== 'function') return;
+            window.closeActivityModal = function () {
+                var wasPending = window._vsPendingCreate;
+                var r = _orig.apply(this, arguments);
+                if (wasPending && window._vsPendingCreate && _vsAccept) {
+                    window._vsPendingCreate = null;
+                    vsRenderAcceptStep();
+                }
+                return r;
+            };
+        })();
+
+        // Sub-tab render
+        (function () {
+            var _orig = window.switchSubTab;
+            window.switchSubTab = function (parentTab, subTab) {
+                _orig(parentTab, subTab);
+                if (parentTab === 'challenges' && subTab !== 'versus') vsDetachDetail();
+                if (parentTab === 'challenges' && subTab === 'versus') vsRenderTab();
+            };
+        })();
+
+        // Leaving the Challenges tab drops the detail listener (§5).
+        (function () {
+            var _orig = window.switchTab;
+            if (typeof _orig !== 'function') return;
+            window.switchTab = function (tabName) {
+                if (tabName !== 'challenges') vsDetachDetail();
+                var r = _orig.apply(this, arguments);
+                if (tabName === 'challenges') { vsFetch(false).then(vsUpdateBadges).catch(function () {}); }
+                return r;
+            };
+        })();
+
+        // §3.2 / §3.4 / §6.3 — one fetch on login and on app foreground, which
+        // drives the invite badge and the lazy expiry, resolution and payout
+        // evaluation. The challenger's own client evaluates expiry here too, so
+        // a refund is never gated on the opponent ever logging in again.
+        function vsOnLogin() {
+            _vsCache = { at: 0, list: [], uid: vsUid() };
+            _vsSeenWritten = {};
+            vsRunMaintenance().catch(function (e) {
+                console.warn('Versus login pass failed:', e && e.message);
+            });
+        }
+        window.vsOnLogin = vsOnLogin;
+
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState !== 'visible') return;
+            if (!vsUid()) return;
+            if (vsNow() - _vsCache.at < VS_CACHE_TTL_MS) return;
+            vsRunMaintenance().catch(function () {});
+        });
+
+        // ════════════════════════════════════════════════════════════════════
+        // ══ END VERSUS CHALLENGES ═══════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════════
+
+        // ════════════════════════════════════════════════════════════════════
+        // ══ SOCIAL GIFTING ══════════════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════════
+        //
+        // Peer-to-peer shields and double-XP. Self-contained: it reaches the
+        // rest of the app through three hook points and nothing else.
+        //
+        //   predictCompletionXP()  — giftPeekFor(), side-effect free
+        //   completeActivity()     — one call to giftOnCompletion()
+        //   the login pass         — one call to giftOnLogin()
+        //
+        // Gifts live on the RECEIVER, because the receiver's device is what
+        // consumes them:
+        //
+        //   users/{receiverUid}/gifts/{giftId}        the gift itself
+        //   users/{senderUid}/giftsSent/{giftId}      the sender's mirror
+        //
+        // Both display names are denormalized at write time (invariant 4). No
+        // read path anywhere below looks up a name — which keeps the
+        // notification path free of cross-user reads, and keeps a name stable
+        // if either side renames later.
+        // ════════════════════════════════════════════════════════════════════
+
+        const GIFT_TYPES = ['shield', 'xp_boost'];
+
+        function giftUid() {
+            return (window.currentUser && window.currentUser.uid) || null;
+        }
+
+        function giftMyName() {
+            var p = (window.userData && window.userData.profile) || {};
+            return p.username || (window.currentUser && window.currentUser.displayName) || 'A friend';
+        }
+
+        // Client-generated and stable across retries (invariant 3): a replayed
+        // write lands on the same document id and can never make two gifts.
+        function giftNewId() {
+            return 'gf-' + Date.now().toString(36) + '-' +
+                   Math.random().toString(36).slice(2, 10);
+        }
+
+        function giftCost(type) {
+            return type === 'shield' ? GRIT_GIFT_SHIELD_COST : GRIT_GIFT_BOOST_COST;
+        }
+
+        function giftEsc(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        // ── In-memory state ───────────────────────────────────────────────
+        // _giftQueue is the receiver's pending xp_boost gifts, oldest first.
+        // It exists only in memory and is NEVER rendered: an XP boost gift
+        // produces no signal of any kind until it is consumed (invariant 5).
+        let _giftQueue     = [];
+        let _giftSentCache = [];
+        let _giftSending   = false;
+        let _giftInflight  = {};     // {type|receiverUid: giftId} — retry-stable
+        let _giftInboxAt   = 0;      // last inbox drain, for the foreground throttle
+
+        // ══════════════════════════════════════════════════════════════════
+        //  SENDING (§3)
+        // ══════════════════════════════════════════════════════════════════
+
+        // The whole send, in the order §3.3 requires: refuse before spending,
+        // spend and persist, and only then write the pair of documents. If the
+        // pair fails, refund with a `correction` entry — Grit is never left
+        // spent with no gift written (invariant 2).
+        async function giftSend(type, receiverUid, receiverName) {
+            var g = gritState();
+            var me = giftUid();
+            if (!g || !me) return { ok: false, message: 'Not signed in.' };
+            if (GIFT_TYPES.indexOf(type) === -1) return { ok: false, message: 'Unknown gift.' };
+            if (!receiverUid || receiverUid === me) return { ok: false, message: 'Pick a friend to send to.' };
+            if (((window.userData.friends) || []).indexOf(receiverUid) === -1) {
+                return { ok: false, message: 'You can only send gifts to someone on your friends list.' };
+            }
+            if (_giftSending) return { ok: false, message: 'Hold on — that gift is still going through.' };
+            if (!canPersistUserData('giftSend')) return { ok: false, message: 'Not signed in.' };
+
+            var cost = giftCost(type);
+            if (g.balance < cost) {
+                return { ok: false, message: 'You need ' + (cost - g.balance) + ' more Grit for that.' };
+            }
+            if (type === 'xp_boost' && gritGiftBoostsLeftThisMonth() <= 0) {
+                return { ok: false, message: 'You have used all ' + GRIT_GIFT_BOOST_PER_MONTH +
+                                             ' gifted double-XPs this month.' };
+            }
+
+            // One id per (type, receiver) attempt, reused until it succeeds.
+            var key = type + '|' + receiverUid;
+            var giftId = _giftInflight[key] || (_giftInflight[key] = giftNewId());
+
+            var mk     = gritMonthKey();
+            var reason = type === 'shield' ? 'gift_shield' : 'gift_xp_boost';
+            var before = { balance: g.balance, lifetimeSpent: g.lifetimeSpent };
+            var bufferMark = _gritLedgerBuffer.length;
+
+            _giftSending = true;
+            try {
+                // 1–2. Spend, ledger, persist.
+                gritApplyDelta(-cost, reason, {
+                    item: type, receiverUid: receiverUid,
+                    receiverName: receiverName || '', giftId: giftId
+                });
+                if (type === 'xp_boost') {
+                    g.boostPurchases.push({ month: mk, at: new Date().toISOString(), kind: 'gift' });
+                    if (g.boostPurchases.length > 24) g.boostPurchases = g.boostPurchases.slice(-24);
+                }
+                var saved = await gritPersist();
+                if (!saved) {
+                    // Nothing landed. Unwind the balance and the ledger entry
+                    // so the record matches what actually happened: nothing.
+                    if (type === 'xp_boost') giftDropBoostRecord(g, mk);
+                    g.balance = before.balance;
+                    g.lifetimeSpent = before.lifetimeSpent;
+                    _gritLedgerBuffer.length = bufferMark;
+                    gritRefreshUI();
+                    return { ok: false, message: 'Could not save that. Nothing was spent.' };
+                }
+
+                // 3. Both documents, one batch. Never one without the other.
+                var gift = {
+                    id:                    giftId,
+                    type:                  type,
+                    senderUid:             me,
+                    senderName:            giftMyName(),
+                    receiverUid:           receiverUid,
+                    receiverName:          receiverName || 'A friend',
+                    sentAt:                new Date().toISOString(),
+                    status:                'pending',
+                    consumedAt:            null,
+                    consumedActivityId:    null,
+                    consumedActivityTitle: null,
+                    baseXP:                null,
+                    awardedXP:             null,
+                    thanked:               false,
+                    thankedAt:             null
+                };
+                try {
+                    var batch = writeBatch(db);
+                    batch.set(doc(db, 'users', receiverUid, 'gifts', giftId), gift);
+                    batch.set(doc(db, 'users', me, 'giftsSent', giftId), gift);
+                    await batch.commit();
+                } catch (err) {
+                    // 4. Refund. The spend is real and already persisted, so
+                    // this is a correction in the record, not an unwind.
+                    console.error('Gift write failed, refunding:', err);
+                    gritApplyDelta(cost, 'correction', {
+                        note: 'gift write failed; refunded', item: type,
+                        receiverUid: receiverUid, giftId: giftId
+                    });
+                    if (type === 'xp_boost') giftDropBoostRecord(g, mk);
+                    await gritPersist();
+                    gritFlushLedger();
+                    gritRefreshUI();
+                    return { ok: false, message: 'That gift could not be delivered. Your Grit is back.' };
+                }
+
+                delete _giftInflight[key];
+                _giftSentCache = [gift].concat(_giftSentCache);
+                gritFlushLedger();
+                gritRefreshUI();
+                return { ok: true, gift: gift };
+            } finally {
+                _giftSending = false;
+            }
+        }
+        window.giftSend = giftSend;
+
+        // Removes the most recent gifted-boost record for this month — the
+        // cap must not be spent by a purchase that did not happen.
+        function giftDropBoostRecord(g, mk) {
+            for (var i = g.boostPurchases.length - 1; i >= 0; i--) {
+                var p = g.boostPurchases[i];
+                if (p && p.month === mk && p.kind === 'gift') { g.boostPurchases.splice(i, 1); return; }
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  THE PICKER (§3.1)
+        // ══════════════════════════════════════════════════════════════════
+        // Two entry points, one flow: the Rewards shop opens it with a type
+        // and no friend, a friend row opens it with a friend and no type.
+
+        function giftCloseSheet() {
+            var el = document.getElementById('giftSheet');
+            if (el) el.remove();
+        }
+        window.giftCloseSheet = giftCloseSheet;
+
+        function giftSheet(innerHtml) {
+            giftCloseSheet();
+            var el = document.createElement('div');
+            el.id = 'giftSheet';
+            el.className = 'modal-overlay gift-sheet-scrim active';
+            el.addEventListener('click', function (e) { if (e.target === el) giftCloseSheet(); });
+            el.innerHTML = '<div class="modal pl-modal gift-sheet">' + innerHtml + '</div>';
+            document.body.appendChild(el);
+            return el;
+        }
+
+        // Same head as the versus sheet, so the two bottom sheets in the app
+        // are visibly the same component rather than two near-misses.
+        function giftHeader(title, eyebrow) {
+            return '<div class="modal-header pl-modal-header">' +
+                     '<div>' +
+                       (eyebrow ? '<div class="pl-modal-eyebrow">' + giftEsc(eyebrow) + '</div>' : '') +
+                       '<h3 class="modal-title">' + giftEsc(title) + '</h3></div>' +
+                     '<button class="pl-modal-close" type="button" onclick="giftCloseSheet()" aria-label="Close">' +
+                     '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+                     '</button></div>';
+        }
+
+        // The name written onto both gift documents comes from this cache, so
+        // it has to be filled before a send — the Rewards shop can open the
+        // picker in a session where the Friends tab was never rendered, and a
+        // gift stamped "Adventurer" would be wrong forever (invariant 4).
+        async function giftEnsureFriendNames() {
+            var friends = (window.userData.friends || []);
+            var cache = window._friendProfileCache || (window._friendProfileCache = {});
+            var missing = friends.filter(function (u) { return !cache[u]; });
+            if (!missing.length) return;
+            await Promise.all(missing.map(async function (u) {
+                try {
+                    var snap = await getDoc(doc(db, 'publicProfiles', u));
+                    if (snap.exists()) cache[u] = Object.assign({ uid: u }, snap.data());
+                } catch (e) { /* an unreadable profile just stays unnamed */ }
+            }));
+        }
+
+        // uid may be null (chose an item first), type may be null (chose a
+        // friend first). Whichever is missing is asked for here.
+        window.giftOpenPicker = async function (uid, type) {
+            if (!giftUid()) return;
+            var friends = (window.userData.friends || []);
+            if (!friends.length) {
+                showToast('Add a friend first — gifts go to people on your friends list.', 'olive');
+                return;
+            }
+            await giftEnsureFriendNames();
+            if (!uid) { giftRenderFriendStep(type); return; }
+            giftRenderTypeStep(uid, type);
+        };
+
+        function giftRenderFriendStep(type) {
+            var friends = (window.userData.friends || []);
+            var rows = friends.map(function (u) {
+                var p = (window._friendProfileCache || {})[u] || {};
+                var name = p.displayName || 'Adventurer';
+                return '<button type="button" class="gift-friend-row" ' +
+                         'onclick="giftPickFriend(\'' + giftEsc(u) + '\',' +
+                         (type ? '\'' + giftEsc(type) + '\'' : 'null') + ')">' +
+                         '<span class="gift-friend-name">' + giftEsc(name) + '</span>' +
+                         (p.level ? '<span class="gift-friend-lvl">Lv ' + p.level + '</span>' : '') +
+                       '</button>';
+            }).join('');
+            giftSheet(giftHeader('Send to', 'A gift') +
+                '<div class="modal-body pl-modal-body">' +
+                  '<p class="gift-note">Gifts cost half what the same thing costs you.</p>' +
+                  rows +
+                '</div>');
+        }
+
+        window.giftPickFriend = function (uid, type) {
+            giftRenderTypeStep(uid, type);
+        };
+
+        function giftFriendName(uid) {
+            var p = (window._friendProfileCache || {})[uid] || {};
+            return p.displayName || 'Adventurer';
+        }
+
+        function giftRenderTypeStep(uid, type) {
+            var g = gritState();
+            var bal = g ? g.balance : 0;
+            var name = giftFriendName(uid);
+            var giftBoostsLeft = gritGiftBoostsLeftThisMonth();
+
+            function card(t, emoji, title, sub, cost, blockedMsg) {
+                var blocked = !!blockedMsg;
+                return '<button type="button" class="gift-item' + (blocked ? ' is-blocked' : '') + '"' +
+                         (blocked ? ' disabled' : '') +
+                         ' onclick="giftConfirm(\'' + giftEsc(uid) + '\',\'' + t + '\')">' +
+                         '<span class="gift-item-emoji">' + emoji + '</span>' +
+                         '<span class="gift-item-main">' +
+                           '<span class="gift-item-name">' + giftEsc(title) + '</span>' +
+                           '<span class="gift-item-sub">' + (blocked ? giftEsc(blockedMsg) : giftEsc(sub)) + '</span>' +
+                         '</span>' +
+                         '<span class="gift-item-cost">' + cost + '</span>' +
+                       '</button>';
+            }
+
+            var shieldBlocked = bal < GRIT_GIFT_SHIELD_COST
+                ? 'You need ' + (GRIT_GIFT_SHIELD_COST - bal) + ' more Grit.' : null;
+            var boostBlocked  = giftBoostsLeft <= 0
+                ? 'No gifted double-XP left this month.'
+                : (bal < GRIT_GIFT_BOOST_COST
+                    ? 'You need ' + (GRIT_GIFT_BOOST_COST - bal) + ' more Grit.' : null);
+
+            var body =
+                '<p class="gift-note">Sending to <strong>' + giftEsc(name) + '</strong> · ' +
+                  'you have ' + bal.toLocaleString() + ' Grit</p>' +
+                card('shield', '🛡', 'Streak shield',
+                     'Drops straight into their pool. They are told you sent it.',
+                     GRIT_GIFT_SHIELD_COST, shieldBlocked) +
+                card('xp_boost', '⚡', 'Double XP',
+                     'A surprise. They find out when it lands on a completion. ' +
+                     giftBoostsLeft + ' of ' + GRIT_GIFT_BOOST_PER_MONTH + ' left this month.',
+                     GRIT_GIFT_BOOST_COST, boostBlocked);
+
+            if (type === 'shield' || type === 'xp_boost') {
+                // Came in from the shop with the item already chosen — confirm
+                // straight away rather than asking twice.
+                giftConfirm(uid, type);
+                return;
+            }
+            giftSheet(giftHeader('Send a gift', 'Half price for a friend') +
+                      '<div class="modal-body pl-modal-body">' + body + '</div>');
+        }
+
+        window.giftConfirm = function (uid, type) {
+            var name = giftFriendName(uid);
+            var cost = giftCost(type);
+            var label = type === 'shield' ? 'a streak shield' : 'double XP';
+            var self  = type === 'shield' ? GRIT_SHIELD_COST : GRIT_BOOST_COST;
+            giftSheet(giftHeader('Confirm', 'A gift') +
+                '<div class="modal-body pl-modal-body">' +
+                  '<p class="gift-confirm-line">Send <strong>' + giftEsc(label) + '</strong> to ' +
+                    '<strong>' + giftEsc(name) + '</strong> for <strong>' + cost + ' Grit</strong>?</p>' +
+                  '<p class="gift-note">Half of the ' + self + ' it would cost you.' +
+                    (type === 'xp_boost'
+                      ? ' They get no notification — it reveals itself on their next completion.'
+                      : '') + '</p>' +
+                '</div>' +
+                '<div class="modal-footer pl-modal-footer">' +
+                  '<button type="button" class="pl-btn-ghost" onclick="giftCloseSheet()">Cancel</button>' +
+                  '<button type="button" class="pl-btn-primary" id="giftSendBtn">Send</button>' +
+                '</div>');
+            var btn = document.getElementById('giftSendBtn');
+            if (!btn) return;
+            btn.addEventListener('click', async function () {
+                // §3.3 — disabled between tap and resolution, so a double-tap
+                // cannot start a second send.
+                btn.disabled = true;
+                btn.textContent = 'Sending…';
+                var res = await giftSend(type, uid, name);
+                giftCloseSheet();
+                showToast(res.ok
+                    ? (type === 'shield'
+                        ? '🛡 Shield sent to ' + name
+                        : '⚡ Double XP sent to ' + name + ' — they will not see it coming')
+                    : res.message, res.ok ? 'green' : 'red');
+                try { gritRenderRewards(); } catch (e) {}
+                try { giftRenderSentList(); } catch (e) {}
+            });
+        };
+
+        // ══════════════════════════════════════════════════════════════════
+        //  RECEIVING (§4, §5.1)
+        // ══════════════════════════════════════════════════════════════════
+
+        async function giftFetchPending() {
+            var me = giftUid();
+            if (!me || !canPersistUserData('giftFetch')) return [];
+            try {
+                // One equality filter, no orderBy — served by the automatic
+                // single-field index, so there is no composite index to deploy.
+                // Ordering is done here; the volume is bounded by the friend cap.
+                var snap = await getDocs(query(
+                    collection(db, 'users', me, 'gifts'), where('status', '==', 'pending')));
+                var out = [];
+                snap.forEach(function (d) { out.push(d.data()); });
+                out.sort(function (a, b) { return String(a.sentAt).localeCompare(String(b.sentAt)); });
+                return out;
+            } catch (e) {
+                console.warn('Gift inbox read failed:', e && e.message);
+                return [];
+            }
+        }
+
+        // §4 — a gifted shield resolves immediately into the pool, exactly as a
+        // self-purchased one does. Nothing distinguishes it once it is there.
+        //
+        // The gift is marked consumed BEFORE the pool is credited. That order
+        // makes a mid-flight failure lose a shield rather than mint one: the
+        // pool lives in userData, which the next save carries anyway, while a
+        // gift left pending would be redeemed again on the next login.
+        async function giftResolveShield(gift) {
+            var me = giftUid();
+            var g  = gritState();
+            if (!me || !g) return false;
+            var at = new Date().toISOString();
+            try {
+                await updateDoc(doc(db, 'users', me, 'gifts', gift.id), {
+                    status: 'consumed', consumedAt: at
+                });
+            } catch (e) {
+                console.warn('Could not claim gifted shield:', e && e.message);
+                return false;
+            }
+            gift.consumedAt = at;
+            g.shieldPool = (g.shieldPool || 0) + 1;
+            gritLedgerWrite(0, g.balance, 'gift_received', {
+                item: 'shield', giftId: gift.id,
+                senderUid: gift.senderUid, senderName: gift.senderName
+            });
+            await gritPersist();
+            gritFlushLedger();
+            gritRefreshUI();
+            showToast('🛡 ' + (gift.senderName || 'A friend') + ' sent you a shield.', 'green');
+            giftSyncMirror(gift, { thanked: false, thankedAt: null });
+            return true;
+        }
+
+        // Reports the oldest pending xp_boost gift for this completion, or
+        // null. Pure: it never mutates the queue, so the two calls a single
+        // completion makes (preview, then award) always agree.
+        function giftPeekFor(activity) {
+            if (!_giftQueue.length) return null;
+            if (!activity || typeof gritIsCountable !== 'function') return null;
+            // Doubling a perform-mode negative would double a penalty.
+            if (!gritIsCountable(activity)) return null;
+            return _giftQueue[0];
+        }
+        window.giftPeekFor = giftPeekFor;
+
+        // §5.1 — take exactly one gift, stamp it, and queue the reveal. The XP
+        // has already been awarded by the caller; nothing here can change it.
+        function giftOnCompletion(gift, activity, baseXP, awardedXP) {
+            if (!gift || _giftQueue[0] !== gift) return;
+            _giftQueue.shift();                       // gifts queue, never stack
+
+            var me = giftUid();
+            var at = new Date().toISOString();
+            var patch = {
+                status:                'consumed',
+                consumedAt:            at,
+                consumedActivityId:    activity.id || null,
+                consumedActivityTitle: activity.name || null,
+                baseXP:                baseXP,
+                awardedXP:             awardedXP
+            };
+            Object.assign(gift, patch);
+
+            if (me) {
+                updateDoc(doc(db, 'users', me, 'gifts', gift.id), patch)
+                    .catch(function (e) { console.warn('Gift consume write failed:', e && e.message); });
+            }
+            giftQueueReveal(gift);
+        }
+        window.giftOnCompletion = giftOnCompletion;
+
+        // ══════════════════════════════════════════════════════════════════
+        //  THE REVEAL (§5.2) AND THANKS (§5.3)
+        // ══════════════════════════════════════════════════════════════════
+
+        // If the same completion also levelled the user up, the level-up shows
+        // first and the gift waits for it (§5.2). Polls rather than hooking the
+        // level-up card's teardown, so no level-up path can forget to call us.
+        function giftQueueReveal(gift, waited) {
+            waited = waited || 0;
+            var levelUpOpen = !!document.getElementById('levelUpToast');
+            var rewardEl    = document.getElementById('rewardUnlockOverlay');
+            var rewardOpen  = !!(rewardEl && rewardEl.style.display !== 'none' &&
+                                 rewardEl.offsetParent !== null);
+            if ((levelUpOpen || rewardOpen) && waited < 24000) {
+                setTimeout(function () { giftQueueReveal(gift, waited + 400); }, 400);
+                return;
+            }
+            giftShowReveal(gift);
+        }
+
+        function giftShowReveal(gift) {
+            var existing = document.getElementById('giftRevealOverlay');
+            if (existing) existing.remove();
+
+            var overlay = document.createElement('div');
+            overlay.id = 'giftRevealOverlay';
+            overlay.className = 'level-up-overlay gift-reveal-overlay';
+            overlay.setAttribute('role', 'dialog');
+            overlay.setAttribute('aria-modal', 'true');
+
+            var card = document.createElement('div');
+            card.className = 'level-up-card gift-reveal-card';
+            card.innerHTML =
+                '<button type="button" class="level-up-close" aria-label="Dismiss" id="giftRevealClose">' +
+                  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+                  'stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">' +
+                  '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+                '</button>' +
+                '<div class="level-up-eyebrow">A GIFT</div>' +
+                '<div class="level-up-emoji">⚡</div>' +
+                '<div class="gift-reveal-head">' + giftEsc(gift.senderName || 'A friend') +
+                  ' sent you double XP</div>' +
+                '<div class="gift-reveal-act">on ' +
+                  giftEsc(gift.consumedActivityTitle || 'that completion') + '</div>' +
+                '<div class="gift-reveal-xp">' +
+                  '<span class="gift-reveal-base">' + (gift.baseXP || 0) + ' XP</span>' +
+                  '<span class="gift-reveal-awarded">' + (gift.awardedXP || 0) + ' XP</span>' +
+                '</div>' +
+                '<div class="gift-reveal-actions">' +
+                  '<button type="button" class="gift-thank-btn" id="giftThankBtn">Say thanks</button>' +
+                  '<button type="button" class="gift-back-btn" id="giftBackBtn">Send one back</button>' +
+                '</div>';
+
+            overlay.appendChild(card);
+            document.body.appendChild(overlay);
+
+            // Dismissal is what settles the mirror — see giftSyncMirror. Every
+            // exit path routes through here so the sender is told exactly once.
+            var settled = false;
+            function close(thanked) {
+                if (settled) return;
+                settled = true;
+                giftSyncMirror(gift, thanked
+                    ? { thanked: true, thankedAt: new Date().toISOString() }
+                    : { thanked: false, thankedAt: null });
+                overlay.classList.add('level-up-leaving');
+                setTimeout(function () { overlay.remove(); }, 280);
+            }
+
+            document.getElementById('giftRevealClose').onclick = function () { close(false); };
+            overlay.onclick = function (e) { if (e.target === overlay) close(false); };
+
+            var thankBtn = document.getElementById('giftThankBtn');
+            thankBtn.onclick = function () {
+                // §5.3 — fixed shape, no text field, ever. The button disables
+                // after the tap and does not come back.
+                thankBtn.disabled = true;
+                thankBtn.textContent = 'Thanks sent';
+                thankBtn.classList.add('is-sent');
+                close(true);
+            };
+            document.getElementById('giftBackBtn').onclick = function () {
+                close(false);
+                setTimeout(function () { giftOpenPicker(gift.senderUid); }, 200);
+            };
+        }
+
+        // Writes the four fields the receiver is allowed to touch on the
+        // sender's mirror, and marks our own copy synced so a session that
+        // died before this point catches up on the next login. This single
+        // write is what fires the sender's notification (§6), which is why
+        // `thanked` is settled before it goes out — one write, one
+        // notification, correct copy.
+        async function giftSyncMirror(gift, thanks) {
+            var me = giftUid();
+            if (!me || !gift || !gift.senderUid) return;
+            var patch = {
+                status:     'consumed',
+                consumedAt: gift.consumedAt || new Date().toISOString(),
+                thanked:    !!thanks.thanked,
+                thankedAt:  thanks.thankedAt || null
+            };
+            Object.assign(gift, { thanked: patch.thanked, thankedAt: patch.thankedAt });
+
+            // Two writes, not one batch, and in this order on purpose. What the
+            // user did is recorded on their OWN copy whatever happens to the
+            // sender's tree — a mirror that has gone away (a deleted account, a
+            // refused write) must not swallow the thanks as well. Only once the
+            // mirror actually lands is the gift marked synced, so the login
+            // catch-up knows what is still owed.
+            try {
+                await updateDoc(doc(db, 'users', me, 'gifts', gift.id), {
+                    status: 'consumed', consumedAt: patch.consumedAt,
+                    thanked: patch.thanked, thankedAt: patch.thankedAt
+                });
+            } catch (e) {
+                console.warn('Gift thanks write failed:', e && e.message);
+            }
+            try {
+                await updateDoc(doc(db, 'users', gift.senderUid, 'giftsSent', gift.id), patch);
+                await updateDoc(doc(db, 'users', me, 'gifts', gift.id), { mirrorSynced: true });
+            } catch (e) {
+                console.warn('Gift mirror sync failed (will retry next login):', e && e.message);
+            }
+        }
+
+        // Catch-up for a session that consumed a gift and then closed before
+        // the reveal was dismissed. Without it the sender is never told.
+        async function giftSyncOrphanedMirrors() {
+            var me = giftUid();
+            if (!me || !canPersistUserData('giftMirrorCatchup')) return;
+            try {
+                var snap = await getDocs(query(
+                    collection(db, 'users', me, 'gifts'), where('status', '==', 'consumed')));
+                var pending = [];
+                snap.forEach(function (d) {
+                    var v = d.data();
+                    if (!v.mirrorSynced && v.type === 'xp_boost') pending.push(v);
+                });
+                for (var i = 0; i < pending.length; i++) {
+                    await giftSyncMirror(pending[i], {
+                        thanked: !!pending[i].thanked, thankedAt: pending[i].thankedAt || null
+                    });
+                }
+            } catch (e) {
+                console.warn('Gift mirror catch-up failed:', e && e.message);
+            }
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  THE SENDER'S OWN SENT LIST (§6)
+        // ══════════════════════════════════════════════════════════════════
+        // The only place a pending gift is ever visible, and only to the person
+        // who sent it. Receivers see nothing here.
+
+        async function giftFetchSent(max) {
+            var me = giftUid();
+            if (!me || !canPersistUserData('giftSentRead')) return [];
+            try {
+                var snap = await getDocs(query(
+                    collection(db, 'users', me, 'giftsSent'),
+                    orderBy('sentAt', 'desc'), limit(max || 15)));
+                var out = [];
+                snap.forEach(function (d) { out.push(d.data()); });
+                return out;
+            } catch (e) {
+                console.warn('Sent-gift read failed:', e && e.message);
+                return [];
+            }
+        }
+
+        async function giftRenderSentList() {
+            var host = document.getElementById('friendsGiftsSent');
+            if (!host) return;
+            var list = await giftFetchSent(15);
+            _giftSentCache = list;
+            if (!list.length) { host.innerHTML = ''; return; }
+            host.innerHTML =
+                '<div class="fr-section-kicker">Gifts sent</div>' +
+                list.map(function (gf) {
+                    var what = gf.type === 'shield' ? '🛡 Shield' : '⚡ Double XP';
+                    var state = gf.status === 'consumed'
+                        ? (gf.type === 'shield' ? 'Received' :
+                            (gf.thanked ? 'Used — they said thanks' : 'Used'))
+                        : (gf.type === 'shield' ? 'On its way' : 'Waiting to land');
+                    return '<div class="gift-sent-row">' +
+                             '<span class="gift-sent-what">' + what + '</span>' +
+                             '<span class="gift-sent-to">' + giftEsc(gf.receiverName || 'A friend') + '</span>' +
+                             '<span class="gift-sent-state' +
+                               (gf.status === 'consumed' ? ' is-done' : '') + '">' + state + '</span>' +
+                           '</div>';
+                }).join('');
+        }
+        window.giftRenderSentList = giftRenderSentList;
+
+        // ══════════════════════════════════════════════════════════════════
+        //  LOGIN PASS
+        // ══════════════════════════════════════════════════════════════════
+
+        async function giftRunInbox() {
+            var pending = await giftFetchPending();
+            var shields = pending.filter(function (gf) { return gf.type === 'shield'; });
+            // §5.1 — oldest first, and only xp_boost gifts queue. The queue is
+            // never rendered anywhere: no badge, no count, no hint (§3.4).
+            _giftQueue = pending.filter(function (gf) { return gf.type === 'xp_boost'; });
+            for (var i = 0; i < shields.length; i++) {
+                await giftResolveShield(shields[i]);
+            }
+        }
+
+        function giftOnLogin() {
+            _giftQueue = [];
+            _giftInflight = {};
+            _giftInboxAt = Date.now();
+            if (!giftUid()) return;
+            giftRunInbox()
+                .then(giftSyncOrphanedMirrors)
+                .catch(function (e) { console.warn('Gift login pass failed:', e && e.message); });
+        }
+        window.giftOnLogin = giftOnLogin;
+
+        // Foregrounding re-drains the inbox so a shield gifted while the app
+        // was backgrounded lands without waiting for a fresh login. Throttled:
+        // this is a Firestore read on every tab switch otherwise.
+        const GIFT_INBOX_TTL_MS = 2 * 60 * 1000;
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState !== 'visible') return;
+            if (!giftUid()) return;
+            if (Date.now() - _giftInboxAt < GIFT_INBOX_TTL_MS) return;
+            _giftInboxAt = Date.now();
+            giftRunInbox().catch(function () {});
+        });
+
+        // ════════════════════════════════════════════════════════════════════
+        // ══ END SOCIAL GIFTING ══════════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════════
+
+        // ════════════════════════════════════════════════════════════════════
+        // ══ LEADERBOARD PAYOUTS ═════════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════════
+        //
+        // Leaderboards pay Grit weekly. No entry fee — charging admission
+        // excludes exactly the people a leaderboard exists to re-engage.
+        //
+        // Every user curates their own board, so board size is under the
+        // user's control and a naive "payout scales with size" rule is
+        // trivially farmed. Two rules close that, and both are required:
+        //
+        //   ACTIVE   — a member counts only if they logged a completion during
+        //              the scored week. Twenty dormant friends inflate nothing.
+        //   MUTUAL   — a member counts only if you are on THEIR board too.
+        //              One-sided stacking pays nothing.
+        //
+        // `scoredSize` is the count of members who are both, including the user
+        // themselves. Every payout keys off it, never off raw membership
+        // (invariant 12).
+        //
+        // Mutuality needs one user to be able to see another's board. That is
+        // what `leaderboardBoards/{uid}` is for, and its read rule is the
+        // mutuality test itself: you may read someone's board document only if
+        // you appear on it. A denied read IS the "not mutual" answer, and
+        // nothing about anyone's social graph leaks beyond that.
+        //
+        //   leaderboardBoards/{uid} = {
+        //     uid, optIn, optInFrom,        // §8.7 — opt-in, effective Monday
+        //     members: [uid],               // the live board
+        //     scored:  [uid], scoredFrom,   // frozen at this week's Monday
+        //     week: { anchor, xp, completions },   // the open week
+        //     prev: { anchor, xp, completions },   // the last closed week
+        //     displayName, photoURL, level, updatedAt }
+        //
+        // `prev` is what makes the payout race-free: a friend who opens the app
+        // on Monday morning rolls their own week over, and the closed week's
+        // figures have to survive that or nobody could ever score them.
+        // ════════════════════════════════════════════════════════════════════
+
+        const LB_PAY_MULT       = [3, 2, 1];   // §8.3 — 1st / 2nd / 3rd × scoredSize
+        const LB_MIN_SIZE       = 3;           // §8.3 — below this, nothing pays
+        const LB_THIRD_MIN_SIZE = 8;           // §8.3 — third of five is not an achievement
+        const LB_PUBLISH_MS     = 5 * 60 * 1000;
+
+        let _lbPublishedAt = 0;
+        let _lbSettling    = false;
+
+        function lbUid() { return (window.currentUser && window.currentUser.uid) || null; }
+
+        function lbState() {
+            if (!window.userData) return null;
+            var lb = window.userData.leaderboard;
+            if (!lb || typeof lb !== 'object') {
+                lb = window.userData.leaderboard = { optIn: false, optInFrom: null, lastWeek: null, pub: null };
+            }
+            if (typeof lb.optIn !== 'boolean') lb.optIn = false;
+            return lb;
+        }
+
+        function lbShiftAnchor(anchorStr, days) {
+            var d = new Date(anchorStr + 'T00:00:00');
+            d.setDate(d.getDate() + days);
+            return toLocalDateStr(d);
+        }
+
+        // The Monday that opens the week AFTER this one. §8.7 — opting in
+        // mid-week takes effect here, so nobody joins after seeing they'd win.
+        function lbNextAnchorStr() {
+            return lbShiftAnchor(getLeaderboardWeekStartStr(), 7);
+        }
+
+        // The most recent CLOSED week. §8.5 — only ever this one is paid, the
+        // same rule the weekly completion bonus follows.
+        function lbClosedAnchorStr() {
+            return lbShiftAnchor(getLeaderboardWeekStartStr(), -7);
+        }
+
+        function lbOrdinal(n) {
+            return n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3rd' : n + 'th';
+        }
+        function gritOrdinal(n) { return lbOrdinal(n); }
+        window.gritOrdinal = gritOrdinal;
+
+        // The live board: every friend not explicitly taken off it.
+        function lbBoardMembers() {
+            var hidden = window.userData.leaderboardHidden || [];
+            return (window.userData.friends || []).filter(function (u) { return hidden.indexOf(u) === -1; });
+        }
+        window.lbBoardMembers = lbBoardMembers;
+
+        // Exact figures for any week, straight from this user's own history.
+        // Only other people's numbers need the published snapshot.
+        function lbMyWeek(anchor) {
+            var end = lbShiftAnchor(anchor, 7);
+            var xp = 0, n = 0;
+            (window.userData.dimensions || []).forEach(function (dim) {
+                (dim.paths || []).forEach(function (path) {
+                    (path.activities || []).forEach(function (act) {
+                        (act.completionHistory || []).forEach(function (e) {
+                            if (e.isPenalty || !e.date) return;
+                            var d = toLocalDateStr(new Date(e.date));
+                            if (d >= anchor && d < end) { xp += (e.xp || 0); n++; }
+                        });
+                    });
+                });
+            });
+            return { anchor: anchor, xp: xp, completions: n };
+        }
+
+        // ── Publishing (§8.1, §8.7) ───────────────────────────────────────
+        // Written only while opted in. A user who has not opted in publishes
+        // nothing, appears in nobody's scoredSize and cannot place — their
+        // ranking display is untouched, they are simply outside the payouts.
+        async function lbPublishBoard(force) {
+            var me = lbUid();
+            var st = lbState();
+            if (!me || !st || !canPersistUserData('lbPublish')) return;
+            if (!st.optIn) return;
+            var now = Date.now();
+            if (!force && now - _lbPublishedAt < LB_PUBLISH_MS) return;
+
+            var anchor  = getLeaderboardWeekStartStr();
+            var members = lbBoardMembers();
+            var pub     = st.pub && typeof st.pub === 'object' ? st.pub : {};
+
+            // Roll the open week into `prev` the first time we touch a new one,
+            // so last week's figures survive for anyone still scoring them.
+            if (pub.week && pub.week.anchor && pub.week.anchor !== anchor) pub.prev = pub.week;
+            pub.week = lbMyWeek(anchor);
+
+            // §8.1 / open question 7 — the SCORED roster is frozen at the
+            // week's Monday. Adding or removing someone mid-week changes the
+            // live board immediately but cannot change who is being scored, so
+            // nobody trims their board after seeing who is ahead.
+            if (pub.scoredFrom !== anchor) {
+                // The roster that was frozen for the week just closed has to
+                // survive this roll — it is what settlement scores against,
+                // and what everyone else's settlement tests mutuality against.
+                if (pub.scored) { pub.prevScored = pub.scored; pub.prevScoredFrom = pub.scoredFrom || null; }
+                pub.scored = members.slice();
+                pub.scoredFrom = anchor;
+            }
+
+            st.pub = pub;
+            var profile = (window.userData.profile) || {};
+            var payload = {
+                uid:         me,
+                optIn:       true,
+                optInFrom:   st.optInFrom || null,
+                members:     members,
+                scored:      pub.scored || [],
+                scoredFrom:  pub.scoredFrom || anchor,
+                prevScored:  pub.prevScored || [],
+                prevScoredFrom: pub.prevScoredFrom || null,
+                week:        pub.week,
+                prev:        pub.prev || null,
+                displayName: profile.username || (window.currentUser && window.currentUser.displayName) || 'Adventurer',
+                photoURL:    (window.currentUser && window.currentUser.photoURL) || null,
+                level:       window.userData.level || 1,
+                updatedAt:   new Date().toISOString()
+            };
+            try {
+                await setDoc(doc(db, 'leaderboardBoards', me), payload);
+                _lbPublishedAt = now;
+            } catch (e) {
+                console.warn('Leaderboard board publish failed:', e && e.message);
+            }
+        }
+        window.lbPublishBoard = lbPublishBoard;
+
+        // A denied read is not an error here — it is the answer "you are not on
+        // their board", which is exactly what mutuality asks.
+        async function lbReadBoard(uid) {
+            try {
+                var snap = await getDoc(doc(db, 'leaderboardBoards', uid));
+                return snap.exists() ? snap.data() : null;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        // The board roster as it stood at the START of `anchor`. Works on
+        // either shape — this user's own `pub` or a published board document —
+        // because they carry the same three fields. Falls back to the live
+        // members list only when neither snapshot covers the week asked for.
+        function lbRosterFor(board, anchor) {
+            if (!board) return [];
+            if (board.prevScoredFrom === anchor && board.prevScored) return board.prevScored.slice();
+            if (board.scoredFrom === anchor && board.scored) return board.scored.slice();
+            return (board.members || board.scored || []).slice();
+        }
+
+        // ── Payout arithmetic (§8.3) ──────────────────────────────────────
+        function lbPayForPosition(pos, scoredSize) {
+            if (scoredSize < LB_MIN_SIZE) return 0;
+            if (pos === 3 && scoredSize < LB_THIRD_MIN_SIZE) return 0;
+            var mult = LB_PAY_MULT[pos - 1];
+            return mult ? mult * scoredSize : 0;
+        }
+
+        // Rows in, ranked rows out. Ties split the combined payout of the
+        // positions they occupy, rounded down, remainder discarded (§8.2).
+        function lbRank(rows, scoredSize) {
+            var sorted = rows.slice().sort(function (a, b) { return b.xp - a.xp; });
+            var out = [], i = 0;
+            while (i < sorted.length) {
+                var j = i;
+                while (j + 1 < sorted.length && sorted[j + 1].xp === sorted[i].xp) j++;
+                var tiedCount = j - i + 1;
+                var pot = 0;
+                for (var p = i + 1; p <= j + 1; p++) pot += lbPayForPosition(p, scoredSize);
+                var each = Math.floor(pot / tiedCount);
+                for (var k = i; k <= j; k++) {
+                    out.push(Object.assign({}, sorted[k], { place: i + 1, grit: each }));
+                }
+                i = j + 1;
+            }
+            return out;
+        }
+        window.lbRank = lbRank;
+
+        // ── Settlement (§8.5) ─────────────────────────────────────────────
+        // Runs on the same Monday rollover that reconciles the weekly
+        // completion bonus. Ranking happens on the client, so the idempotency
+        // marker is the ONLY thing standing between one payout and one payout
+        // per device. It is load-bearing: set it before the award, always.
+        async function lbSettleClosedWeek() {
+            var g  = gritState();
+            var st = lbState();
+            var me = lbUid();
+            if (!g || !st || !me || _lbSettling) return;
+            if (!canPersistUserData('lbSettle')) return;
+
+            var closed = lbClosedAnchorStr();
+            var marker = 'leaderboard:' + closed;
+            if (g.awarded[marker]) return;
+
+            // Not opted in for that week — nothing to settle, and nothing to
+            // mark: eligibility for a week already closed can never change.
+            if (!st.optIn || !st.optInFrom || st.optInFrom > closed) return;
+
+            _lbSettling = true;
+            try {
+                var mine   = lbMyWeek(closed);
+                var roster = lbRosterFor(st.pub, closed);
+                var rows   = [];
+
+                for (var i = 0; i < roster.length; i++) {
+                    var b = await lbReadBoard(roster[i]);
+                    if (!b) continue;                                        // not mutual, or not opted in
+                    if (b.optIn !== true) continue;
+                    if (!b.optInFrom || b.optInFrom > closed) continue;      // outside the payout system
+                    if (lbRosterFor(b, closed).indexOf(me) === -1) continue; // one-sided — pays nothing
+                    var w = (b.prev && b.prev.anchor === closed) ? b.prev
+                          : (b.week && b.week.anchor === closed) ? b.week : null;
+                    if (!w || !(w.completions > 0)) continue;                // dormant — inflates nothing
+                    rows.push({ uid: roster[i], name: b.displayName || 'Adventurer', xp: w.xp || 0 });
+                }
+                if (mine.completions > 0) {
+                    rows.push({ uid: me, name: giftMyName(), xp: mine.xp, isMe: true });
+                }
+
+                var scoredSize = rows.length;
+                var ranked     = lbRank(rows, scoredSize);
+                var mineRow    = ranked.filter(function (r) { return r.uid === me; })[0] || null;
+                var grit       = mineRow ? mineRow.grit : 0;
+
+                g.awarded[marker] = true;
+                st.lastWeek = {
+                    anchor: closed, scoredSize: scoredSize,
+                    place: mineRow ? mineRow.place : null, grit: grit,
+                    rows: ranked.slice(0, 10).map(function (r) {
+                        return { uid: r.uid, name: r.name, xp: r.xp, place: r.place, grit: r.grit };
+                    })
+                };
+
+                if (grit > 0) {
+                    gritApplyDelta(grit, 'leaderboard_payout', {
+                        anchor: closed, place: mineRow.place, scoredSize: scoredSize
+                    });
+                    gritFlushLedger();
+                }
+                await saveUserData();
+                gritRefreshUI();
+
+                if (grit > 0) {
+                    showToast(lbOrdinal(mineRow.place) + ' place this week — ' + grit + ' Grit',
+                              'green', function () { lbShowStandings(); });
+                }
+            } catch (e) {
+                console.warn('Leaderboard settlement failed:', e && e.message);
+            } finally {
+                _lbSettling = false;
+            }
+        }
+
+        // ── Final standings (§8.6) ────────────────────────────────────────
+        window.lbShowStandings = function () {
+            var st = lbState();
+            var lw = st && st.lastWeek;
+            if (!lw) return;
+            var body = !lw.rows.length
+                ? '<p class="gift-note">Nobody on your board logged anything that week.</p>'
+                : lw.rows.map(function (r) {
+                    return '<div class="lb-standing-row' + (r.uid === lbUid() ? ' is-me' : '') + '">' +
+                             '<span class="lb-standing-place">' + lbOrdinal(r.place) + '</span>' +
+                             '<span class="lb-standing-name">' + giftEsc(r.name) + '</span>' +
+                             '<span class="lb-standing-xp">' + (r.xp || 0).toLocaleString() + ' XP</span>' +
+                             '<span class="lb-standing-grit">' + (r.grit ? '+' + r.grit : '—') + '</span>' +
+                           '</div>';
+                  }).join('');
+            giftSheet(giftHeader('Week of ' + lw.anchor, 'Final standings') +
+                '<div class="modal-body pl-modal-body">' +
+                  '<p class="gift-note">' + lw.scoredSize + ' scored ' +
+                    (lw.scoredSize === 1 ? 'member' : 'members') +
+                    ' — mutual and active. Payouts key off that number, not board size.</p>' +
+                  body +
+                '</div>');
+        };
+
+        // ── Opt-in (§8.7) ─────────────────────────────────────────────────
+        window.lbToggleOptIn = async function () {
+            var st = lbState();
+            if (!st) return;
+            if (st.optIn) {
+                st.optIn = false;
+                st.optInFrom = null;
+                showToast('You are out of leaderboard payouts.', 'olive');
+                try { await deleteDoc(doc(db, 'leaderboardBoards', lbUid())); } catch (e) {}
+            } else {
+                st.optIn = true;
+                // Effective from the FOLLOWING Monday — a user cannot join
+                // after seeing they would have won this week.
+                st.optInFrom = lbNextAnchorStr();
+                showToast('You are in — payouts start Monday ' + st.optInFrom + '.', 'green');
+            }
+            await saveUserData();
+            await lbPublishBoard(true);
+            renderFriendsTab();
+        };
+
+        // ── The Leaderboards tab panel (§8.6, §8.7) ───────────────────────
+        // No projected payout mid-week: scoredSize moves as members become
+        // active, and a number that drops on Sunday reads as the app taking
+        // something away.
+        function lbRenderPayoutSection(entries) {
+            var host = document.getElementById('lbPayoutSection');
+            if (!host) return;
+            var st = lbState();
+            if (!st) { host.innerHTML = ''; return; }
+
+            var anchor  = getLeaderboardWeekStartStr();
+            var pending = st.optIn && st.optInFrom && st.optInFrom > anchor;
+            var html = '';
+
+            // §8.6 — say plainly that the standings above are not settled. No
+            // projected payout: scoredSize moves as members become active, and
+            // a number that drops on Sunday reads as the app taking something
+            // away.
+            if (st.optIn && !pending) {
+                html += '<p class="lb-provisional">Standings for the week of ' + giftEsc(anchor) +
+                        ' are provisional until Monday.</p>';
+            }
+
+            if (st.lastWeek) {
+                var lw = st.lastWeek;
+                var line = lw.place
+                    ? lbOrdinal(lw.place) + ' place · ' + (lw.grit ? '+' + lw.grit + ' Grit' : 'no payout')
+                    : 'You were not scored';
+                html += '<button type="button" class="lb-last-card" onclick="lbShowStandings()">' +
+                          '<span class="lb-last-kicker">Week of ' + giftEsc(lw.anchor) + '</span>' +
+                          '<span class="lb-last-line">' + giftEsc(line) + '</span>' +
+                          '<span class="lb-last-sub">' + lw.scoredSize + ' scored ' +
+                            (lw.scoredSize === 1 ? 'member' : 'members') + ' — tap for the standings</span>' +
+                        '</button>';
+            }
+
+            html += '<div class="lb-optin-card">' +
+                      '<div class="lb-optin-main">' +
+                        '<div class="lb-optin-title">Weekly payouts</div>' +
+                        '<div class="lb-optin-sub">' +
+                          (st.optIn
+                            ? (pending
+                                ? 'You are in from Monday ' + giftEsc(st.optInFrom) + '. Standings during the week are provisional.'
+                                : 'You are in. Top three are paid every Monday, scaled by how many of your board were mutual and active.')
+                            : 'Opt in to be paid for placing. Nobody is enrolled by default, and joining takes effect the following Monday.') +
+                        '</div>' +
+                      '</div>' +
+                      '<button type="button" class="lb-optin-btn' + (st.optIn ? ' is-on' : '') + '" ' +
+                        'onclick="lbToggleOptIn()">' + (st.optIn ? 'Opt out' : 'Opt in') + '</button>' +
+                    '</div>';
+
+            // Board roster — add/remove works here as well as on the Friends
+            // tab (§1.1). Changes take effect for scoring next Monday.
+            var hidden = window.userData.leaderboardHidden || [];
+            var friends = (window.userData.friends || []);
+            if (friends.length) {
+                html += '<div class="fr-section-kicker">Your board</div>' +
+                        '<div class="lb-roster">' +
+                        friends.map(function (u) {
+                            var e = (entries || []).filter(function (x) { return x.uid === u; })[0] || {};
+                            var on = hidden.indexOf(u) === -1;
+                            return '<button type="button" class="lb-roster-row' + (on ? ' is-on' : '') + '" ' +
+                                     'onclick="toggleLeaderboardVisibility(\'' + giftEsc(u) + '\')">' +
+                                     '<span class="lb-roster-name">' + giftEsc(e.displayName || 'Adventurer') + '</span>' +
+                                     '<span class="lb-roster-state">' + (on ? 'On board' : 'Off board') + '</span>' +
+                                   '</button>';
+                        }).join('') +
+                        '</div>' +
+                        '<p class="gift-note">Adding or removing someone takes effect for scoring next Monday. ' +
+                          'Only friends who also have you on their board, and who logged something that week, ' +
+                          'count toward a payout.</p>';
+            }
+
+            host.innerHTML = html;
+        }
+        window.lbRenderPayoutSection = lbRenderPayoutSection;
+
+        function lbOnLogin() {
+            if (!lbUid()) return;
+            lbPublishBoard(true)
+                .then(lbSettleClosedWeek)
+                .catch(function (e) { console.warn('Leaderboard login pass failed:', e && e.message); });
+        }
+        window.lbOnLogin = lbOnLogin;
+
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState !== 'visible') return;
+            if (!lbUid()) return;
+            lbPublishBoard(false).then(lbSettleClosedWeek).catch(function () {});
+        });
+
+        // ════════════════════════════════════════════════════════════════════
+        // ══ END LEADERBOARD PAYOUTS ═════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════════
