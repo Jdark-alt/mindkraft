@@ -17801,14 +17801,6 @@
         }
         function hexA(hex, a) { if (!hex) return 'rgba(138,144,153,' + a + ')'; var n = parseInt(hex.slice(1), 16); return 'rgba(' + (n >> 16 & 255) + ',' + (n >> 8 & 255) + ',' + (n & 255) + ',' + a + ')'; }
 
-        // Quest level — open-ended, derived from cumulative bonus XP paid.
-        function questLevelFromXP(xp) {
-            xp = Math.max(0, xp || 0);
-            var L = 1;
-            while (xp >= 25 * (L * (L + 1) / 2)) L++;
-            return L;
-        }
-
         // ── icons ───────────────────────────────────────────────────────────
         function prCheckSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'; }
         function prUndoSvg() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M3.5 13a9 9 0 1 0 2.3-9.3L3 6"/></svg>'; }
@@ -17844,8 +17836,10 @@
                 if (!p.groups.length) p.groups = [blankGroup()];
             }
             p.schemaVersion = 2;
-            if (typeof p.questXP !== 'number') p.questXP = p.projectXP || 0;
-            p.questLevel = questLevelFromXP(p.questXP);
+            // questXP / questLevel are deliberately not migrated, backfilled,
+            // or deleted here. Quest levelling is gone; the fields stay inert
+            // on documents that already carry them (read-tolerance, §6). No
+            // user's stored data is rewritten to remove them.
             return p;
         }
         function blankGroup() { return { id: prId('grp'), kind: 'group', name: '', ordered: false, repeat: 1, repsDone: 0, children: [] }; }
@@ -18194,15 +18188,13 @@
         }
 
         // ═══ Lump-sum quest bonus — paid once, on actual completion ═══
-        // Mirrors the existing completeChallenge/undoChallenge lump-sum XP
-        // pattern (one ledger: quest's own questXP AND the user's real
-        // currentXP/totalXP move together, same level-up/level-down loops
-        // used everywhere else XP is granted).
+        // One ledger, the user's: currentXP / totalXP and the same level-up
+        // loop used everywhere else XP is granted. The quest no longer keeps
+        // a parallel score of its own — a quest is scaffolding, not a thing
+        // that accumulates.
         function payQuestBonus(p, amount) {
             amount = Math.max(0, Math.round(amount || 0));
             if (amount <= 0) return;
-            p.questXP = (p.questXP || 0) + amount;
-            p.questLevel = questLevelFromXP(p.questXP);
             if (!window.userData) return;
             window.userData.currentXP = (window.userData.currentXP || 0) + amount;
             window.userData.totalXP = (window.userData.totalXP || 0) + amount;
@@ -19326,13 +19318,13 @@
                 var p = findProject(_projectEditingId);
                 if (!p) { showToast('Quest not found', 'red'); return; }
                 p.name = name; p.emoji = emoji; p.description = desc; p.dimensionIds = dims.dimensionIds; p.dimensionId = dims.dimensionId;
-                p.cadence = cadence; p.groups = groups; p.schemaVersion = 2; p.questLevel = questLevelFromXP(p.questXP || 0);
+                p.cadence = cadence; p.groups = groups; p.schemaVersion = 2;
                 var savedId = p.id;
                 saveUserData(); closeProjectModal(); showToast('✓ Quest updated', 'green'); openProjectDetail(savedId);
             } else {
                 var proj = { id: prId('proj'), name: name, emoji: emoji, description: desc, dimensionIds: dims.dimensionIds, dimensionId: dims.dimensionId,
                     status: 'active', cadence: cadence, groups: groups, schemaVersion: 2, currentCycle: 1, cycleHistory: [],
-                    questXP: 0, questLevel: 1, createdAt: new Date().toISOString(), startedCycleAt: new Date().toISOString() };
+                    createdAt: new Date().toISOString(), startedCycleAt: new Date().toISOString() };
                 getProjects().push(proj);
                 // Tech Tree quest accept: link the node and materialize any
                 // pending new-activity leaves now that the builder saved.
