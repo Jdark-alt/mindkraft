@@ -1024,6 +1024,10 @@
                                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
                             </button>
                         </div>
+                        <button class="act-tb-btn qc-plan-btn" onclick="openQuestComposer()" title="Plan it for me">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="3.2"/></svg>
+                            <span>Plan it for me</span>
+                        </button>
                         <button class="act-tb-add-main" onclick="openProjectModal()" title="New quest">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                             New Quest
@@ -1951,6 +1955,42 @@
             <div class="modal-footer pl-modal-footer">
                 <button type="button" class="btn-secondary pl-btn-secondary" onclick="closeActivityReminderModal()">Cancel</button>
                 <button type="button" class="btn-primary pl-btn-primary" id="arSaveBtn" onclick="saveActivityReminder()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quest Composer — "Plan it for me" -->
+    <div id="questComposerModal" class="modal-overlay">
+        <div class="modal pl-modal">
+            <div class="modal-header pl-modal-header">
+                <div>
+                    <div class="pl-modal-eyebrow">Plan it for me</div>
+                    <h3 class="modal-title">What are you trying to get done?</h3>
+                </div>
+                <button class="pl-modal-close" type="button" onclick="closeQuestComposer()" aria-label="Close">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="modal-body pl-modal-body">
+                <p class="qc-lead">Describe the project or routine. I'll build it out of the activities you already do, and add steps where there's a gap.</p>
+                <textarea id="qcRequest" class="pl-input qc-textarea" maxlength="280" rows="3" placeholder="Run a 10K in eight weeks"></textarea>
+                <div class="qc-count"><span id="qcCount">0</span>/280</div>
+                <label class="pl-field-label">Shape</label>
+                <div class="qc-toggle" id="qcShape">
+                    <button type="button" class="qc-opt is-on" data-shape="oneoff" onclick="qcPickShape('oneoff')">Something to finish</button>
+                    <button type="button" class="qc-opt" data-shape="recurring" onclick="qcPickShape('recurring')">Something to repeat</button>
+                </div>
+                <label class="pl-field-label" style="margin-top:10px;">Rough size <span class="qc-optional">optional</span></label>
+                <div class="qc-toggle" id="qcSize">
+                    <button type="button" class="qc-opt" data-size="days" onclick="qcPickSize('days')">A few days</button>
+                    <button type="button" class="qc-opt" data-size="weeks" onclick="qcPickSize('weeks')">A few weeks</button>
+                    <button type="button" class="qc-opt" data-size="months" onclick="qcPickSize('months')">A few months</button>
+                </div>
+                <div id="qcError" class="qc-error" style="display:none;"></div>
+            </div>
+            <div class="modal-footer pl-modal-footer">
+                <button class="pl-btn-ghost" type="button" onclick="closeQuestComposer()">Cancel</button>
+                <button id="qcSubmit" class="pl-btn-primary" type="button" onclick="qcSubmit()">Plan it</button>
             </div>
         </div>
     </div>

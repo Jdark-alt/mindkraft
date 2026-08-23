@@ -32,6 +32,8 @@ const {
 } = require('./lib/schedule');
 
 const { findActivity, resolveActivityName } = require('./lib/activities');
+const questComposer = require('./lib/quest-composer');
+const { callModel, parseModelJson } = require('./lib/model');
 
 const {
     configureWebPush,
@@ -514,21 +516,46 @@ exports.createActivityReminder = onCall(
 // ══ QUEST COMPOSER ════════════════════════════════════════════════════════
 // ══════════════════════════════════════════════════════════════════════════
 //
-// STUB. Returns a fixed echo so the plumbing can be proven before the model
-// is involved: auth, region, secret binding, SDK loading on the client, and
-// round-trip latency. Six things have to be right at once and a failure in
-// any of them looks like a failure in the others, so they get proven first
-// and separately.
+// Composes a quest from a stated intention and the user's own live activities.
 //
-// The real implementation reads the caller's live activities, calls the
-// model, validates twice and returns a quest spec. It writes NOTHING to the
-// user document — the draft comes back in the response and goes into the
-// builder, which is what keeps it clear of saveUserData()'s full-document
-// overwrite.
+// It writes NOTHING to users/{uid}. The draft comes back in the HTTP response
+// and goes straight into the builder, where it stays until the user taps
+// Create quest. That is what keeps it clear of saveUserData()'s full-document
+// overwrite — the nastiest hazard in this codebase, sidestepped rather than
+// managed. The rate-limit counter is the one thing persisted, and it lives in
+// a subcollection for exactly the same reason.
 //
-// The secret is declared here but deliberately NOT read yet: declaring it
-// makes the deploy fail loudly if the binding or the service account's
-// secretAccessor role is wrong, which is exactly what this step is for.
+// ANTHROPIC_API_KEY arrives as a runtime environment variable, written into
+// functions/.env at deploy time from the repo secret the tech-tree worker
+// already uses. Not Secret Manager: binding a secret makes the deploy call
+// setIamPolicy on it, which this CI service account is not permitted to do.
+
+const RATE_LIMIT_FREE = 3;                          // compositions per window
+const RATE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;     // rolling seven days
+
+// Read the window without consuming anything: a composition that fails costs
+// the user nothing, so the unit is spent only once a valid spec exists.
+async function readQuota(uid) {
+    const ref = db.collection('users').doc(uid).collection('aiUsage').doc('questComposer');
+    const snap = await ref.get();
+    const now = Date.now();
+    const data = snap.exists ? snap.data() : null;
+    const startedAt = data && data.windowStart ? new Date(data.windowStart).getTime() : 0;
+    const fresh = !startedAt || now - startedAt >= RATE_WINDOW_MS;
+    return {
+        ref,
+        count: fresh ? 0 : (data.count || 0),
+        windowStart: fresh ? new Date(now).toISOString() : data.windowStart,
+    };
+}
+
+async function consumeQuota(quota) {
+    await quota.ref.set({
+        count: quota.count + 1,
+        windowStart: quota.windowStart,
+        lastAt: new Date().toISOString(),
+    }, { merge: true });
+}
 
 exports.composeQuest = onCall(
     {
@@ -536,7 +563,6 @@ exports.composeQuest = onCall(
         memory: '256MiB',
         timeoutSeconds: 60,
         maxInstances: 3,
-        secrets: ['ANTHROPIC_API_KEY'],
     },
     async (request) => {
         // The uid comes from the verified token, never from the payload.
@@ -546,24 +572,62 @@ exports.composeQuest = onCall(
         const uid = request.auth.uid;
         const data = request.data || {};
 
-        // Same truncation the real handler will apply, so the stub exercises
-        // the same input handling.
-        const requestText = String(data.request == null ? '' : data.request).slice(0, 280);
+        const requestText = String(data.request == null ? '' : data.request)
+            .slice(0, questComposer.REQUEST_MAX_CHARS).trim();
         const shape = data.shape === 'recurring' ? 'recurring' : 'oneoff';
         const size = ['days', 'weeks', 'months'].indexOf(data.size) !== -1 ? data.size : null;
 
-        logger.info('composeQuest stub', { uid, shape, size, requestChars: requestText.length });
+        if (!requestText) {
+            throw new HttpsError('invalid-argument', 'Describe what you are trying to get done.');
+        }
 
-        return {
-            ok: true,
-            stub: true,
-            uid,
-            echo: { request: requestText, shape, size },
-            // Proves the secret is bound and readable without ever revealing
-            // it: a length, not a value.
-            secretBound: typeof process.env.ANTHROPIC_API_KEY === 'string'
-                && process.env.ANTHROPIC_API_KEY.length > 0,
-            at: new Date().toISOString(),
-        };
+        const userSnap = await db.collection('users').doc(uid).get();
+        if (!userSnap.exists) throw new HttpsError('not-found', 'User profile not found.');
+        const userData = userSnap.data();
+
+        // Activities are read here rather than accepted from the client: it
+        // keeps the request tiny, stops a malicious client padding the payload
+        // to burn tokens, and makes the snapshot authoritative.
+        const activities = questComposer.liveActivities(userData);
+        if (activities.length < questComposer.MIN_ACTIVITIES) {
+            return { ok: false, reason: 'gate' };
+        }
+
+        const quota = await readQuota(uid);
+        if (quota.count >= RATE_LIMIT_FREE) {
+            return { ok: false, reason: 'ratelimit', remaining: 0 };
+        }
+
+        const dimensions = (userData.dimensions || [])
+            .filter((d) => d && d.id)
+            .map((d) => ({ id: d.id, name: String(d.name || '').slice(0, 40) }));
+
+        const prompt = questComposer.buildComposePrompt({
+            activities, dimensions, request: requestText, shape, size,
+        });
+
+        let raw;
+        try {
+            const res = await callModel({ system: prompt.system, user: prompt.user, maxTokens: 2000 });
+            raw = parseModelJson(res.content);
+        } catch (err) {
+            logger.warn('composeQuest model call failed', { uid, error: err.message });
+            return { ok: false, reason: 'model' };
+        }
+
+        const ctx = questComposer.buildCtx(userData, activities);
+        const spec = questComposer.validateSpec(raw, ctx, shape);
+        if (!spec) {
+            logger.warn('composeQuest produced nothing valid', { uid });
+            return { ok: false, reason: 'invalid' };
+        }
+
+        // Only a real composition costs a unit.
+        await consumeQuota(quota);
+
+        logger.info('composeQuest ok', {
+            uid, shape, size, groups: spec.groups.length, activities: activities.length,
+        });
+        return { ok: true, spec, remaining: Math.max(0, RATE_LIMIT_FREE - (quota.count + 1)) };
     }
 );

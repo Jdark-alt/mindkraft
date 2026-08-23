@@ -37,18 +37,43 @@ test('the deploy is never a bare functions deploy', () => {
     assert.ok(!/--only\s+functions[,\s]/.test(workflow), 'bare `--only functions` found');
 });
 
-test('composeQuest declares the secret it needs', () => {
-    // Dropping `secrets` would deploy cleanly and then fail at runtime with an
-    // undefined key — the worst shape of failure, since the deploy looks fine.
+test('composeQuest reads its key from the runtime environment', () => {
+    // NOT Secret Manager: binding a secret makes the deploy call setIamPolicy,
+    // which this CI service account is not permitted to do. The key is written
+    // into functions/.env at deploy time instead, like the VAPID keys.
     const block = index.slice(index.indexOf('exports.composeQuest'));
-    assert.match(block, /secrets:\s*\['ANTHROPIC_API_KEY'\]/,
-        'composeQuest must declare ANTHROPIC_API_KEY in its secrets');
+    assert.ok(!/secrets:\s*\[/.test(block), 'must not declare a Secret Manager binding');
+
+    const model = fs.readFileSync(path.join(__dirname, '..', 'lib', 'model.js'), 'utf8');
+    assert.match(model, /process\.env\.ANTHROPIC_API_KEY/, 'the key comes from the environment');
+    assert.match(workflow, /ANTHROPIC_API_KEY:\s*\$\{\{ secrets\.ANTHROPIC_API_KEY \}\}/);
+    assert.match(workflow, /printf 'ANTHROPIC_API_KEY=/);
 });
 
-test('the composer callable never writes to the user document', () => {
-    // The whole design rests on this: the draft comes back in the response, so
-    // saveUserData()'s full-document overwrite can never clobber it.
+test('the composer never writes to the user document itself', () => {
+    // It READS users/{uid} for activities and writes the rate-limit counter —
+    // but only into the aiUsage SUBCOLLECTION, which saveUserData()'s
+    // full-document overwrite cannot clobber.
+    const block = index.slice(index.indexOf('// ══ QUEST COMPOSER'));
+    const writers = [...new Set([...block.matchAll(/(\w+)\.(set|update)\(/g)].map((m) => m[1]))];
+    assert.deepStrictEqual(writers, ['ref'], 'only the aiUsage doc ref writes, got: ' + writers.join(','));
+    assert.match(block, /collection\('aiUsage'\)\.doc\('questComposer'\)/);
+    assert.ok(!/doc\(uid\)\.(set|update)\(/.test(block), 'never writes users/{uid} directly');
+});
+
+test('the uid is never taken from the payload', () => {
     const block = index.slice(index.indexOf('exports.composeQuest'));
-    assert.ok(!block.includes(".collection('users')"), 'must not touch users/');
-    assert.ok(!/\.(set|update)\(/.test(block), 'must not write');
+    assert.match(block, /const uid = request\.auth\.uid;/);
+    assert.ok(!/uid\s*=\s*(data|request\.data)/.test(block));
+});
+
+test('a failed composition costs the user nothing', () => {
+    const block = index.slice(index.indexOf('exports.composeQuest'));
+    const consumeAt = block.indexOf('consumeQuota(quota)');
+    const specGuard = block.indexOf('if (!spec)');
+    assert.ok(specGuard !== -1 && consumeAt > specGuard,
+        'the quota is spent only after a valid spec exists');
+    for (const reason of ['gate', 'ratelimit', 'model', 'invalid']) {
+        assert.ok(block.includes(`reason: '${reason}'`), `returns reason '${reason}'`);
+    }
 });

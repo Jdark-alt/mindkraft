@@ -55,9 +55,14 @@ jobs:
           VAPID_PUBLIC_KEY:    ${{ secrets.VAPID_PUBLIC_KEY }}
           VAPID_PRIVATE_KEY:   ${{ secrets.VAPID_PRIVATE_KEY }}
           VAPID_CONTACT_EMAIL: ${{ secrets.VAPID_CONTACT_EMAIL }}
+          ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           if [ -z "$VAPID_PUBLIC_KEY" ] || [ -z "$VAPID_PRIVATE_KEY" ]; then
             echo "::error::VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY secrets are not set."
+            exit 1
+          fi
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::ANTHROPIC_API_KEY secret is not set — composeQuest needs it."
             exit 1
           fi
           # The Firebase CLI reads functions/.env and turns each line into a
@@ -65,6 +70,10 @@ jobs:
           printf 'VAPID_PUBLIC_KEY=%s\n'    "$VAPID_PUBLIC_KEY"    >  functions/.env
           printf 'VAPID_PRIVATE_KEY=%s\n'   "$VAPID_PRIVATE_KEY"   >> functions/.env
           printf 'VAPID_CONTACT_EMAIL=%s\n' "${VAPID_CONTACT_EMAIL:-admin@mindkraft.life}" >> functions/.env
+          # Deliberately NOT Secret Manager: binding a secret makes the deploy
+          # call setIamPolicy on it, which this CI service account may not do.
+          # Same key, same repo secret the tech-tree worker already uses.
+          printf 'ANTHROPIC_API_KEY=%s\n'   "$ANTHROPIC_API_KEY"   >> functions/.env
 
       - name: Deploy functions and Firestore index
         env:

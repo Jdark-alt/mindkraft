@@ -17989,6 +17989,7 @@
                             '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>' +
                             'Start your first quest' +
                         '</button>' +
+                        '<div class="qc-empty-line">Not sure how to break it up? <button class="qc-empty-link" onclick="openQuestComposer()">Let me plan it for you</button></div>' +
                     '</div>';
                 return;
             }
@@ -19167,6 +19168,153 @@
             }
         }, 0);
 
+        // ── The composer sheet ───────────────────────────────────────────────
+        // One screen, one call, one draft. No chat. The draft opens in the real
+        // builder, fully editable, and nothing is saved until Create quest.
+        var QC_MIN_ACTIVITIES = 3;
+        var _qcShape = 'oneoff';
+        var _qcSize = null;
+        var _qcBusy = false;
+
+        // Counts what the function will count: live activities only. A courtesy
+        // gate so nobody spends a wait to be told no — the function gates too,
+        // and its count is the authoritative one.
+        function qcLiveActivityCount() {
+            var n = 0, now = Date.now();
+            ((window.userData && window.userData.dimensions) || []).forEach(function(d) {
+                (d.paths || []).forEach(function(pth) {
+                    (pth.activities || []).forEach(function(a) {
+                        if (!a || a.archived || a.deleted) return;
+                        if (a.isNegative && !a.isSkipNegative) return;
+                        var days = (typeof gritLookbackDays === 'function') ? gritLookbackDays(a) : 7;
+                        var hist = a.completionHistory || [];
+                        for (var i = hist.length - 1; i >= 0; i--) {
+                            var e = hist[i];
+                            if (!e || e.isPenalty || (e.xp || 0) <= 0) continue;
+                            if (now - new Date(e.date).getTime() <= days * 86400000) { n++; return; }
+                        }
+                    });
+                });
+            });
+            return n;
+        }
+
+        window.openQuestComposer = function() {
+            if (qcLiveActivityCount() < QC_MIN_ACTIVITIES) {
+                showToast('Need ' + QC_MIN_ACTIVITIES + '+ activities to plan a quest', 'olive');
+                return;
+            }
+            _qcShape = 'oneoff'; _qcSize = null;
+            var box = document.getElementById('qcRequest');
+            if (box) { box.value = ''; box.oninput = qcSyncCount; }
+            qcSyncCount();
+            qcPickShape('oneoff');
+            var sizeHost = document.getElementById('qcSize');
+            if (sizeHost) sizeHost.querySelectorAll('.qc-opt').forEach(function(b) { b.classList.remove('is-on'); });
+            qcSetError('');
+            qcSetBusy(false);
+            var m = document.getElementById('questComposerModal');
+            if (m) m.classList.add('active');
+            setTimeout(function() { if (box) box.focus(); }, 60);
+        };
+
+        window.closeQuestComposer = function() {
+            var m = document.getElementById('questComposerModal');
+            if (m) m.classList.remove('active');
+        };
+
+        function qcSyncCount() {
+            var box = document.getElementById('qcRequest');
+            var out = document.getElementById('qcCount');
+            if (box && out) out.textContent = String((box.value || '').length);
+        }
+
+        window.qcPickShape = function(shape) {
+            _qcShape = shape === 'recurring' ? 'recurring' : 'oneoff';
+            var host = document.getElementById('qcShape');
+            if (!host) return;
+            host.querySelectorAll('.qc-opt').forEach(function(b) {
+                b.classList.toggle('is-on', b.getAttribute('data-shape') === _qcShape);
+            });
+        };
+
+        window.qcPickSize = function(size) {
+            // Tapping the chosen size again clears it — omitted means the model decides.
+            _qcSize = (_qcSize === size) ? null : size;
+            var host = document.getElementById('qcSize');
+            if (!host) return;
+            host.querySelectorAll('.qc-opt').forEach(function(b) {
+                b.classList.toggle('is-on', _qcSize !== null && b.getAttribute('data-size') === _qcSize);
+            });
+        };
+
+        function qcSetError(msg) {
+            var el = document.getElementById('qcError');
+            if (!el) return;
+            el.textContent = msg || '';
+            el.style.display = msg ? '' : 'none';
+        }
+
+        function qcSetBusy(busy) {
+            _qcBusy = busy;
+            var btn = document.getElementById('qcSubmit');
+            if (!btn) return;
+            btn.disabled = busy;
+            btn.textContent = busy ? 'Planning\u2026' : 'Plan it';
+        }
+
+        // The client's own activity index, for re-checking linkedActivityId
+        // against what exists right now.
+        function qcClientCtx() {
+            var ids = Object.keys(window._prActIdx || {});
+            var dims = ((window.userData && window.userData.dimensions) || []).map(function(d) { return d.id; });
+            return { activityIds: new Set(ids), dimIds: new Set(dims), fallbackDim: dims[0] || 'uncategorized' };
+        }
+
+        window.qcSubmit = async function() {
+            if (_qcBusy) return;
+            var box = document.getElementById('qcRequest');
+            var text = ((box && box.value) || '').trim();
+            if (!text) { qcSetError('Tell me what you are trying to get done.'); return; }
+            var RETRY = 'Couldn\u2019t put a plan together. Try describing it differently?';
+
+            qcSetError('');
+            qcSetBusy(true);
+            try {
+                var res = await qcCallCompose({ request: text, shape: _qcShape, size: _qcSize || undefined });
+
+                if (!res || !res.ok) {
+                    var reason = res && res.reason;
+                    if (reason === 'gate') qcSetError('Need ' + QC_MIN_ACTIVITIES + '+ activities to plan a quest.');
+                    else if (reason === 'ratelimit') qcSetError('That is all 3 plans for this week. The manual builder is always open.');
+                    else qcSetError(RETRY);
+                    qcSetBusy(false);
+                    return;
+                }
+
+                // Validate again on receipt: the builder assumes well-formed
+                // input, and this crossed a trust boundary.
+                _buildActIdx();
+                var ctx = qcClientCtx();
+                var counter = { newActs: 0, leaves: 0 };
+                var groups = ((res.spec && res.spec.groups) || [])
+                    .map(function(g) { return qcValidateGroup(g, ctx, counter, 1); })
+                    .filter(Boolean);
+                if (!groups.length) { qcSetError(RETRY); qcSetBusy(false); return; }
+
+                closeQuestComposer();
+                qcSetBusy(false);
+                qcDraftToBuilder({
+                    name: res.spec.name, emoji: res.spec.emoji, description: res.spec.description,
+                    cadence: res.spec.cadence, groups: groups
+                }, { title: 'Review your quest' });
+                try { window.trackEvent && window.trackEvent('quest_composed', { shape: _qcShape }); } catch (e) {}
+            } catch (err) {
+                qcSetBusy(false);
+                qcSetError(err && err.message === 'qc_timeout' ? 'That took too long. Try again?' : RETRY);
+            }
+        };
+
         // ── The callable ─────────────────────────────────────────────────────
         // The region is passed explicitly where `functions` is created
         // (asia-south1, matching the Firestore database). Leave it out and the
@@ -19206,19 +19354,41 @@
         // earlier strict implementation discarded the whole quest when it did
         // — which is why quests "never generated". Repair, do not reject.
         var QC_MAX_NEW_ACTIVITIES = 3;
+        var QC_MAX_LEAVES = 20;
+        var QC_MAX_DEPTH = 3;
         var QC_VALID_FREQUENCIES = ['daily', 'weekly', 'biweekly', 'monthly', 'occasional'];
         function qcNewId(prefix) { return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
         // ctx: { activityIds:Set, dimIds:Set, fallbackDim:string }
-        // counter: { newActs:int } — mutated, enforcing the new-activity cap by
-        // demoting the excess to tasks rather than dropping them.
-        function qcValidateGroup(g, ctx, counter) {
+        // counter: { newActs:int, leaves:int } — mutated. The caps are enforced
+        // here, not merely requested in the prompt: excess new activities are
+        // demoted to tasks, excess leaves truncated, excess depth flattened.
+        function qcValidateGroup(g, ctx, counter, depth) {
             if (!g || typeof g !== 'object') return null;
-            if (g.kind === 'leaf' || g.type) return null; // a bare leaf at group position — skip
-            var children = (Array.isArray(g.children) ? g.children : [])
-                .map(function(c) { return (c && c.kind === 'group') ? qcValidateGroup(c, ctx, counter) : qcValidateLeaf(c, ctx, counter); })
-                .filter(Boolean);
+            if (g.kind === 'leaf' || g.type) return null; // a bare leaf at group position
+            depth = depth || 1;
+
+            var raw = Array.isArray(g.children) ? g.children : [];
+            var children = [];
+            for (var i = 0; i < raw.length; i++) {
+                if (counter.leaves >= QC_MAX_LEAVES) break;
+                var c = raw[i], built;
+                if (c && c.kind === 'group') {
+                    // Past the ceiling a nested group is flattened into its
+                    // parent rather than dropped, so its steps survive.
+                    if (depth >= QC_MAX_DEPTH) {
+                        var inner = qcValidateGroup(c, ctx, counter, depth);
+                        if (inner) children.push.apply(children, inner.children);
+                        continue;
+                    }
+                    built = qcValidateGroup(c, ctx, counter, depth + 1);
+                } else {
+                    built = qcValidateLeaf(c, ctx, counter);
+                }
+                if (built) children.push(built);
+            }
             if (!children.length) return null;            // every group has >=1 child
+
             return {
                 id: qcNewId('grp'),
                 kind: 'group',
@@ -19232,24 +19402,28 @@
 
         function qcValidateLeaf(l, ctx, counter) {
             if (!l || typeof l !== 'object') return null;
+            if (counter.leaves >= QC_MAX_LEAVES) return null;
+
             var req = Math.max(1, parseInt(l.requiredCount, 10) || 1);
             var resetMode = l.resetMode === 'once' ? 'once' : 'per-cycle';
             var type = l.type === 'activity' ? 'activity' : 'task';
 
             if (type === 'activity') {
+                // Re-checked here in case the activity was deleted between the
+                // call returning and the user saving.
                 if (l.linkedActivityId && ctx.activityIds.has(l.linkedActivityId)) {
-                    // Links an existing activity — no new activity, no cap cost.
+                    counter.leaves++;
                     return {
                         id: qcNewId('lf'), kind: 'leaf', type: 'activity', linkedActivityId: l.linkedActivityId,
                         name: '', resetMode: resetMode, requiredCount: req, completedCount: 0
                     };
                 }
-                // A NEW activity leaf needs a usable spec; count it against the cap.
                 var spec = l.spec || {};
                 if (counter.newActs >= QC_MAX_NEW_ACTIVITIES) {
-                    type = 'task'; // truncate the excess to tasks
+                    type = 'task'; // demote the excess rather than dropping it
                 } else if (spec && (spec.baseXP || spec.frequency || spec.dimensionId || l.name)) {
                     counter.newActs++;
+                    counter.leaves++;
                     return {
                         id: qcNewId('lf'), kind: 'leaf', type: 'activity', linkedActivityId: null,
                         name: '', resetMode: resetMode, requiredCount: req, completedCount: 0,
@@ -19264,9 +19438,9 @@
                     type = 'task';
                 }
             }
-            // task leaf — requires a non-empty name
             var name = String(l.name || '').trim();
-            if (!name) return null;
+            if (!name) return null;   // a task leaf needs a name
+            counter.leaves++;
             return {
                 id: qcNewId('lf'), kind: 'leaf', type: 'task', linkedActivityId: null,
                 name: name.slice(0, 80), resetMode: resetMode, requiredCount: req, completedCount: 0

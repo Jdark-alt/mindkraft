@@ -13698,6 +13698,29 @@
 .tt-acc-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:16px;}
 .qc-newact-badge{font-size:9.5px;font-weight:700;color:#a9bd7a;}
 
+/* ── Quest Composer sheet ─────────────────────────────────────────────── */
+.qc-plan-btn { gap: 6px; }
+.qc-lead { font-size: 12.5px; font-weight: 500; color: var(--color-text-secondary); line-height: 1.55; margin: 0 0 12px; }
+.qc-textarea { width: 100%; resize: vertical; min-height: 74px; line-height: 1.5; font-family: inherit; }
+.qc-count { text-align: right; font-size: 10.5px; font-weight: 600; color: var(--color-text-secondary); opacity: .7; margin-top: 4px; }
+.qc-optional { font-weight: 600; text-transform: none; letter-spacing: 0; opacity: .6; }
+.qc-toggle { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.qc-opt {
+    font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+    padding: 8px 12px; border-radius: 9px;
+    background: var(--recessed-bg-4); color: var(--color-text-secondary);
+    border: 1px solid var(--color-border);
+    transition: background .14s, color .14s, border-color .14s;
+}
+.qc-opt:active { background: var(--color-hover-overlay-strong); }
+.qc-opt.is-on { background: rgba(74,124,158,0.16); color: var(--color-accent-blue); border-color: var(--color-accent-blue); }
+.qc-error { margin-top: 12px; font-size: 12px; font-weight: 600; color: var(--color-accent-rose); line-height: 1.5; }
+.qc-empty-line { margin-top: 10px; font-size: 12px; font-weight: 500; color: var(--color-text-secondary); }
+.qc-empty-link {
+    font-family: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+    background: none; border: none; padding: 0; color: var(--color-accent-blue); text-decoration: underline;
+}
+
 @media (prefers-reduced-motion: reduce) {
     .tt-pulse, .tt-node.tt-flash, .tt-gold-flash, .tt-reveal .tt-web-svg .tt-node { animation-duration: 0.01ms !important; }
 }
