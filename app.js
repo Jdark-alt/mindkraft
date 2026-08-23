@@ -18339,7 +18339,6 @@
         }
 
         function renderProjectCard(p) {
-            var lvl = p.questLevel || questLevelFromXP(p.questXP || 0);
             var counts = questCounts(p);
             var stats = questStats(p);
             var potential = questPotentialBonus(p);
@@ -18374,7 +18373,6 @@
                         '<div class="pr-card-headings">' +
                             '<div class="pr-card-name-row">' +
                                 '<h3 class="pr-card-name">' + escapeHtml(p.name || 'Untitled quest') + '</h3>' +
-                                '<span class="pr-chip pr-chip-lv">Lv.&nbsp;' + lvl + '</span>' +
                             '</div>' +
                             '<div class="pr-card-detailline">' + detailLine + '</div>' +
                         '</div>' +
@@ -18454,7 +18452,6 @@
                         '<div class="pr-detail-titles">' +
                             '<div class="pr-detail-name-row">' +
                                 '<h1 class="pr-detail-name">' + escapeHtml(p.name || 'Untitled quest') + '</h1>' +
-                                '<span class="pr-chip pr-chip-lv">Lv.&nbsp;' + (p.questLevel || 1) + '</span>' +
                                 (dim ? '<span class="pr-detail-dim" style="background:' + hexA(dimHex, .16) + ';color:' + dimHex + ';">' + escapeHtml(dim.name) + '</span>' : '') +
                             '</div>' +
                             (flavor ? '<div class="pr-detail-flavor">' + escapeHtml(flavor) + '</div>' : '') +

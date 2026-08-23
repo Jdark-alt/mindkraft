@@ -13223,7 +13223,6 @@
 .pr-card-name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .pr-card-name { margin: 0; font-size: 16.5px; font-weight: 700; letter-spacing: -0.02em; color: var(--color-text-primary); line-height: 1.22; }
 .pr-chip { font-size: 10px; font-weight: 700; border-radius: 999px; padding: 3px 9px; white-space: nowrap; }
-.pr-chip-lv { background: var(--recessed-bg-4); color: var(--color-text-secondary); }
 .pr-chip-muted { background: var(--recessed-bg-4); color: var(--color-text-secondary); }
 .pr-chip-gold { background: #f5c563; color: #23262c; }
 .pr-card-detailline { display: flex; align-items: center; gap: 6px; margin-top: 5px; font-size: 12px; font-weight: 500; color: var(--color-text-secondary); flex-wrap: wrap; }
