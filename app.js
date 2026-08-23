@@ -17079,7 +17079,7 @@
                 tiles = [[(s.baseXP || 10) + ' XP', 'per completion'], [s.frequency || 'weekly', 'suggested pace'], [ttShort(ttDimName(node.dimensionId), 12), 'dimension']];
             } else if (pl.type === 'quest') {
                 var counts = { linked: 0, tasks: 0, newActs: 0 };
-                ttWalkLeaves((pl.spec && pl.spec.groups) || [], function(l) {
+                qcWalkLeaves((pl.spec && pl.spec.groups) || [], function(l) {
                     if (l.type === 'activity' && l.linkedActivityId) counts.linked++;
                     else if (l.type === 'activity' && l.spec) counts.newActs++;
                     else counts.tasks++;
@@ -17129,7 +17129,7 @@
         function ttQuestPreviewHtml(node) {
             var pl = node.payload, groups = (pl.spec && pl.spec.groups) || [];
             var newActs = [], tasks = [], linked = [];
-            ttWalkLeaves(groups, function(l) {
+            qcWalkLeaves(groups, function(l) {
                 if (l.type === 'activity' && !l.linkedActivityId && l.spec) newActs.push(l);
                 else if (l.type === 'activity' && l.linkedActivityId) linked.push(l);
                 else tasks.push(l);
@@ -17158,10 +17158,6 @@
         };
 
         // ── Sheet 2 — shape it (§7.1): the REAL activity form ────────────
-        function ttWalkLeaves(groups, fn) {
-            (function walk(nodes) { (nodes || []).forEach(function(n) { if (n.kind === 'group') walk(n.children); else fn(n); }); })(groups);
-        }
-
         window.ttOpenAccept = function(nodeId) {
             var tt = ensureTechTree();
             var node = tt.nodes.find(function(n) { return n.id === nodeId; });
@@ -17380,70 +17376,33 @@
             } catch (e) {}
         }
 
-        // ── Quest accept → the REAL builder, prefilled (§7.2) ────────────
-        // Nothing is created before the builder is saved. New-activity leaves
-        // ride along as named task rows; ttFinishQuestAccept materializes the
-        // survivors into real activities at save time.
+        // ── Quest accept → the REAL builder, prefilled ───────────────────
+        // Nothing is created before the builder is saved; qcFinishDraft
+        // materializes the surviving new-activity rows at save time.
         window.ttAcceptQuestToBuilder = function(nodeId) {
             var tt = ensureTechTree();
             var node = tt.nodes.find(function(n) { return n.id === nodeId; });
             if (!node || node.lifecycle !== 'available' || node.payload.type !== 'quest') return;
-            var spec = node.payload.spec;
-            var groups = JSON.parse(JSON.stringify(spec.groups || []));
-            var newSpecs = {};
-            ttWalkLeaves(groups, function(l) {
-                if (l.type === 'activity' && !l.linkedActivityId && l.spec) {
-                    newSpecs[l.id] = l.spec;
-                    l.type = 'task';
-                    l.name = l.spec.name || 'Practice';
-                }
-                delete l.spec; delete l._promotable;
-            });
-            window._ttQuestAccept = { nodeId: nodeId, newSpecs: newSpecs };
             ttCloseSheet();
-            openProjectModal();
-            document.getElementById('projectModalTitle').textContent = 'Set up this quest';
-            document.getElementById('projectName').value = spec.name || node.title;
-            document.getElementById('projectEmoji').value = spec.emoji || '🎯';
-            document.getElementById('projectDesc').value = spec.description || node.description || '';
-            try { setProjectCadence((spec.cadence && spec.cadence.type) === 'recurring' ? 'recurring' : 'oneoff'); } catch (e) {}
-            var host = document.getElementById('projectBuilder');
-            host.innerHTML = '';
-            (groups.length ? groups : [null]).forEach(function(g) { addGroupCard(host, g); });
-            renderProjectDimReadout();
-            // Badge the rows that become real activities on save.
-            Object.keys(newSpecs).forEach(function(leafId) {
-                var row = host.querySelector('[data-id="' + leafId + '"] .pr-b-item-meta');
-                if (row) row.innerHTML = '<span class="tt-newact-badge">→ becomes an activity (' + escapeHtml(newSpecs[leafId].frequency || 'weekly') + ')</span>';
+            // The builder work now lives in the Quest Composer module. This
+            // wrapper is only the tech-tree lookup around it, and goes when the
+            // tree stops proposing quests.
+            var draft = qcDraftToBuilder(node.payload.spec, {
+                title: 'Set up this quest',
+                fallbackName: node.title,
+                fallbackDesc: node.description || ''
             });
+            if (draft) draft.nodeId = nodeId;
         };
 
         // Runs inside saveProject's create branch, before its save/close.
-        window.ttFinishQuestAccept = function(proj) {
-            var ctx = window._ttQuestAccept;
-            window._ttQuestAccept = null;
-            if (!ctx || !proj) return;
+        // Materialization moved to qcFinishDraft; what remains is the
+        // tech-tree backlink, and it goes with the accept path.
+        window.ttLinkAcceptedQuestNode = function(proj, nodeId) {
+            if (!proj || !nodeId) return;
             var tt = ensureTechTree();
-            var node = tt.nodes.find(function(n) { return n.id === ctx.nodeId; });
-            var created = 0;
-            (function walk(nodes) {
-                (nodes || []).forEach(function(l) {
-                    if (l.kind === 'group') return walk(l.children);
-                    if (l.type === 'task' && ctx.newSpecs[l.id]) {
-                        if (!canAddActivity()) return;   // cap hit — it stays a task
-                        var spec = Object.assign({}, ctx.newSpecs[l.id]);
-                        if (l.name && l.name.trim()) spec.name = l.name.trim();
-                        var act = ttCreateActivityFromSpec(spec, ctx.nodeId, null);
-                        l.type = 'activity'; l.linkedActivityId = act.id; l.name = '';
-                        created++;
-                    }
-                });
-            })(proj.groups);
-            if (created && typeof computeProjectDimensions === 'function') {
-                var dims = computeProjectDimensions(proj.groups);
-                proj.dimensionIds = dims.dimensionIds; proj.dimensionId = dims.dimensionId;
-            }
-            proj.createdFromNodeId = ctx.nodeId;
+            var node = tt.nodes.find(function(n) { return n.id === nodeId; });
+            proj.createdFromNodeId = nodeId;
             if (node) {
                 node.payload.projectId = proj.id;
                 node.lifecycle = 'active';
@@ -17591,7 +17550,7 @@
                 // the named group as a linked leaf.
                 if (!ttFindActivity(patch.activityId)) { patch.status = 'gone'; saveUserData().catch(function() {}); renderTechTree(); return; }
                 var already = false;
-                ttWalkLeaves(proj.groups || [], function(l) { if (l.linkedActivityId === patch.activityId) already = true; });
+                qcWalkLeaves(proj.groups || [], function(l) { if (l.linkedActivityId === patch.activityId) already = true; });
                 if (!already) {
                     var grp = ttFindGroupByName(proj.groups, patch.groupName);
                     if (!grp) {
@@ -17737,15 +17696,6 @@
                     var r = _oc.apply(this, arguments);
                     window._ttAcceptContext = null;
                     ttRemoveStepStrip();
-                    return r;
-                };
-            }
-            if (typeof window.closeProjectModal === 'function' && !window._ttWrappedCloseProj) {
-                window._ttWrappedCloseProj = true;
-                var _op = window.closeProjectModal;
-                window.closeProjectModal = function() {
-                    var r = _op.apply(this, arguments);
-                    window._ttQuestAccept = null;
                     return r;
                 };
             }
@@ -19326,14 +19276,203 @@
                     status: 'active', cadence: cadence, groups: groups, schemaVersion: 2, currentCycle: 1, cycleHistory: [],
                     createdAt: new Date().toISOString(), startedCycleAt: new Date().toISOString() };
                 getProjects().push(proj);
-                // Tech Tree quest accept: link the node and materialize any
-                // pending new-activity leaves now that the builder saved.
-                if (window._ttQuestAccept && typeof ttFinishQuestAccept === 'function') {
-                    ttFinishQuestAccept(proj);
+                // A composed or accepted draft materializes its new-activity
+                // leaves now that the builder saved.
+                if (window._qcDraft) {
+                    var qcCtx = qcFinishDraft(proj);
+                    // Legacy tech-tree accept only: backlink the node.
+                    if (qcCtx && qcCtx.nodeId && typeof window.ttLinkAcceptedQuestNode === 'function') {
+                        window.ttLinkAcceptedQuestNode(proj, qcCtx.nodeId);
+                    }
                 }
                 saveUserData(); closeProjectModal(); showToast('✓ Quest created', 'green'); openProjectDetail(proj.id);
             }
         };
+
+        // ════════════════════════════════════════════════════════════════════
+        // ══ QUEST COMPOSER ══════════════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════════
+        //
+        // The engine that turns a validated quest spec into a prefilled entry
+        // in the REAL builder. It was born inside the Tech Tree, which is why
+        // the names below have tt-shaped ancestors; it is not tech-tree code
+        // and must not grow any. Nothing here reads tt.nodes, and nothing here
+        // may.
+        //
+        // Nothing is persisted until the user taps Create quest: the draft
+        // lives in the builder DOM and window._qcDraft, and closing the modal
+        // discards it.
+        //
+        //   qcWalkLeaves      was ttWalkLeaves
+        //   qcDraftToBuilder  was ttAcceptQuestToBuilder (minus the tt lookup)
+        //   qcFinishDraft     was ttFinishQuestAccept   (minus the node link)
+        //   qcValidateGroup   was validateGroup  in scripts/generate-tech-tree.js
+        //   qcValidateLeaf    was validateLeaf   in scripts/generate-tech-tree.js
+        // ════════════════════════════════════════════════════════════════════
+
+        // The pending draft context: { newSpecs: {leafId: spec}, nodeId? }.
+        // nodeId is set only by the Tech Tree's legacy accept path and goes
+        // away with it.
+        window._qcDraft = window._qcDraft || null;
+
+        function qcWalkLeaves(groups, fn) {
+            (function walk(nodes) { (nodes || []).forEach(function(n) { if (n.kind === 'group') walk(n.children); else fn(n); }); })(groups);
+        }
+
+        // Opens the real builder on a validated spec. New-activity leaves ride
+        // along as named TASK rows — nothing becomes an activity until the
+        // user saves — and qcFinishDraft materializes the survivors.
+        function qcDraftToBuilder(spec, opts) {
+            opts = opts || {};
+            spec = spec || {};
+            var groups = JSON.parse(JSON.stringify(spec.groups || []));
+            var newSpecs = {};
+            qcWalkLeaves(groups, function(l) {
+                if (l.type === 'activity' && !l.linkedActivityId && l.spec) {
+                    newSpecs[l.id] = l.spec;
+                    l.type = 'task';
+                    l.name = l.spec.name || 'Practice';
+                }
+                delete l.spec; delete l._promotable;
+            });
+            window._qcDraft = { newSpecs: newSpecs };
+            openProjectModal();
+            document.getElementById('projectModalTitle').textContent = opts.title || 'Review your quest';
+            document.getElementById('projectName').value = spec.name || opts.fallbackName || '';
+            document.getElementById('projectEmoji').value = spec.emoji || '🎯';
+            document.getElementById('projectDesc').value = spec.description || opts.fallbackDesc || '';
+            try { setProjectCadence((spec.cadence && spec.cadence.type) === 'recurring' ? 'recurring' : 'oneoff'); } catch (e) {}
+            var host = document.getElementById('projectBuilder');
+            host.innerHTML = '';
+            (groups.length ? groups : [null]).forEach(function(g) { addGroupCard(host, g); });
+            renderProjectDimReadout();
+            // Badge the rows that become real activities on save.
+            Object.keys(newSpecs).forEach(function(leafId) {
+                var row = host.querySelector('[data-id="' + leafId + '"] .pr-b-item-meta');
+                if (row) row.innerHTML = '<span class="qc-newact-badge">→ becomes an activity (' + escapeHtml(newSpecs[leafId].frequency || 'weekly') + ')</span>';
+            });
+            return window._qcDraft;
+        }
+
+        // Runs inside saveProject's create branch, before its save/close.
+        // Returns the consumed context so a caller can act on it further.
+        function qcFinishDraft(proj) {
+            var ctx = window._qcDraft;
+            window._qcDraft = null;
+            if (!ctx || !proj) return null;
+            var created = 0;
+            (function walk(nodes) {
+                (nodes || []).forEach(function(l) {
+                    if (l.kind === 'group') return walk(l.children);
+                    if (l.type === 'task' && ctx.newSpecs[l.id]) {
+                        if (!canAddActivity()) return;   // cap hit — it stays a task
+                        var spec = Object.assign({}, ctx.newSpecs[l.id]);
+                        if (l.name && l.name.trim()) spec.name = l.name.trim();
+                        var act = ttCreateActivityFromSpec(spec, ctx.nodeId || null, null);
+                        l.type = 'activity'; l.linkedActivityId = act.id; l.name = '';
+                        created++;
+                    }
+                });
+            })(proj.groups);
+            if (created && typeof computeProjectDimensions === 'function') {
+                var dims = computeProjectDimensions(proj.groups);
+                proj.dimensionIds = dims.dimensionIds; proj.dimensionId = dims.dimensionId;
+            }
+            return ctx;
+        }
+
+        // Cancelling the builder discards the draft. Wrapped once, the same
+        // way the Tech Tree used to wrap it.
+        setTimeout(function() {
+            if (typeof window.closeProjectModal === 'function' && !window._qcWrappedCloseProj) {
+                window._qcWrappedCloseProj = true;
+                var _closeProj = window.closeProjectModal;
+                window.closeProjectModal = function() {
+                    var r = _closeProj.apply(this, arguments);
+                    window._qcDraft = null;
+                    return r;
+                };
+            }
+        }, 0);
+
+        // ── Validators ───────────────────────────────────────────────────────
+        // KEEP IN SYNC: a byte-identical copy of qcValidateGroup /
+        // qcValidateLeaf runs server-side in the composer Cloud Function, so a
+        // malformed model response never reaches the client. Edit both or
+        // neither.
+        //
+        // Ported verbatim from validateGroup / validateLeaf in
+        // scripts/generate-tech-tree.js. Their leniency is load-bearing: Haiku
+        // drops the `spec` wrapper and puts leaves where groups belong, and an
+        // earlier strict implementation discarded the whole quest when it did
+        // — which is why quests "never generated". Repair, do not reject.
+        var QC_MAX_NEW_ACTIVITIES = 3;
+        var QC_VALID_FREQUENCIES = ['daily', 'weekly', 'biweekly', 'monthly', 'occasional'];
+        function qcNewId(prefix) { return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+
+        // ctx: { activityIds:Set, dimIds:Set, fallbackDim:string }
+        // counter: { newActs:int } — mutated, enforcing the new-activity cap by
+        // demoting the excess to tasks rather than dropping them.
+        function qcValidateGroup(g, ctx, counter) {
+            if (!g || typeof g !== 'object') return null;
+            if (g.kind === 'leaf' || g.type) return null; // a bare leaf at group position — skip
+            var children = (Array.isArray(g.children) ? g.children : [])
+                .map(function(c) { return (c && c.kind === 'group') ? qcValidateGroup(c, ctx, counter) : qcValidateLeaf(c, ctx, counter); })
+                .filter(Boolean);
+            if (!children.length) return null;            // every group has >=1 child
+            return {
+                id: qcNewId('grp'),
+                kind: 'group',
+                name: String(g.name || '').slice(0, 60),
+                ordered: !!g.ordered,
+                repeat: Math.max(1, parseInt(g.repeat, 10) || 1),
+                repsDone: 0,
+                children: children
+            };
+        }
+
+        function qcValidateLeaf(l, ctx, counter) {
+            if (!l || typeof l !== 'object') return null;
+            var req = Math.max(1, parseInt(l.requiredCount, 10) || 1);
+            var resetMode = l.resetMode === 'once' ? 'once' : 'per-cycle';
+            var type = l.type === 'activity' ? 'activity' : 'task';
+
+            if (type === 'activity') {
+                if (l.linkedActivityId && ctx.activityIds.has(l.linkedActivityId)) {
+                    // Links an existing activity — no new activity, no cap cost.
+                    return {
+                        id: qcNewId('lf'), kind: 'leaf', type: 'activity', linkedActivityId: l.linkedActivityId,
+                        name: '', resetMode: resetMode, requiredCount: req, completedCount: 0
+                    };
+                }
+                // A NEW activity leaf needs a usable spec; count it against the cap.
+                var spec = l.spec || {};
+                if (counter.newActs >= QC_MAX_NEW_ACTIVITIES) {
+                    type = 'task'; // truncate the excess to tasks
+                } else if (spec && (spec.baseXP || spec.frequency || spec.dimensionId || l.name)) {
+                    counter.newActs++;
+                    return {
+                        id: qcNewId('lf'), kind: 'leaf', type: 'activity', linkedActivityId: null,
+                        name: '', resetMode: resetMode, requiredCount: req, completedCount: 0,
+                        spec: {
+                            name: String(spec.name || l.name || 'Practice').slice(0, 80),
+                            baseXP: Math.min(50, Math.max(1, parseInt(spec.baseXP, 10) || 8)),
+                            frequency: QC_VALID_FREQUENCIES.indexOf(spec.frequency) !== -1 ? spec.frequency : 'weekly',
+                            dimensionId: ctx.dimIds.has(spec.dimensionId) ? spec.dimensionId : ctx.fallbackDim
+                        }
+                    };
+                } else {
+                    type = 'task';
+                }
+            }
+            // task leaf — requires a non-empty name
+            var name = String(l.name || '').trim();
+            if (!name) return null;
+            return {
+                id: qcNewId('lf'), kind: 'leaf', type: 'task', linkedActivityId: null,
+                name: name.slice(0, 80), resetMode: resetMode, requiredCount: req, completedCount: 0
+            };
+        }
 
         // ════════════════════════════════════════════════════════════════════
         // ── APP-WIDE BACK-BUTTON GUARD ───────────────────────────────────────

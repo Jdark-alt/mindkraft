@@ -13703,7 +13703,7 @@
 .tt-chip{font-size:8.5px;font-weight:800;padding:3px 7px;border-radius:5px;letter-spacing:0.05em;text-transform:uppercase;flex-shrink:0;background:rgba(168,68,110,0.2);color:#e396b8;}
 .tt-chip-yours{background:rgba(255,255,255,0.06);color:#9a9a9a;}
 .tt-acc-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:16px;}
-.tt-newact-badge{font-size:9.5px;font-weight:700;color:#a9bd7a;}
+.tt-newact-badge,.qc-newact-badge{font-size:9.5px;font-weight:700;color:#a9bd7a;}
 
 /* Quest-patch proposal cards */
 .tt-prop{padding:11px 12px;border-radius:11px;border:1px solid rgba(138,154,91,0.3);background:rgba(138,154,91,0.07);}
