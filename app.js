@@ -18065,6 +18065,35 @@
             var raw = completions * GRIT_QUEST_PER_COMPLETION * questGritBreadth(Object.keys(ids).length);
             return Math.min(GRIT_QUEST_CAP, Math.max(GRIT_QUEST_FLOOR, Math.round(raw)));
         }
+        // ── Bonus idempotency marker (spec §4) ────────────────────────────
+        // Replaces the deleted refund path. The risk that path pretended to
+        // cover — a paid bonus being un-earned — is unreachable once payment
+        // is a deliberate terminal act. The risk that IS real is paying twice:
+        // two devices, or a double-tap racing the saveUserData() write.
+        //
+        // Absent means unpaid (§6). Every quest that exists today is unmarked,
+        // so an old quest re-completed under the new rules pays once more.
+        // That is the accepted trade — the alternative is a backfill that
+        // guesses, and a wrong guess silently withholds XP someone earned.
+        //
+        // A one-off records a timestamp; a recurring quest records the cycle
+        // numbers it has settled, so cycle 2 is a new award and cycle 1 can
+        // never re-pay. The marker survives resetProject deliberately:
+        // complete → reset → complete used to pay the bonus again every lap.
+        function questBonusPaid(p, cycleNum) {
+            if (p.cadence && p.cadence.type === 'recurring') {
+                return Array.isArray(p.bonusPaidCycles) && p.bonusPaidCycles.indexOf(cycleNum) !== -1;
+            }
+            return !!p.bonusPaidAt;
+        }
+        function markQuestBonusPaid(p, cycleNum) {
+            if (p.cadence && p.cadence.type === 'recurring') {
+                if (!Array.isArray(p.bonusPaidCycles)) p.bonusPaidCycles = [];
+                if (p.bonusPaidCycles.indexOf(cycleNum) === -1) p.bonusPaidCycles.push(cycleNum);
+                return;
+            }
+            p.bonusPaidAt = new Date().toISOString();
+        }
         function questDaysActive(p) { var start = new Date(p.lastResetAt || p.createdAt || Date.now()); return Math.max(1, Math.floor((Date.now() - start.getTime()) / 86400000) + 1); }
         function projectCycleReady(p) { var any = false, all = true; allLeaves(p).forEach(function(l) { if (l.resetMode !== 'once') { any = true; if (!leafDone(l)) all = false; } }); return any && all; }
 
@@ -18212,24 +18241,6 @@
                 { projectId: p.id, projectTitle: p.name || '', cycleNumber: cycleNum },
                 (isRec ? 'Sealed cycle ' + cycleNum + ' — ' : 'Completed ') + (p.name || 'quest'));
             return paid ? amount : 0;
-        }
-
-        // Refund path exists only for one-off "Reopen quest" (undoing a seal
-        // that hasn't been followed by any redo work yet) — see reopenProject.
-        function refundQuestBonus(p, amount) {
-            amount = Math.max(0, Math.round(amount || 0));
-            if (amount <= 0) return;
-            p.questXP = Math.max(0, (p.questXP || 0) - amount);
-            p.questLevel = questLevelFromXP(p.questXP);
-            if (!window.userData) return;
-            window.userData.currentXP = (window.userData.currentXP || 0) - amount;
-            window.userData.totalXP = Math.max(0, (window.userData.totalXP || 0) - amount);
-            while (window.userData.currentXP < 0 && (window.userData.level || 1) > 1) {
-                window.userData.level -= 1;
-                window.userData.currentXP += calculateXPForLevel(window.userData.level);
-            }
-            if (window.userData.currentXP < 0) window.userData.currentXP = 0;
-            try { if (typeof updateDashboard === 'function') updateDashboard(); } catch (e) {}
         }
 
         // ═══ LIST VIEW ══════════════════════════════════════════════════════
@@ -18848,18 +18859,25 @@
             // Sealing early (the confirm() override above) pays NOTHING — not
             // XP, not Grit. Both are gated on the same `ready` flag so the two
             // currencies can never disagree about whether the work was done.
-            var bonus = ready ? questPotentialBonus(p) : 0;
-            var grit  = ready ? questGritBonus(p) : 0;
             var cycleNum = p.currentCycle || 1;
+            // Pay only for a settlement this quest/cycle has not already been
+            // paid for. Sealing early pays nothing; sealing a second time
+            // after a reopen or a reset pays nothing.
+            var payable = ready && !questBonusPaid(p, cycleNum);
+            var bonus = payable ? questPotentialBonus(p) : 0;
+            var grit  = payable ? questGritBonus(p) : 0;
             var stats = questStats(p);
-            // Persistence precedes the grant: the history entry is on the
-            // object before any currency moves, so a failure between the two
-            // leaves a record of an unpaid seal rather than a payment with no
-            // record of what earned it.
+            // Persistence precedes the grant (§3.4): the history entry and the
+            // marker are on the object before any currency moves, so a failure
+            // between the two leaves a record of an unpaid seal rather than a
+            // payment with no record of what earned it. The marker is set on
+            // any ready settlement, not only a paying one — otherwise a quest
+            // completed while worth nothing could be edited to add activity
+            // leaves and completed again for a full payout.
             p.cycleHistory = p.cycleHistory || [];
             p.cycleHistory.push({ cycleNumber: cycleNum, startedAt: p.startedCycleAt || p.createdAt, completedAt: new Date().toISOString(), itemsCompleted: stats.done, itemsTotal: stats.total, bonusXp: bonus, bonusGrit: grit });
+            if (payable) markQuestBonusPaid(p, cycleNum);
             delete _prNextSkip[p.id]; delete _prNextDone[p.id];
-            p.lastBonusPaid = bonus;
             payQuestBonus(p, bonus);
             var gritPaid = payQuestGrit(p, grit, cycleNum);
             var bonusMsg = bonus > 0 ? (' — +' + bonus + ' XP') : '';
@@ -18879,17 +18897,15 @@
         window.resumeProject = function(id) { var p = findProject(id); if (!p) return; p.status = 'active'; saveUserData(); showToast('Quest resumed', 'green'); renderProjectDetail(id); };
         window.archiveProject = function(id) { var p = findProject(id); if (!p) return; p.status = 'archived'; saveUserData(); showToast('Quest archived', 'olive'); window.closeProjectDetail(); };
         window.unarchiveProject = function(id) { var p = findProject(id); if (!p) return; p.status = 'active'; saveUserData(); showToast('Quest restored', 'green'); renderProjectDetail(id); };
-        // Reopening refunds the just-paid bonus (mirrors undo elsewhere in the
-        // app: the inverse of a completion is a real, reversible refund) —
-        // otherwise reopen -> instantly re-complete for free would pay the
-        // lump sum twice for the same work.
+        // Reopening takes nothing back. Double payment is prevented at the
+        // paying end by the bonusPaidAt / bonusPaidCycles marker, not by a
+        // clawback here: reopen -> re-complete simply pays zero. Quest state
+        // must never reduce a user's XP, level, or Grit (spec §24.3).
         window.reopenProject = function(id) {
             var p = findProject(id); if (!p) return;
-            var refund = p.lastBonusPaid || 0;
-            if (refund > 0) { refundQuestBonus(p, refund); p.lastBonusPaid = 0; }
             p.status = 'active'; p.completedAt = null;
             saveUserData();
-            showToast(refund > 0 ? 'Quest reopened — −' + refund + ' XP refunded' : 'Quest reopened', 'green');
+            showToast('Quest reopened', 'green');
             renderProjectDetail(id);
         };
 
