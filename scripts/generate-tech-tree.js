@@ -9,13 +9,14 @@
 //
 // v3 (mindkraft-map-v3 spec):
 //   - Activity-centric web: the user's REAL activities are ANCHORS; upgrades,
-//     quests, fusions and wildcards grow out of them.
+//     upgrades, fusions and wildcards grow out of them.
 //   - Goals are coloured threads (goal.color), not containers. No lines,
 //     stations, terminus or segments — edges derive from prerequisites.
 //   - Node record: role anchor|upgrade|fusion|wildcard|suggestion, goalIds[],
 //     whyNow, lifecycle at birth (§6).
 //   - Request types: generate, add_goal (né add_line), expand, regenerate,
-//     revise. Expansion also proposes quest absorption (link_activity).
+//     revise. The map proposes activities only — quests live in the Quest
+//     Composer and challenges on their own surface.
 
 const admin = require('firebase-admin');
 
@@ -62,14 +63,14 @@ const PROVIDERS = [
         key: (process.env.ANTHROPIC_API_KEY || '').trim(),
         base: 'https://api.anthropic.com',
         // Haiku, strictly: Sonnet's precision never justified its ~3-5x
-        // token price for this feature, and quest reliability turned out to
+        // token price for this feature, and output reliability turned out to
         // be a prompt/validator problem, not a model-strength problem.
         // ANTHROPIC_MODEL pins this provider alone (TECH_TREE_MODEL applies
         // to every provider, so an Anthropic id there would poison the
         // others).
         model: process.env.ANTHROPIC_MODEL || process.env.TECH_TREE_MODEL || 'claude-haiku-4-5',
         fallbackModels: [],
-        maxTokens: { generate: 7000, add_goal: 4500, expand: 2000, regenerate: 4500, revise: 2000, quest_patch: 1500 },
+        maxTokens: { generate: 7000, add_goal: 4500, expand: 2000, regenerate: 4500, revise: 2000 },
         keyHint: 'ANTHROPIC_API_KEY',
     },
     {
@@ -78,7 +79,7 @@ const PROVIDERS = [
         base: 'https://generativelanguage.googleapis.com/v1beta/openai',
         model: process.env.TECH_TREE_MODEL || 'gemini-2.5-flash',
         fallbackModels: ['gemini-2.0-flash'],
-        maxTokens: { generate: 9000, add_goal: 6000, expand: 4000, regenerate: 6000, revise: 2500, quest_patch: 2500 },
+        maxTokens: { generate: 9000, add_goal: 6000, expand: 4000, regenerate: 6000, revise: 2500 },
         keyHint: 'GEMINI_API_KEY',
     },
     {
@@ -119,7 +120,6 @@ const GOAL_PALETTE = ['#a8446e', '#5a9fd4', '#c98a3f', '#8a9a5b', '#7a6ff0'];
 const LOAD_WEIGHT = { daily: 7, weekly: 1, biweekly: 0.5, monthly: 0.25, occasional: 0.25, 'one-time': 0.25 };
 const LOAD_BUDGET_HEADROOM = 8;          // only nodes AVAILABLE at birth count (§6 LOAD RULE)
 const MAX_GOALS = 5;
-const MAX_NEW_ACTIVITIES_PER_QUEST = 3;  // hard cap, verbatim from v2
 const MAX_NODES = 40;                    // hard ceiling across the whole web
 
 // ── Tech Tree v5: the reveal loop ────────────────────────────────────────
@@ -148,7 +148,7 @@ const WILDCARD_MAX_XP = 8;               // §8: wildcards ≤8 XP
 const ACTIVITY_SNAPSHOT_CAP = 80;        // §6: raised from 60
 const VALID_FREQUENCIES = ['daily', 'weekly', 'biweekly', 'monthly', 'occasional'];
 
-const MAX_TOKENS = { generate: 7000, add_goal: 4500, expand: 2000, regenerate: 4500, revise: 1800, quest_patch: 1500 };
+const MAX_TOKENS = { generate: 7000, add_goal: 4500, expand: 2000, regenerate: 4500, revise: 1800 };
 function tokenBudget(type) {
     const t = type === 'add_line' ? 'add_goal' : type;
     return (PROVIDER.maxTokens && (PROVIDER.maxTokens[t] || PROVIDER.maxTokens.add_line)) || MAX_TOKENS[t] || 4000;
@@ -194,11 +194,6 @@ function customPerWeek(act) {
     return n > 0 ? Math.min(7, n) : 3;
 }
 
-// "Clean cycle" — a sealed cycle that actually completed its required items.
-function cleanCycleCount(p) {
-    return ((p && p.cycleHistory) || []).filter(c =>
-        c && c.itemsTotal > 0 && c.itemsCompleted >= c.itemsTotal).length;
-}
 
 // ROLLING WINDOW mastery check (§3): count completions within the trailing
 // windowDays from today. 87 completions ending six months ago must NOT
@@ -330,7 +325,6 @@ function canProcessRequest(req, techTree, userData) {
         if (!req.payload || !String(req.payload.note || '').trim()) return 'Revision needs a correction note.';
         return null;
     }
-    if (type === 'quest_patch') return null;
     return 'Unknown request type.';
 }
 
@@ -381,17 +375,7 @@ activity — a durable practice with its own streak:
  {"type":"activity","spec":{"name":str,"description":str,"baseXP":1..50,
   "frequency":"daily|weekly|biweekly|monthly|occasional","dimensionId":str},
   "mastery":{"target":int,"windowDays":int|null}}
-quest — a few steps that only mean something together. A simple flat
-checklist is a GOOD quest:
- {"type":"quest","spec":{"name":str,"emoji":str,"description":str,
-  "cadence":{"type":"oneoff"|"recurring"},
-  "groups":[{"kind":"group","name":str,"ordered":bool,"repeat":1,"children":[LEAF,...]}]},
-  "resolveRule":{"cleanCycles":4}}      // resolveRule ONLY when recurring
-LEAF, pick per step:
- reuses a real activity: {"kind":"leaf","type":"activity","linkedActivityId":"<real activityId>","resetMode":"per-cycle","requiredCount":1}
- one-off step:           {"kind":"leaf","type":"task","name":str,"resetMode":"once","requiredCount":1}
- new practice (max ${MAX_NEW_ACTIVITIES_PER_QUEST}/quest): {"kind":"leaf","type":"activity","spec":{"name":str,"baseXP":1..50,"frequency":str,"dimensionId":str},"resetMode":"per-cycle","requiredCount":1}
-Prefer linked leaves (what the user already does) and task leaves.`;
+An activity is the ONLY payload shape. The map proposes practices, nothing else.`;
 
 function buildGeneratePrompt(userData, opts) {
     const techTree = userData.techTree;
@@ -436,19 +420,14 @@ short clause genuinely earns its place.
    The user sees the whole locked chain from day one and unlocks it by
    mastering tier after tier — sequence it honestly.
 
-4. QUESTS — 0-2 in the WHOLE response, not per goal. Only where a few steps
-   genuinely belong together; a simple checklist whose leaves link real
-   anchor activityIds is ideal (payload type "quest" below, in the most
-   relevant goal's "nodes"). Skip freely if none fits.
-
-5. FUSIONS — top-level "fusions": 0-2. A pair of anchors from DIFFERENT
+4. FUSIONS — top-level "fusions": 0-2. A pair of anchors from DIFFERENT
    dimensions whose combination is so natural anyone would nod (a walking
    phone call, cooking for friends). If the connection needs explaining,
    drop it — never force one. {"title","description","whyNow":null,
    "dimensionId","sourceActivityIds":[id,id],"payload"}. A fusion only
    unlocks once BOTH sources are mastered.
 
-6. WILDCARD — top-level "wildcards": exactly 1. No goal, no prerequisites,
+5. WILDCARD — top-level "wildcards": exactly 1. No goal, no prerequisites,
    tiny (<=2 actions/week, baseXP <=${WILDCARD_MAX_XP}), a universally positive concrete
    practice their goals would never surface.
 
@@ -470,7 +449,7 @@ OUTPUT (one JSON object, nothing else):
      "nodes": [{ "role": str, "title": str, "description": str,
                  "whyNow": null, "dimensionId": str,
                  "prerequisites": [{"type":"activity_mastered","activityId":str}|{"type":"node_mastered","nodeTitle":str}],
-                 "payload": <activity|quest payload> }] }],
+                 "payload": <activity payload> }] }],
   "fusions": [{ "title": str, "description": str, "whyNow": null, "dimensionId": str,
                 "sourceActivityIds": [str, str], "payload": <activity payload> }],
   "wildcards": [{ "title": str, "description": str, "whyNow": null, "dimensionId": str,
@@ -526,7 +505,7 @@ Do not re-suggest anything in rejections or existingNodeTitles. Added load
 stays under +${LOAD_BUDGET_HEADROOM}/week (user is at ${load}/week).
 ${PAYLOAD_RULES}
 
-Output ONLY: { "nodes":[{ "role":"upgrade"|"fusion"|"quest"|"suggestion",
+Output ONLY: { "nodes":[{ "role":"upgrade"|"fusion"|"suggestion",
   "title":str, "description":str, "whyNow":null, "dimensionId":str,
   "prerequisites":[...], "payload": <payload> }] }`;
     const input = {
@@ -557,7 +536,7 @@ function isNetworkError(err) {
         || (err.cause && err.cause.code));
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-// Full v3 generations (mandatory quest JSON, ~8-9k output tokens) can run
+// Full v3 generations (~8-9k output tokens) can run
 // well past two minutes of wall-clock on Sonnet-class models. The Anthropic
 // path therefore STREAMS: the call only dies if the stream stalls for
 // IDLE_TIMEOUT_MS or exceeds the hard TOTAL cap — never on healthy, slow
@@ -760,8 +739,8 @@ function parseModelJson(raw) {
 }
 
 // ── Payload validation ──────────────────────────────────────────────────────
-// Returns a schema-valid payload, or null to drop the node. Enforces the quest
-// group/leaf shape verbatim and the 3-new-activity cap (excess -> tasks).
+// Returns a schema-valid payload, or null to drop the node. An activity is the
+// only shape the map produces.
 function validatePayload(raw, ctx) {
     if (!raw || typeof raw !== 'object') return null;
     const dimOK = id => ctx.dimIds.has(id);
@@ -790,134 +769,7 @@ function validatePayload(raw, ctx) {
         };
     }
 
-    if (raw.type === 'quest') {
-        // Lenient on the envelope: models (Haiku especially) drop the "spec"
-        // wrapper or put leaves where groups belong. Repair instead of
-        // silently discarding the whole quest — that discard was why quests
-        // "never generated".
-        const s = raw.spec || raw;
-        const counter = { newActs: 0 };
-        const rawGroups = Array.isArray(s.groups) ? s.groups
-            : (Array.isArray(raw.groups) ? raw.groups : []);
-        const looksLeaf = x => x && typeof x === 'object' && x.kind !== 'group'
-            && (x.kind === 'leaf' || x.type || x.linkedActivityId);
-        const groupsIn = [], looseLeaves = [];
-        rawGroups.forEach(x => {
-            if (x && typeof x === 'object' && x.kind === 'group') groupsIn.push(x);
-            else if (looksLeaf(x)) looseLeaves.push(x);
-        });
-        if (looseLeaves.length) {
-            groupsIn.push({ kind: 'group', name: 'Steps', ordered: false, repeat: 1, children: looseLeaves });
-        }
-        const groups = groupsIn.map(g => validateGroup(g, ctx, counter)).filter(Boolean);
-        if (!groups.length) return null;                    // every quest needs ≥1 valid group
-        const cadence = s.cadence || raw.cadence;
-        const cadType = (cadence && cadence.type === 'recurring') ? 'recurring' : 'oneoff';
-        const payload = {
-            type: 'quest',
-            projectId: null,
-            spec: {
-                name: String(s.name || ctx.title).trim().slice(0, 80),
-                emoji: String(s.emoji || '🎯').slice(0, 8),
-                description: String(s.description || ctx.description || '').slice(0, 240),
-                cadence: { type: cadType },
-                groups,
-            },
-        };
-        if (cadType === 'recurring') {
-            payload.resolveRule = { cleanCycles: Math.min(12, Math.max(1, parseInt((raw.resolveRule || s.resolveRule || {}).cleanCycles, 10) || 4)) };
-        }
-        return payload;
-    }
-
-    if (raw.type === 'challenge') {
-        const s = raw.spec || {};
-        const targets = {};
-        Object.keys(s.activityTargets || {}).forEach(id => {
-            if (ctx.activityIds.has(id)) targets[id] = Math.min(100, Math.max(1, parseInt(s.activityTargets[id], 10) || 1));
-        });
-        if (!Object.keys(targets).length) return null;
-        return {
-            type: 'challenge',
-            challengeId: null,
-            spec: {
-                name: String(s.name || ctx.title).trim().slice(0, 80),
-                description: String(s.description || ctx.description || '').slice(0, 200),
-                durationDays: Math.min(180, Math.max(7, parseInt(s.durationDays, 10) || 30)),
-                activityTargets: targets,
-            },
-        };
-    }
     return null;
-}
-
-// Recursively validate a quest group. Mutates counter.newActs to enforce the
-// 3-new-activity cap (excess new-activity leaves are demoted to tasks).
-function validateGroup(g, ctx, counter) {
-    if (!g || typeof g !== 'object') return null;
-    if (g.kind === 'leaf' || g.type) return null; // a bare leaf at group position — skip
-    const children = (Array.isArray(g.children) ? g.children : [])
-        .map(c => (c && c.kind === 'group') ? validateGroup(c, ctx, counter) : validateLeaf(c, ctx, counter))
-        .filter(Boolean);
-    if (!children.length) return null;             // every group has ≥1 child
-    return {
-        id: newId('grp'),
-        kind: 'group',
-        name: String(g.name || '').slice(0, 60),
-        ordered: !!g.ordered,
-        repeat: Math.max(1, parseInt(g.repeat, 10) || 1),
-        repsDone: 0,
-        children,
-    };
-}
-
-function validateLeaf(l, ctx, counter) {
-    if (!l || typeof l !== 'object') return null;
-    const req = Math.max(1, parseInt(l.requiredCount, 10) || 1);
-    const resetMode = l.resetMode === 'once' ? 'once' : 'per-cycle';
-    let type = l.type === 'activity' ? 'activity' : 'task';
-
-    if (type === 'activity') {
-        if (l.linkedActivityId && ctx.activityIds.has(l.linkedActivityId)) {
-            // Links an existing activity — no new activity, no cap cost.
-            return {
-                id: newId('lf'), kind: 'leaf', type: 'activity', linkedActivityId: l.linkedActivityId,
-                name: '', resetMode, requiredCount: req, completedCount: 0, _promotable: null,
-            };
-        }
-        // A NEW activity leaf needs a usable spec; count it against the cap.
-        const spec = l.spec || {};
-        if (counter.newActs >= MAX_NEW_ACTIVITIES_PER_QUEST) {
-            type = 'task'; // truncate the excess to tasks
-        } else if (spec && (spec.baseXP || spec.frequency || spec.dimensionId || l.name)) {
-            counter.newActs++;
-            return {
-                id: newId('lf'), kind: 'leaf', type: 'activity', linkedActivityId: null,
-                name: '', resetMode, requiredCount: req, completedCount: 0,
-                spec: {
-                    name: String(spec.name || l.name || 'Practice').slice(0, 80),
-                    baseXP: Math.min(50, Math.max(1, parseInt(spec.baseXP, 10) || 8)),
-                    frequency: VALID_FREQUENCIES.indexOf(spec.frequency) !== -1 ? spec.frequency : 'weekly',
-                    dimensionId: ctx.dimIds.has(spec.dimensionId) ? spec.dimensionId : ctx.fallbackDim,
-                },
-                _promotable: null,
-            };
-        } else {
-            type = 'task';
-        }
-    }
-    // task leaf — requires a non-empty name
-    const name = String(l.name || '').trim();
-    if (!name) return null;
-    const promo = l._promotable && typeof l._promotable === 'object' ? {
-        baseXP: Math.min(50, Math.max(1, parseInt(l._promotable.baseXP, 10) || 8)),
-        frequency: VALID_FREQUENCIES.indexOf(l._promotable.frequency) !== -1 ? l._promotable.frequency : 'weekly',
-        dimensionId: ctx.dimIds.has(l._promotable.dimensionId) ? l._promotable.dimensionId : ctx.fallbackDim,
-    } : null;
-    return {
-        id: newId('lf'), kind: 'leaf', type: 'task', linkedActivityId: null,
-        name: name.slice(0, 80), resetMode, requiredCount: req, completedCount: 0, _promotable: promo,
-    };
 }
 
 // ── v3 materialization ──────────────────────────────────────────────────────
@@ -945,13 +797,6 @@ function nodeNewLoad(node) {
     const w = f => (LOAD_WEIGHT[f] != null ? LOAD_WEIGHT[f] : 1);
     if (node.payload.type === 'activity' && !node.payload.activityId) {
         load += w(node.payload.spec.frequency);
-    } else if (node.payload.type === 'quest') {
-        (function walk(children) {
-            (children || []).forEach(c => {
-                if (c.kind === 'group') walk(c.children);
-                else if (c.type === 'activity' && !c.linkedActivityId && c.spec) load += w(c.spec.frequency);
-            });
-        })(node.payload.spec.groups);
     }
     return load;
 }
@@ -1233,10 +1078,6 @@ async function processUser(docRef, userData) {
         await processExpand(docRef, userData, req);
         return;
     }
-    if (type === 'quest_patch') {
-        await docRef.update({ 'techTree.pendingRequest': admin.firestore.FieldValue.delete() });
-        return;
-    }
 }
 
 function anchorSummaries(techTree, actById) {
@@ -1286,10 +1127,6 @@ async function processGenerateFamily(docRef, userData, req, type) {
     // Nested materialization: each goal object carries its own anchors +
     // nodes, so nothing can be orphaned by a key mismatch. GENERATE may split
     // one entry into several distinct goals; scoped modes reuse in order.
-    // Quests are optional now (0-2 per response) — the old "mandatory quest"
-    // full retry doubled the cost of a generation and rarely helped; quest
-    // reliability comes from the explicit payload envelope in the prompt and
-    // the lenient quest validator instead.
     const parsed = parseModelJson(await callModel(buildGeneratePrompt(userData, opts), tokenBudget(type)));
     const built = materializeWeb(parsed, userData, scopedGoals, mwOpts);
     let newGoals = built.goals;
@@ -1411,7 +1248,7 @@ async function processGenerateFamily(docRef, userData, req, type) {
     await sendMapPush(userData, type === 'generate' ? 'Your web is ready.' : 'Your web has grown — take a look.');
 }
 
-// ── Expansion (§6.1): fan under mastery + quest absorption ──────────────────
+// ── Expansion (§6.1): fan under mastery ────────────────────────────────────
 async function processExpand(docRef, userData, req) {
     const techTree = userData.techTree;
     let ids = (req.payload && req.payload.resolvedNodeIds) || (req.payload && req.payload.nodeIds) || [];
@@ -1436,24 +1273,11 @@ async function processExpand(docRef, userData, req) {
     (techTree.goals || []).forEach(g => { goalsById[g.id] = g; });
 
     const added = [];
-    const patches = [];
     const existingTitles = nodes.filter(n => n.lifecycle !== 'archived').map(n => n.title);
 
     for (const id of ids.slice(0, 3)) {
         const resolved = nodes.find(n => n.id === id && n.resolvedAt);
         if (!resolved) continue;
-
-        // A recurring quest that sealed ≥4 clean cycles may earn an add_group
-        // proposal instead of new sibling nodes (kept verbatim from v2).
-        if (resolved.payload && resolved.payload.type === 'quest'
-            && resolved.payload.spec && resolved.payload.spec.cadence.type === 'recurring'
-            && resolved.payload.projectId) {
-            const proj = (userData.projects || []).find(p => p.id === resolved.payload.projectId);
-            if (proj && cleanCycleCount(proj) >= 4) {
-                const patch = await tryQuestPatch(userData, proj, resolved);
-                if (patch) { patches.push(patch); continue; }
-            }
-        }
 
         const goalNames = (resolved.goalIds || []).map(gid => goalsById[gid]).filter(Boolean)
             .map(g => ({ goalId: g.id, shortName: g.shortName, sharpened: g.sharpened }));
@@ -1557,16 +1381,6 @@ async function processExpand(docRef, userData, req) {
         }
     }
 
-    // Quest absorption (§6.1): quests grow with the web. One extra proposal
-    // pass per expand run; proposals only, never silent writes.
-    let absorb = [];
-    try {
-        absorb = await tryQuestAbsorption(userData, techTree);
-    } catch (e) {
-        console.warn('  absorption pass failed:', e.message);
-    }
-    patches.push.apply(patches, absorb);
-
     const update = {
         'techTree.pendingRequest': admin.firestore.FieldValue.delete(),
         'techTree.lastError': admin.firestore.FieldValue.delete(),
@@ -1580,48 +1394,11 @@ async function processExpand(docRef, userData, req) {
         added.forEach(stampReveal);
         update['techTree.nodes'] = nodes.concat(added);
     }
-    if (patches.length) {
-        update['techTree.questPatches'] = (techTree.questPatches || []).concat(patches);
-    }
     await docRef.update(update);
-    console.log(`  Done — expand: ${added.length} new node(s), ${patches.length} patch proposal(s)`);
+    console.log(`  Done — expand: ${added.length} new node(s)`);
     if (added.length) await sendMapPush(userData, 'Mastery opened new paths on your web.');
-    else if (patches.length) await sendMapPush(userData, 'A quest is ready to grow.');
 }
 
-// v2 add_group patch — a recurring quest with ≥4 clean cycles gets ONE new
-// group proposal (progressive overload). Kept as-is alongside absorption.
-async function tryQuestPatch(userData, proj, node) {
-    const { dimensionList } = activePathsAndDims(userData);
-    const system = `A recurring quest has sealed >=4 clean cycles. Propose ONE new GROUP to add
-that raises the challenge (progressive overload), or return {"skip":true} if
-nothing fits. Never remove anything. Output ONLY:
-{ "op":"add_group", "group": <group shape>, "rationale": str }  OR  {"skip":true}
-${PAYLOAD_RULES}`;
-    const input = {
-        quest: { name: proj.name, cleanCycles: cleanCycleCount(proj), groupNames: (proj.groups || []).map(g => g.name) },
-        dimensions: dimensionList,
-    };
-    let parsed;
-    try {
-        const raw = await callModel({ system, user: 'INPUT:\n' + JSON.stringify(input) }, tokenBudget('quest_patch'));
-        let text = String(raw).trim().replace(/^```(?:json)?/m, '').replace(/```\s*$/m, '').trim();
-        parsed = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
-    } catch (e) { return null; }
-    if (!parsed || parsed.skip || parsed.op !== 'add_group' || !parsed.group) return null;
-    const ctx = nodeCtx(userData);
-    const group = validateGroup(parsed.group, ctx, { newActs: 0 });
-    if (!group) return null;
-    return {
-        id: newId('qp'),
-        projectId: proj.id,
-        op: 'add_group',
-        group,
-        rationale: String(parsed.rationale || 'You have sealed 4 clean cycles.').slice(0, 200),
-        proposedAt: nowISO(),
-        status: 'pending',
-    };
-}
 
 // Wildcard replenish: a small dedicated call that mints 1-2 fresh wildcards
 // when the previous ones were accepted or finished. Same contract as
@@ -1642,7 +1419,7 @@ Output ONLY: { "wildcards": [{ "title":str, "description":str, "whyNow":str,
         existingNodeTitles: existingTitles,
         rejections: rejectionStrings(techTree),
     };
-    const parsed = parseModelJson(await callModel({ system, user: 'INPUT:\n' + JSON.stringify(input) }, tokenBudget('quest_patch')));
+    const parsed = parseModelJson(await callModel({ system, user: 'INPUT:\n' + JSON.stringify(input) }, tokenBudget('expand')));
     const ctx = nodeCtx(userData);
     const now = nowISO();
     const out = [];
@@ -1667,90 +1444,6 @@ Output ONLY: { "wildcards": [{ "title":str, "description":str, "whyNow":str,
             whyNow: whyNowOf(wr), prerequisites: [], payload,
         });
         seen.add(wr.title.trim().toLowerCase());
-    });
-    return out;
-}
-
-// Quest absorption (§6.1, new): activities accepted or mastered since
-// lastExpandAt may be folded into an existing quest's named group as a linked
-// leaf. Rules: proposals only; at most 1 per quest per run; never an activity
-// already inside that quest; declines land in rejections with role
-// 'absorption' (client-side).
-async function tryQuestAbsorption(userData, techTree) {
-    const since = techTree.lastExpandAt ? new Date(techTree.lastExpandAt).getTime() : 0;
-    const activities = collectActivities(userData);
-    const recent = activities.filter(({ act }) => {
-        const created = act.createdAt ? new Date(act.createdAt).getTime() : 0;
-        const mastered = act.techTreeMasteredAt ? new Date(act.techTreeMasteredAt).getTime() : 0;
-        return (created > since || mastered > since) && !act.archived && !act.deleted;
-    }).map(({ act, dim }) => ({ activityId: act.id, name: act.name, dimensionId: dim.id, mastered: !!act.techTreeMasteredAt }));
-    if (!recent.length) return [];
-
-    const projects = (userData.projects || []).filter(p => p.status === 'active');
-    if (!projects.length) return [];
-    const linkedIn = {};   // projectId -> Set(activityId)
-    function walkLeaves(groups, fn) {
-        (function walk(ns) { (ns || []).forEach(n => { if (n.kind === 'group') walk(n.children); else fn(n); }); })(groups);
-    }
-    projects.forEach(p => {
-        const set = new Set();
-        walkLeaves(p.groups || [], l => { if (l.linkedActivityId) set.add(l.linkedActivityId); });
-        linkedIn[p.id] = set;
-    });
-    const pendingAbsorb = new Set((techTree.questPatches || [])
-        .filter(q => q.op === 'link_activity' && q.status === 'pending')
-        .map(q => q.projectId + ':' + q.activityId));
-
-    const questSnap = projects.map(p => ({
-        name: p.name,
-        groups: (p.groups || []).map(g => g.name || 'Group'),
-        linkedActivities: Array.from(linkedIn[p.id]).map(id => {
-            const e = activities.find(x => x.act.id === id);
-            return e ? e.act.name : id;
-        }),
-    }));
-
-    const system = `A user's quests can GROW as their web grows. Given their active quests and the
-activities they recently accepted or mastered, propose folding an activity
-into an existing quest's group as a linked leaf — ONLY where it genuinely
-belongs ("You unlocked Speed-read + notes — fold it into the Portfolio
-quest's research group?"). Rules: at most ONE proposal per quest; never an
-activity already inside that quest; questName and groupName must match the
-input EXACTLY; skip freely — a wrong fold is worse than none.
-Output ONLY:
-{ "proposals": [{ "questName": str, "groupName": str, "activityId": str,
-  "resetMode": "per-cycle"|"once", "requiredCount": int>=1,
-  "rationale": str }] }  OR  { "proposals": [] }`;
-    const input = { quests: questSnap, recentActivities: recent, rejections: rejectionStrings(techTree) };
-    let parsed;
-    try {
-        parsed = parseModelJson(await callModel({ system, user: 'INPUT:\n' + JSON.stringify(input) }, tokenBudget('quest_patch')));
-    } catch (e) { return []; }
-
-    const out = [];
-    const usedProject = new Set();
-    (parsed.proposals || []).forEach(pr => {
-        if (!pr || typeof pr !== 'object') return;
-        const proj = projects.find(p => String(p.name).trim().toLowerCase() === String(pr.questName || '').trim().toLowerCase());
-        if (!proj || usedProject.has(proj.id)) return;
-        if (!pr.activityId || !activities.some(e => e.act.id === pr.activityId)) return;
-        if (linkedIn[proj.id].has(pr.activityId)) return;
-        if (pendingAbsorb.has(proj.id + ':' + pr.activityId)) return;
-        const groupName = String(pr.groupName || '').trim();
-        const hasGroup = (proj.groups || []).some(g => String(g.name || 'Group').trim().toLowerCase() === groupName.toLowerCase());
-        out.push({
-            id: newId('qp'),
-            projectId: proj.id,
-            op: 'link_activity',
-            activityId: pr.activityId,
-            groupName: hasGroup ? groupName : ((proj.groups || [])[0] ? ((proj.groups || [])[0].name || 'Group') : 'Group'),
-            resetMode: pr.resetMode === 'once' ? 'once' : 'per-cycle',
-            requiredCount: Math.min(20, Math.max(1, parseInt(pr.requiredCount, 10) || 1)),
-            rationale: String(pr.rationale || 'This fits an existing quest.').slice(0, 200),
-            proposedAt: nowISO(),
-            status: 'pending',
-        });
-        usedProject.add(proj.id);
     });
     return out;
 }
@@ -1825,8 +1518,8 @@ async function main() {
 
 // Exported for unit tests; only run the cron when invoked directly.
 module.exports = {
-    materializeWeb, validatePayload, validateGroup, validateLeaf,
-    ensureV3Shape, canProcessRequest, weeklyLoad, cleanCycleCount,
+    materializeWeb, validatePayload,
+    ensureV3Shape, canProcessRequest, weeklyLoad,
     rollingWindowMet, parseModelJson, buildGeneratePrompt, buildExpandPrompt,
 };
 
