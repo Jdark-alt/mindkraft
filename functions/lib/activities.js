@@ -48,7 +48,37 @@ function resolveActivityName(userData, activityId) {
     return (typeof name === 'string' && name.trim()) ? name.trim() : null;
 }
 
+/**
+ * True if `activityId` has a real (non-penalty, XP-positive) completion on
+ * `localDate` in `timezone`.
+ *
+ * Used by the mode reminders, which have to decide at send time whether the
+ * thing they are about to nudge someone about has already been done. It walks
+ * completionHistory, which is the same array every streak and analytics read
+ * in the client uses — there is no separate "done today" flag to consult.
+ *
+ * Timestamps in completionHistory are full ISO strings in UTC, so the local
+ * date they belong to depends on the user's zone; `getLocalDateString` is
+ * passed in rather than imported to keep this module free of Luxon (and
+ * therefore trivially unit-testable).
+ */
+function completedOnLocalDate(userData, activityId, localDate, timezone, getLocalDateString) {
+    const found = findActivity(userData, activityId);
+    if (!found) return false;
+    const history = found.activity.completionHistory || [];
+    for (const entry of history) {
+        if (!entry || entry.isPenalty || !entry.date) continue;
+        if (!(entry.xp > 0)) continue;
+        let when;
+        try { when = new Date(entry.date); } catch (err) { continue; }
+        if (isNaN(when.getTime())) continue;
+        if (getLocalDateString(timezone, when) === localDate) return true;
+    }
+    return false;
+}
+
 module.exports = {
     findActivity,
     resolveActivityName,
+    completedOnLocalDate,
 };

@@ -544,6 +544,11 @@
                     <span class="mk-grit-val" id="mkGritVal">0</span>
                 </button>
             </div>
+
+            <!-- A running mode, or a Pact invite waiting, said once and
+                 everywhere. Populated by modesRefreshBanner() in app.js and
+                 hidden whenever there is nothing to say. -->
+            <div id="modesBanner" class="md-banner" style="display:none" onclick="mkGoModes()"></div>
         </div>
 
         <!-- ══════════════════════════════════════════════════════════════
@@ -1741,10 +1746,9 @@
                  Pursuits›Narratives, More›Rewards). Real content is future work.
                  ══════════════════════════════════════════════════════════════ -->
             <div id="mkEmptyPursuitsModes" class="tab-content">
-                <div class="empty-state mk-empty-page">
-                    <div class="empty-state-icon">🎮</div>
-                    <p>Modes live here. Nothing to show yet.</p>
-                </div>
+                <!-- Rendered by modesRenderPage() in app.js, so there is
+                     exactly one source of truth for the markup. -->
+                <div id="modesRoot" class="md-root"></div>
             </div>
             <div id="mkEmptyPursuitsNarratives" class="tab-content">
                 <div class="empty-state mk-empty-page">
@@ -3107,9 +3111,12 @@
             for (var i = 0; i < nodes.length; i++) nodes[i].classList.remove('active');
             var el = $(elId);
             if (el) el.classList.add('active');
-            /* Rewards is the only one of these pages with live content. */
+            /* Two of these pages have live content and render on open. */
             if (elId === 'mkEmptyMoreRewards' && typeof window.gritOpenRewards === 'function') {
                 window.gritOpenRewards();
+            }
+            if (elId === 'mkEmptyPursuitsModes' && typeof window.modesOpenPage === 'function') {
+                window.modesOpenPage();
             }
             return el;
         }
@@ -3540,6 +3547,11 @@
            home of the whole currency system — balance, weekly progress, shop
            and history in one place instead of a second half-copy in a sheet. */
         window.mkOpenGrit = function () { window.mkGoSub(3, 1); };
+
+        /* Pursuits › Modes. Used by the mode check-in cards and by anything
+           else that wants to send someone to the Modes page by name rather
+           than by remembering which pair of indices it is. */
+        window.mkGoModes = function () { window.mkGoSub(1, 1); };
 
         /* ══════════════════════════════════════════════════════════════
            Bottom sheets — every .modal-overlay dialog docks to the bottom

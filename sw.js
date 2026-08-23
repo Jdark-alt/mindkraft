@@ -7,7 +7,7 @@
 // Bump CACHE_VERSION whenever you deploy a meaningful update.
 // This causes the old cache to be deleted and the new one installed.
 
-const CACHE_VERSION = 'v175';
+const CACHE_VERSION = 'v176';
 const CACHE_NAME = 'mindkraft-shell-' + CACHE_VERSION;
 
 // Files that make up the app shell — must all load for the app to work
@@ -193,7 +193,8 @@ self.addEventListener('push', function(event) {
         tag:       data.tag || 'mindkraft-daily-reminder',
         renotify:  false,
         vibrate:   [200, 100, 200],
-        data:      { type: payload.type || 'general', activityId: payload.activityId || null }
+        data:      { type: payload.type || 'general', activityId: payload.activityId || null,
+                     modeKind: payload.modeKind || null }
     };
     event.waitUntil(self.registration.showNotification(title, options));
 });
@@ -207,6 +208,11 @@ self.addEventListener('notificationclick', function(event) {
     var activityId = payload.activityId || null;
     // Gift pushes carry no activity — they belong on the Friends tab.
     var gift = payload.type === 'gift';
+    // Pact pushes belong on the Modes page. A habit reminder is a mode push
+    // too, but it names an activity, so it keeps the activity deep link —
+    // being taken to the thing you are meant to do beats being taken to the
+    // page that says you are meant to do it.
+    var modes = payload.type === 'pact' || (payload.type === 'mode' && !activityId);
 
     event.waitUntil(
         clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(list) {
@@ -216,11 +222,12 @@ self.addEventListener('notificationclick', function(event) {
                     // App is already open — tell it where to go, then focus.
                     // postMessage rather than a URL change so we don't reload
                     // and lose in-memory state.
-                    if ((activityId || gift) && client.postMessage) {
+                    if ((activityId || gift || modes) && client.postMessage) {
                         try {
                             client.postMessage({
-                                type: gift ? 'mindkraft-gift-click'
-                                           : 'mindkraft-notification-click',
+                                type: gift  ? 'mindkraft-gift-click'
+                                    : modes ? 'mindkraft-modes-click'
+                                            : 'mindkraft-notification-click',
                                 activityId: activityId
                             });
                         } catch (e) { /* focus alone is still useful */ }
@@ -230,7 +237,8 @@ self.addEventListener('notificationclick', function(event) {
             }
             // Cold start — carry the target in the URL for the app to pick up.
             if (clients.openWindow) {
-                if (gift) return clients.openWindow('./?tab=friends');
+                if (gift)  return clients.openWindow('./?tab=friends');
+                if (modes) return clients.openWindow('./?tab=modes');
                 return clients.openWindow(activityId ? './?reminder=' + encodeURIComponent(activityId) : './');
             }
         })

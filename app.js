@@ -1017,14 +1017,21 @@
                     handleFriendDeepLink();
                     // Handle deep-link group join (?joinGroup=CODE in URL)
                     handleGroupDeepLink();
-                    // Cold start from a gift push (?tab=friends).
+                    // Cold start from a gift push (?tab=friends) or a mode
+                    // push (?tab=modes).
                     try {
                         var _p = new URLSearchParams(window.location.search);
-                        if (_p.get('tab') === 'friends') {
+                        var _tab = _p.get('tab');
+                        if (_tab === 'friends' || _tab === 'modes') {
                             _p.delete('tab');
                             var _qs = _p.toString();
                             window.history.replaceState({}, '', window.location.pathname + (_qs ? '?' + _qs : ''));
-                            setTimeout(function () { try { switchTab('people'); } catch (e) {} }, 400);
+                            setTimeout(function () {
+                                try {
+                                    if (_tab === 'modes') { window.mkGoModes && window.mkGoModes(); }
+                                    else { switchTab('people'); }
+                                } catch (e) {}
+                            }, 400);
                         }
                     } catch (e) {}
                     // Versus challenges: one fetch that drives the invite badge
@@ -1036,6 +1043,9 @@
                     // Leaderboard: publish this board and pay out the closed
                     // week if the Monday rollover has not been settled yet.
                     try { lbOnLogin(); } catch (e) { console.warn('Leaderboard login hook failed', e); }
+                    // Modes: advance day counters, resolve anything that fell
+                    // due while the app was closed, and show the card for it.
+                    try { modesOnLogin(); } catch (e) { console.warn('Modes login hook failed', e); }
                     // Handle notification tap on a cold start (?reminder=<activityId>)
                     window.mkHandleReminderDeepLink();
                     // Init the restore backup button visibility (async — non-blocking)
@@ -11347,12 +11357,19 @@
         async function processStreakPauses() {
             const today = toLocalDateStr(new Date());
             let anyChanged = false;
+            // Modes snapshot the activities they cover BEFORE the walk and add
+            // their own offsets back AFTER it. Neither call reaches inside
+            // processStreakSystem — see the MODES header for why that is the
+            // only shape Recovery and Insurance are allowed to take.
+            try { modesBeforeStreakWalk(); } catch (e) { console.warn('Modes pre-walk failed', e); }
             (window.userData.dimensions || []).forEach(dim =>
                 (dim.paths || []).forEach(path =>
                     (path.activities || []).forEach(act => {
                         if (processStreakSystem(act, today)) anyChanged = true;
                         if (processSkipPenalty(act, today))  anyChanged = true;
                     })));
+            try { if (modesAfterStreakWalk()) anyChanged = true; }
+            catch (e) { console.warn('Modes post-walk failed', e); }
             // Tech Tree mastery rides the same recompute pass.
             if (typeof evaluateTechTreeMastery === 'function' && evaluateTechTreeMastery()) anyChanged = true;
             // Grit rides it too: localStorage migration, week rollover + weekly
@@ -14186,6 +14203,10 @@
                 var msg = event.data || {};
                 if (msg.type === 'mindkraft-gift-click') {
                     setTimeout(function () { try { switchTab('people'); } catch (e) {} }, 300);
+                    return;
+                }
+                if (msg.type === 'mindkraft-modes-click') {
+                    setTimeout(function () { try { window.mkGoModes && window.mkGoModes(); } catch (e) {} }, 300);
                     return;
                 }
                 if (msg.type !== 'mindkraft-notification-click') return;
@@ -24746,4 +24767,3375 @@
 
         // ════════════════════════════════════════════════════════════════════
         // ══ END LEADERBOARD PAYOUTS ═════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════════
+
+        // ════════════════════════════════════════════════════════════════════
+        // ══ MODES ═══════════════════════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════════
+        //
+        // Seven opt-in modes, living on Pursuits › Modes. Exactly ONE may be
+        // active per user at a time (multi-mode is deferred), so `modes.active`
+        // is a single object rather than a list. The shape is still keyed by
+        // `kind` throughout, which is what a future concurrency change would
+        // need — nothing below assumes there can only ever be one beyond the
+        // single activation guard in modesActivate().
+        //
+        // STATE
+        //   window.userData.modes = {
+        //     schemaVersion, active, pending[], history[],
+        //     suspendedHabit, streakOffsets{}, seenHabitOverlay
+        //   }
+        //   It rides saveUserData()'s full-document write like every other
+        //   field on the user doc. Pact is the one exception: two accounts
+        //   have to read the same record, so it lives in a top-level `pacts`
+        //   collection, exactly as Versus Challenges does.
+        //
+        // HOOKS INTO THE REST OF THE APP — all of them wrappers or single
+        // calls; no core function is restructured:
+        //   processStreakPauses()  → modesBeforeStreakWalk() / modesAfterStreakWalk()
+        //   completeActivity()     → modesOnCompletion(activity)
+        //   undoActivity()         → modesOnUndo(activity)
+        //   login                  → modesOnLogin()
+        //   nav (index.html)       → modesOpenPage()
+        //
+        // THE STREAK CONSTRAINT (Recovery + Insurance)
+        //   processStreakSystem() is the single authoritative writer for
+        //   streak/shield state and it RE-DERIVES both from completionHistory
+        //   on every login. Nothing below branches into it, adds a condition
+        //   to it, or reads its internals. Both modes that touch streaks work
+        //   the same additive way: the walk runs untouched and produces a base
+        //   figure, and then a separate pass adds a stored, mode-owned offset
+        //   on top. The offsets live in `modes`, never on the activity — so a
+        //   mode being deleted, expired or migrated away can never leave a
+        //   number behind on an activity that nothing owns.
+        // ════════════════════════════════════════════════════════════════════
+
+        const MODES_SCHEMA_VERSION = 1;
+        const MODE_KINDS = ['habit', 'berserk', 'recovery', 'insurance', 'stake', 'pact', 'focus'];
+
+        // ── Rate card ─────────────────────────────────────────────────────
+        // Entry costs are one-way: activating spends, and nothing in a mode's
+        // lifecycle refunds an entry cost. Stake and Pact are different — what
+        // they take is a WAGER, escrowed and returned with a bonus on success.
+        const MODE_COST = {
+            habit:     30,
+            berserk:   40,
+            insurance: 20,
+            recovery:  15,
+            focus:     25
+        };
+        const MODE_WAGER_MIN   = 25;    // Stake mode, in steps of 25
+        const MODE_WAGER_MAX   = 100;
+        const MODE_WAGER_STEP  = 25;
+        const MODE_WAGER_RETURN = 0.30; // Stake + Pact: stake back, plus 30%
+        const PACT_WAGER       = 40;    // fixed per person
+
+        const BERSERK_MIN_HOURS   = 1;
+        const BERSERK_MAX_HOURS   = 5;
+        const BERSERK_SWING       = 0.30;  // ±30% on the session's XP
+        const BERSERK_DAMPENER    = 0.22;  // fraction of the above-baseline part that counts
+        const BERSERK_FLOOR_PER_H = 40;    // so a brand-new account still gets a real target
+
+        const HABIT_DEFAULT_DAYS  = 33;
+        const HABIT_MIN_DAYS      = 7;
+        const HABIT_MAX_DAYS      = 120;
+        const HABIT_MAX_ACTS      = 3;
+        const HABIT_RESUME_DAYS   = 7;     // off longer than this and it starts fresh
+        const HABIT_OVERLAY_LEAD  = 30;    // minutes either side of the window
+        const HABIT_PRE_LEAD      = 60;    // reminder, minutes before the window opens
+        const HABIT_POST_LAG      = 30;    // nudge, minutes after it closes
+
+        const RECOVERY_MAX_ACTS   = 3;
+        const INSURANCE_MAX_ACTS  = 3;
+        const INSURANCE_CHECKIN_DAYS = 30;
+
+        const STAKE_MAX_ACTS      = 3;
+        const STAKE_MIN_DAYS      = 5;
+        const STAKE_MIN_TOTAL     = 5;     // combined completions across all picks
+
+        const FOCUS_MULTIPLIER    = 0.10;  // deliberately well under Berserk's 30%
+        const FOCUS_MIN_DAYS      = 3;
+        const FOCUS_MAX_DAYS      = 90;
+
+        const PACT_MIN_DAYS       = 5;
+        const PACT_MIN_TARGET     = 3;
+        const PACT_INVITE_DAYS    = 7;
+
+        // Hand-written, never generated (spec §0). Shown at habit milestones.
+        const MODE_MILESTONE_QUOTES = [
+            'Ordinary things, done consistently, produce extraordinary results.',
+            'You are not what you intend. You are what you repeat.',
+            'The work of a hundred days is a hundred days of work. Nothing else.',
+            'Discipline is choosing what you want most over what you want now.',
+            'Every rep is a vote for the person you are becoming.',
+            'Momentum is built, not found.',
+            'Small, boring, daily. That is the whole secret.',
+            'The gap between who you are and who you want to be is the habit you keep.',
+            'Nobody sees the practice. Everybody sees the result.',
+            'You have already done the hard part — you started, and you kept going.'
+        ];
+
+        const MODE_META = {
+            habit:     { name: 'Habit Mode',    icon: '🌱', tag: 'Build',
+                         blurb: 'Turn one to three activities into real habits — a time window, an anchor, and your own reason. Counts days achieved, never breaks.' },
+            berserk:   { name: 'Berserk Mode',  icon: '🔥', tag: 'Extreme',
+                         blurb: 'Pick a window of 1–5 hours and hit an XP target inside it. Beat it for +30% XP. Miss it and you pay 30%.' },
+            recovery:  { name: 'Recovery Mode', icon: '🩹', tag: 'Return',
+                         blurb: 'Chase your own past peak. Up to three activities climb twice as fast, until each one reaches the highest streak it has ever had.' },
+            insurance: { name: 'Insurance Mode',icon: '🛡', tag: 'Shield',
+                         blurb: 'Up to three activities stop losing streak when you miss. You can still log and still climb — only the downside is suspended.' },
+            stake:     { name: 'Stake Mode',    icon: '🎲', tag: 'Wager',
+                         blurb: 'Bet Grit on hitting completion targets across up to three activities. All or nothing — every target, or the stake is gone.' },
+            pact:      { name: 'Pact Mode',     icon: '🤝', tag: 'Together',
+                         blurb: 'Two people, two separate targets, one shared fate. If either of you falls short, the pact breaks for both.' },
+            focus:     { name: 'Focus Window',  icon: '🎯', tag: 'Rhythm',
+                         blurb: 'Set one daily time window. Anything you log inside it earns +10% XP, every day the mode runs.' }
+        };
+
+        function modeCostLabel(kind) {
+            if (kind === 'stake') return MODE_WAGER_MIN + '–' + MODE_WAGER_MAX + ' wager';
+            if (kind === 'pact')  return PACT_WAGER + ' wager';
+            return MODE_COST[kind] + ' Grit';
+        }
+
+        // ── State ─────────────────────────────────────────────────────────
+        function modesState() {
+            if (!window.userData) return null;
+            var m = window.userData.modes;
+            if (!m || typeof m !== 'object') {
+                m = window.userData.modes = {
+                    schemaVersion: MODES_SCHEMA_VERSION,
+                    active: null, pending: [], history: [],
+                    suspendedHabit: null, streakOffsets: {}
+                };
+            }
+            if (m.schemaVersion !== MODES_SCHEMA_VERSION) m.schemaVersion = MODES_SCHEMA_VERSION;
+            if (!Array.isArray(m.pending)) m.pending = [];
+            if (!Array.isArray(m.history)) m.history = [];
+            if (!m.streakOffsets || typeof m.streakOffsets !== 'object') m.streakOffsets = {};
+            if (m.active && MODE_KINDS.indexOf(m.active.kind) === -1) m.active = null;
+            return m;
+        }
+
+        function modesActive() { var m = modesState(); return m ? m.active : null; }
+        function modesActiveKind() { var a = modesActive(); return a ? a.kind : null; }
+        window.modesActiveKind = modesActiveKind;
+
+        function modesUid() { return (window.currentUser && window.currentUser.uid) || null; }
+        function modesNow() { return Date.now(); }
+        function modesToday() { return toLocalDateStr(new Date()); }
+        function modeEsc(s) { return giftEsc(s); }
+
+        function modesNewId(prefix) {
+            return (prefix || 'md') + '-' + Date.now().toString(36) + '-' +
+                   Math.random().toString(36).slice(2, 9);
+        }
+
+        // Whole local days between two YYYY-MM-DD strings (b − a).
+        function modeDayDiff(aStr, bStr) {
+            if (!aStr || !bStr) return 0;
+            var a = new Date(aStr + 'T00:00:00'), b = new Date(bStr + 'T00:00:00');
+            return Math.round((b - a) / 86400000);
+        }
+        function modeAddDays(dateStr, n) {
+            var d = new Date(dateStr + 'T00:00:00');
+            d.setDate(d.getDate() + n);
+            return toLocalDateStr(d);
+        }
+
+        // "HH:mm" → minutes since local midnight, and back.
+        function modeMins(hhmm) {
+            var m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(hhmm || ''));
+            if (!m) return null;
+            return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+        }
+        function modeHHMM(mins) {
+            mins = ((Math.round(mins) % 1440) + 1440) % 1440;
+            return String(Math.floor(mins / 60)).padStart(2, '0') + ':' +
+                   String(mins % 60).padStart(2, '0');
+        }
+        function modeTimeLabel(hhmm) {
+            var mins = modeMins(hhmm);
+            if (mins === null) return '--:--';
+            var h = Math.floor(mins / 60), mm = String(mins % 60).padStart(2, '0');
+            var ap = h < 12 ? 'AM' : 'PM';
+            var h12 = h % 12 === 0 ? 12 : h % 12;
+            return h12 + ':' + mm + ' ' + ap;
+        }
+        function modeMinutesNow() {
+            var d = new Date();
+            return d.getHours() * 60 + d.getMinutes();
+        }
+
+        // True when `nowMins` sits inside [start, end], with windows that cross
+        // midnight handled by splitting into two ranges rather than by
+        // pretending the day is longer than it is.
+        function modeInWindow(startMins, endMins, nowMins, padBefore, padAfter) {
+            padBefore = padBefore || 0; padAfter = padAfter || 0;
+            var s = startMins - padBefore, e = endMins + padAfter;
+            if (e < s) e += 1440;                       // end <= start: crosses midnight
+            var n = nowMins;
+            if (n < s) n += 1440;
+            return n >= s && n <= e;
+        }
+
+        // Activities that can carry a mode: real, live, and countable. Negative
+        // "perform" activities are excluded everywhere — they have no streak to
+        // recover or insure, and rewarding their completion is not the point.
+        function modeEligibleActivities(opts) {
+            opts = opts || {};
+            var out = [];
+            try {
+                (window.userData.dimensions || []).forEach(function (dim) {
+                    (dim.paths || []).forEach(function (path) {
+                        (path.activities || []).forEach(function (act) {
+                            if (!act || act.archived || act.deleted) return;
+                            if (act.isNegative && !act.isSkipNegative) return;
+                            if (opts.streakOnly && act.frequency === 'occasional') return;
+                            out.push({ id: String(act.id), name: act.name || 'Activity',
+                                       dimName: dim.name || '', frequency: act.frequency || 'daily',
+                                       streak: act.streak || 0, bestStreak: act.bestStreak || 0 });
+                        });
+                    });
+                });
+            } catch (e) {}
+            return out;
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  LIFECYCLE — activation, ending, resolution
+        // ══════════════════════════════════════════════════════════════════
+
+        let _modeActivating = false;
+
+        // Activation is one Grit spend plus one write. gritPurchase() already
+        // owns the whole "refuse before spending, persist before granting,
+        // unwind on a failed save" sequence (§5.3 of the Grit spec), so this
+        // hands it a grant/revert pair rather than re-implementing any of it.
+        //
+        // `payload` is the mode object minus the bookkeeping this function adds.
+        async function modesActivate(kind, payload, cost, reason) {
+            if (MODE_KINDS.indexOf(kind) === -1) return { ok: false, message: 'Unknown mode.' };
+            var m = modesState();
+            if (!m) return { ok: false, message: 'Not signed in.' };
+            if (_modeActivating) return { ok: false, message: 'Hold on — that is still going through.' };
+            if (m.active) {
+                return { ok: false, message: 'You already have ' + MODE_META[m.active.kind].name +
+                                             ' running. Only one mode at a time for now.' };
+            }
+            // A Pact invite that has not been answered yet is a mode in
+            // waiting: its stake is already escrowed, and the moment it is
+            // accepted it becomes the active mode. Starting something else on
+            // top of it would be two modes at once a day later.
+            var pending = (_pactCache.list || []).filter(function (p) {
+                return p.status === 'pending' && (p.participants || []).indexOf(modesUid()) !== -1;
+            });
+            if (pending.length) {
+                return { ok: false, message: 'You have a Pact waiting on an answer. ' +
+                                             'Withdraw it, or wait for them, before starting another mode.' };
+            }
+            if (!canPersistUserData('modesActivate')) return { ok: false, message: 'Your account is not loaded yet.' };
+
+            var full = Object.assign({
+                kind: kind,
+                id: modesNewId('md'),
+                startedAt: new Date().toISOString(),
+                startedDay: modesToday(),
+                cost: cost
+            }, payload);
+
+            _modeActivating = true;
+            try {
+                var res = await gritPurchase(cost, reason || ('mode_' + kind),
+                    function () { m.active = full; },
+                    function () { m.active = null; },
+                    { mode: kind, modeId: full.id });
+                if (!res.ok) return res;
+            } finally {
+                _modeActivating = false;
+            }
+
+            try { await modesSyncNotifications(); } catch (e) { console.warn('Mode notification sync failed', e); }
+            modesApplyTheme();
+            modesRefreshBanner();
+            try { window.trackEvent && window.trackEvent('mode_activated', { mode: kind }); } catch (e) {}
+            return { ok: true, mode: full };
+        }
+
+        // Ending is always explicit: either the user turns it off, or the mode
+        // reaches a terminal state and resolves itself. Both land here, and
+        // both write exactly one archive record.
+        //
+        // `outcome` is one of: completed | failed | ended | expired.
+        async function modesEnd(outcome, summary, opts) {
+            opts = opts || {};
+            var m = modesState();
+            if (!m || !m.active) return false;
+            var a = m.active;
+
+            // Habit is the only mode that can be paused and resumed — its day
+            // count stops while it is off, and picking it back up within a week
+            // continues the same run rather than starting a new one.
+            if (a.kind === 'habit' && outcome === 'ended') {
+                m.suspendedHabit = { payload: a, offAt: new Date().toISOString(), offDay: modesToday() };
+            } else if (a.kind === 'habit') {
+                m.suspendedHabit = null;
+            }
+
+            // Insurance stops here, but what it already did stands: stamp
+            // today as the day its credit was last earned, so the misses it
+            // covered can never be counted against the streak afterwards. From
+            // tomorrow the activity breaks like any other.
+            if (a.kind === 'insurance') {
+                if (!m.offsetFrom || typeof m.offsetFrom !== 'object') m.offsetFrom = {};
+                (a.activities || []).forEach(function (x) {
+                    var id = String(x.activityId);
+                    if (m.streakOffsets[id]) m.offsetFrom[id] = modesToday();
+                });
+            }
+
+            // Note what is deliberately NOT done here: the streak offsets in
+            // modes.streakOffsets are left alone. A day that was genuinely
+            // insured, or a step that recovery genuinely granted, stays earned
+            // after the mode ends — retiring the offset would take back
+            // protection that already applied. They stop GROWING, and they are
+            // dropped the moment the walk says the streak actually broke
+            // (see modesAfterStreakWalk).
+
+            m.active = null;
+            m.history.unshift({
+                id: a.id, kind: a.kind, outcome: outcome,
+                startedAt: a.startedAt, endedAt: new Date().toISOString(),
+                summary: summary || ''
+            });
+            if (m.history.length > 30) m.history = m.history.slice(0, 30);
+
+            if (opts.resolution) modesQueueResolution(opts.resolution);
+
+            modesApplyTheme();
+            modesRefreshBanner();
+            try { await modesSyncNotifications(); } catch (e) {}
+            if (!opts.skipSave) { try { await saveUserData(); } catch (e) { console.warn('Mode end save failed', e); } }
+            try { modesRenderPage(); } catch (e) {}
+            try { window.trackEvent && window.trackEvent('mode_ended', { mode: a.kind, outcome: outcome }); } catch (e) {}
+            return true;
+        }
+
+        // ── Resolution (shared pattern, spec §0) ──────────────────────────
+        // A terminal state reached while the user is looking at the app pops
+        // immediately. One reached in the background (a timer expiring, a
+        // window closing overnight) queues here and is shown the next time
+        // they open the app. Same card either way.
+        function modesQueueResolution(res) {
+            var m = modesState();
+            if (!m) return;
+            res.id = res.id || modesNewId('mr');
+            res.at = res.at || new Date().toISOString();
+            m.pending.push(res);
+            if (m.pending.length > 10) m.pending = m.pending.slice(-10);
+        }
+
+        function modesResolveNow(res) {
+            // Live and in the app — show it straight away and don't queue it.
+            if (document.visibilityState === 'visible' && document.getElementById('appContainer')) {
+                modesShowResolution(res);
+                return;
+            }
+            modesQueueResolution(res);
+        }
+
+        function modesDrainPending() {
+            var m = modesState();
+            if (!m || !m.pending.length) return;
+            var next = m.pending.shift();
+            saveUserData().catch(function () {});
+            modesShowResolution(next, function () {
+                // One at a time, so a night of two resolutions doesn't stack
+                // two full-screen cards on top of each other.
+                if (m.pending.length) setTimeout(modesDrainPending, 400);
+            });
+        }
+
+        // ── Theme (spec §2) ───────────────────────────────────────────────
+        // Berserk repaints the whole app, not just its own page. The theme
+        // system writes inline custom properties onto <html>; this sets the
+        // same properties on <body> instead, which wins for everything inside
+        // it without touching, reading or fighting the theme code. Removing
+        // the class restores the user's theme exactly, because nothing of
+        // theirs was ever overwritten.
+        function modesApplyTheme() {
+            var body = document.body;
+            if (!body) return;
+            var on = modesActiveKind() === 'berserk' && !modeBerserkExpired(modesActive());
+            body.classList.toggle('mk-mode-berserk', !!on);
+        }
+        window.modesApplyTheme = modesApplyTheme;
+
+        // ── Notifications ─────────────────────────────────────────────────
+        // Mode notifications ride the existing reminder infrastructure:
+        // documents under users/{uid}/reminders with a nextSendAt the
+        // onReminderWrite trigger fills in, sent by the sendDueReminders
+        // scheduler. Nothing new is scheduled client-side, so they arrive with
+        // the app closed like every other reminder.
+        //
+        // Every mode document id starts with `mode-`, which is how the sync
+        // below knows which reminders are its own to remove.
+        function modeReminderRef(id) {
+            var uid = modesUid();
+            if (!uid) return null;
+            return doc(db, 'users', uid, 'reminders', id);
+        }
+
+        // The full set of reminder documents the active mode wants to exist.
+        function modesDesiredReminders() {
+            var a = modesActive();
+            var out = [];
+            if (!a) return out;
+            var tz = (typeof mkDetectTimezone === 'function' ? mkDetectTimezone() : null) || null;
+
+            if (a.kind === 'habit') {
+                (a.habits || []).forEach(function (h) {
+                    var s = modeMins(h.windowStart), e = modeMins(h.windowEnd);
+                    if (s === null || e === null) return;
+                    out.push({
+                        id: 'mode-habit-' + a.id + '-' + h.activityId + '-pre',
+                        type: 'mode', modeKind: 'habit', modeId: a.id,
+                        activityId: String(h.activityId),
+                        activityName: h.activityName || 'your habit',
+                        localTime: modeHHMM(s - HABIT_PRE_LEAD),
+                        timezone: tz, active: true,
+                        // Read by the sender, verbatim, never rewritten (§0).
+                        why: String(h.why || ''),
+                        anchor: String(h.anchor || ''),
+                        windowStart: h.windowStart, windowEnd: h.windowEnd,
+                        phase: 'pre'
+                    });
+                    out.push({
+                        id: 'mode-habit-' + a.id + '-' + h.activityId + '-post',
+                        type: 'mode', modeKind: 'habit', modeId: a.id,
+                        activityId: String(h.activityId),
+                        activityName: h.activityName || 'your habit',
+                        localTime: modeHHMM(e + HABIT_POST_LAG),
+                        timezone: tz, active: true,
+                        why: String(h.why || ''),
+                        anchor: String(h.anchor || ''),
+                        windowStart: h.windowStart, windowEnd: h.windowEnd,
+                        phase: 'post'
+                    });
+                });
+            }
+
+            if (a.kind === 'focus') {
+                var fs = modeMins(a.windowStart);
+                if (fs !== null) {
+                    out.push({
+                        id: 'mode-focus-' + a.id + '-pre',
+                        type: 'mode', modeKind: 'focus', modeId: a.id,
+                        activityId: null, activityName: null,
+                        localTime: modeHHMM(fs - 15),
+                        timezone: tz, active: true,
+                        why: '', anchor: '',
+                        windowStart: a.windowStart, windowEnd: a.windowEnd,
+                        phase: 'pre'
+                    });
+                }
+            }
+            return out;
+        }
+
+        // Reconciles the reminder collection against modesDesiredReminders():
+        // writes the ones that should exist, deletes every other `mode-`
+        // document. Never touches a general or activity reminder.
+        async function modesSyncNotifications() {
+            var uid = modesUid();
+            if (!uid || !canPersistUserData('modesSyncNotifications')) return;
+            // Push is opt-in and permission-gated. If the user has no
+            // subscription we still write the documents — they cost nothing,
+            // and the moment push is enabled the reminders start arriving
+            // without needing a mode to be re-created.
+            var desired = modesDesiredReminders();
+            var wanted = {};
+            desired.forEach(function (d) { wanted[d.id] = d; });
+
+            var existing = [];
+            try {
+                var snap = await getDocs(collection(db, 'users', uid, 'reminders'));
+                snap.forEach(function (d) { if (d.id.indexOf('mode-') === 0) existing.push(d.id); });
+            } catch (err) {
+                console.warn('Mode reminder read failed:', err && err.message);
+                return;
+            }
+
+            var batch = writeBatch(db);
+            var writes = 0;
+            existing.forEach(function (id) {
+                if (!wanted[id]) { batch.delete(doc(db, 'users', uid, 'reminders', id)); writes++; }
+            });
+            Object.keys(wanted).forEach(function (id) {
+                var d = wanted[id];
+                batch.set(doc(db, 'users', uid, 'reminders', id), {
+                    type: 'mode',
+                    modeKind: d.modeKind,
+                    modeId: d.modeId,
+                    phase: d.phase,
+                    activityId: d.activityId,
+                    activityName: d.activityName,
+                    localTime: d.localTime,
+                    timezone: d.timezone,
+                    windowStart: d.windowStart,
+                    windowEnd: d.windowEnd,
+                    why: d.why,
+                    anchor: d.anchor,
+                    active: true,
+                    // Left null on purpose: onReminderWrite computes it with a
+                    // real timezone library. Same contract as every other
+                    // reminder the client creates.
+                    nextSendAt: null,
+                    lastSentDate: null,
+                    updatedAt: new Date()
+                });
+                writes++;
+            });
+            if (!writes) return;
+            try { await batch.commit(); }
+            catch (err) { console.warn('Mode reminder sync failed:', err && err.message); }
+        }
+
+        // A local notification, for the things only the client can know about
+        // (a recovery ceiling reached mid-session, a mode auto-resolving while
+        // the tab is open). Silent if permission was never granted.
+        function modesLocalNotify(title, body) {
+            try {
+                if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+                new Notification(title, { body: body, icon: './icon-192.svg', tag: 'mindkraft-mode' });
+            } catch (e) {}
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  XP MOVEMENT
+        // ══════════════════════════════════════════════════════════════════
+        //
+        // Berserk's swing and Focus's multiplier are lump sums against the
+        // user's own XP ledger — the same one payQuestBonus() moves, with the
+        // same level-up loop. Deliberately NOT a second XP store: a berserk
+        // win raises the averages that set tomorrow's berserk target, and the
+        // spec says that is intended (§2).
+        //
+        // The bonus is also recorded in xpTodayGhost so "XP today" and the
+        // leaderboard see it. Without that, XP that isn't attached to a
+        // completionHistory row is invisible to every read that walks history.
+        function modesAwardXP(amount, label) {
+            amount = Math.round(amount || 0);
+            if (!amount || !window.userData) return 0;
+            if (amount > 0) {
+                if (typeof payQuestBonus === 'function') { payQuestBonus(null, amount); }
+                var todayKey = localToday();
+                if (!window.userData.xpTodayGhost) window.userData.xpTodayGhost = {};
+                window.userData.xpTodayGhost[todayKey] =
+                    (window.userData.xpTodayGhost[todayKey] || 0) + amount;
+            } else {
+                var loss = -amount;
+                window.userData.currentXP = (window.userData.currentXP || 0) - loss;
+                window.userData.totalXP   = (window.userData.totalXP || 0) - loss;
+                while (window.userData.currentXP < 0 && window.userData.level > 1) {
+                    window.userData.level -= 1;
+                    window.userData.currentXP += calculateXPForLevel(window.userData.level);
+                }
+                if (window.userData.currentXP < 0) window.userData.currentXP = 0;
+                var tk = localToday();
+                if (!window.userData.xpTodayGhost) window.userData.xpTodayGhost = {};
+                window.userData.xpTodayGhost[tk] =
+                    (window.userData.xpTodayGhost[tk] || 0) - loss;
+                try { if (typeof updateDashboard === 'function') updateDashboard(); } catch (e) {}
+            }
+            if (label) { try { showToast(label, amount > 0 ? 'green' : 'red'); } catch (e) {} }
+            return amount;
+        }
+
+        // XP actually earned across every activity in a time range. Walks
+        // completionHistory rather than diffing totalXP, so a penalty landing
+        // mid-session or an undo elsewhere cannot be mistaken for progress.
+        function modesXPBetween(fromMs, toMs) {
+            var xp = 0;
+            try {
+                (window.userData.dimensions || []).forEach(function (dim) {
+                    (dim.paths || []).forEach(function (path) {
+                        (path.activities || []).forEach(function (act) {
+                            (act.completionHistory || []).forEach(function (e) {
+                                if (!e || e.isPenalty || !e.date) return;
+                                var v = e.xp || 0;
+                                if (v <= 0) return;
+                                var t = new Date(e.date).getTime();
+                                if (t >= fromMs && t <= toMs) xp += v;
+                            });
+                        });
+                    });
+                });
+            } catch (e) {}
+            return xp;
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  BERSERK
+        // ══════════════════════════════════════════════════════════════════
+        //
+        // TARGET (spec §2). The trailing 7-day average XP-per-hour is the
+        // spine. A run of exceptional days would otherwise ratchet the target
+        // straight out of reach, so only a fraction of however far that
+        // average sits ABOVE the user's longer baseline is carried into the
+        // target. A personal best makes tomorrow harder — a little.
+        //
+        //   effective/hr = baseline + BERSERK_DAMPENER × (avg7 − baseline)
+        //                  when avg7 > baseline
+        //   effective/hr = avg7     otherwise (a slump does not inflate it)
+        //
+        // "Hour" here is the app's own convention: computeXPPerHour() divides
+        // a day's XP by 12 waking hours, and this uses the same divisor so the
+        // number on the Berserk screen means the same thing as the one on the
+        // Analytics tab.
+        const MODE_WAKING_HOURS = 12;
+
+        function modeDailyXPMap(days) {
+            var out = {};
+            var today = new Date(); today.setHours(0, 0, 0, 0);
+            // `days` whole days BEFORE today. Today is excluded from the
+            // averages (a half-finished day would drag them down), so the
+            // floor is today − days, not today − (days − 1): the latter drops
+            // the oldest day the caller then asks for and quietly averages
+            // N days of XP over N+1 days.
+            var floor = today.getTime() - days * 86400000;
+            try {
+                (window.userData.dimensions || []).forEach(function (dim) {
+                    (dim.paths || []).forEach(function (path) {
+                        (path.activities || []).forEach(function (act) {
+                            (act.completionHistory || []).forEach(function (e) {
+                                if (!e || e.isPenalty || !e.date) return;
+                                var v = e.xp || 0;
+                                if (v <= 0) return;
+                                var d = new Date(e.date);
+                                if (d.getTime() < floor) return;
+                                var k = toLocalDateStr(d);
+                                out[k] = (out[k] || 0) + v;
+                            });
+                        });
+                    });
+                });
+            } catch (e) {}
+            return out;
+        }
+
+        function modeAvgPerHour(days) {
+            var map = modeDailyXPMap(days);
+            var total = 0;
+            var today = new Date(); today.setHours(0, 0, 0, 0);
+            // Yesterday backwards, `days` of them. Today is excluded: a
+            // half-finished day would drag the average down for no reason.
+            for (var i = 1; i <= days; i++) {
+                var d = new Date(today.getTime() - i * 86400000);
+                total += map[toLocalDateStr(d)] || 0;
+            }
+            return total / days / MODE_WAKING_HOURS;
+        }
+
+        function berserkPerHourTarget() {
+            var avg7 = modeAvgPerHour(7);
+            var base = modeAvgPerHour(28);          // the longer, calmer baseline
+            var eff  = avg7 > base ? base + BERSERK_DAMPENER * (avg7 - base) : avg7;
+            return Math.max(BERSERK_FLOOR_PER_H, Math.round(eff));
+        }
+
+        function berserkTargetFor(hours) {
+            return Math.max(1, Math.round(berserkPerHourTarget() * hours));
+        }
+
+        function modeBerserkExpired(a) {
+            return !!(a && a.kind === 'berserk' && modesNow() >= a.endsAt);
+        }
+
+        function berserkEarned(a) {
+            if (!a || a.kind !== 'berserk') return 0;
+            return modesXPBetween(a.startedAtMs, Math.min(modesNow(), a.endsAt));
+        }
+
+        // Resolution. Called from three places — the completion hook (a live
+        // win pops immediately), the login/foreground pass (the window closed
+        // while they were away), and the Modes page render. Guarded on
+        // `resolved` so whichever gets there first is the only one that pays.
+        async function berserkMaybeResolve(force) {
+            var a = modesActive();
+            if (!a || a.kind !== 'berserk' || a.resolved) return false;
+            var earned = berserkEarned(a);
+            var expired = modeBerserkExpired(a);
+            var won = earned >= a.targetXP;
+            // `force` is the deliberate early end. Nothing else gets past
+            // here: an unfinished window that nobody ended just keeps running.
+            if (!won && !expired && !force) return false;
+
+            a.resolved = true;
+            var delta = won ? Math.round(earned * BERSERK_SWING)
+                            : -Math.round(earned * BERSERK_SWING);
+            // A failure with nothing logged still has to sting, or the mode is
+            // free to enter and free to abandon. Charge the swing against what
+            // the target was worth instead of against zero.
+            if (!won && earned <= 0) delta = -Math.round(a.targetXP * BERSERK_SWING);
+            modesAwardXP(delta, null);
+
+            var res = {
+                kind: 'berserk', outcome: won ? 'won' : 'lost',
+                title: won ? 'Berserk cleared' : 'Berserk fell short',
+                headline: won ? '+' + Math.abs(delta) + ' XP' : '−' + Math.abs(delta) + ' XP',
+                lines: [
+                    a.hours + '-hour window',
+                    'Target ' + a.targetXP.toLocaleString() + ' XP',
+                    'Earned ' + earned.toLocaleString() + ' XP'
+                ],
+                note: won
+                    ? 'You beat your own trailing average with hours to spare. The bonus is already in your total.'
+                    : 'The window closed short of the target. Thirty percent is the price you agreed to — it has been taken.'
+            };
+            await modesEnd(won ? 'completed' : 'failed',
+                           (won ? 'Cleared ' : 'Missed ') + a.targetXP + ' XP in ' + a.hours + 'h',
+                           { resolution: null });
+            modesResolveNow(res);
+            try { await saveUserData(); } catch (e) {}
+            return true;
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  FOCUS WINDOW
+        // ══════════════════════════════════════════════════════════════════
+        //
+        // STACKING (spec §7): when several multipliers could apply to one
+        // completion, only the largest one does — they never compound. Today
+        // exactly one mode can be active so this can only ever pick one, but
+        // the rule is written here rather than assumed, because the multi-mode
+        // version of this function is meant to be this function.
+        function modeBestMultiplierFor(activity, whenMs) {
+            var a = modesActive();
+            var best = 0;
+            if (!a) return best;
+            // A perform-negative completion earns negative XP. Ten percent of a
+            // penalty is not a bonus, so nothing multiplies it — same rule the
+            // Grit boost already follows.
+            if (activity && activity.isNegative && !activity.isSkipNegative) return best;
+            if (a.kind === 'focus' && !modeFocusFinished(a)) {
+                var d = new Date(whenMs || Date.now());
+                var nowMins = d.getHours() * 60 + d.getMinutes();
+                var s = modeMins(a.windowStart), e = modeMins(a.windowEnd);
+                if (s !== null && e !== null && modeInWindow(s, e, nowMins, 0, 0)) {
+                    best = Math.max(best, FOCUS_MULTIPLIER);
+                }
+            }
+            return best;
+        }
+
+        function modeFocusFinished(a) {
+            if (!a || a.kind !== 'focus') return true;
+            return (a.daysElapsed || 0) >= a.targetDays;
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  HABIT
+        // ══════════════════════════════════════════════════════════════════
+        //
+        // The only number a habit shows is "N of M days achieved". No streak,
+        // no second counter (spec §1). `daysElapsed` is the denominator and it
+        // only advances while the mode is ON — turning habit mode off freezes
+        // it rather than letting it tick in the background.
+        function habitAdvanceDays(a) {
+            if (!a || a.kind !== 'habit') return false;
+            var today = modesToday();
+            if (a.lastCountedDay === today) return false;
+            var gap = a.lastCountedDay ? modeDayDiff(a.lastCountedDay, today) : 0;
+            if (gap <= 0) { a.lastCountedDay = today; return false; }
+            a.daysElapsed = (a.daysElapsed || 0) + gap;
+            a.lastCountedDay = today;
+            return true;
+        }
+
+        function habitOf(a, activityId) {
+            return (a.habits || []).filter(function (h) {
+                return String(h.activityId) === String(activityId);
+            })[0] || null;
+        }
+
+        // Which habit, if any, wants the screen right now: from 30 minutes
+        // before its window opens to 30 minutes after it closes (spec §1).
+        function habitOverlayDue() {
+            var a = modesActive();
+            if (!a || a.kind !== 'habit') return null;
+            if ((a.daysElapsed || 0) >= a.targetDays) return null;
+            var nowMins = modeMinutesNow(), today = modesToday();
+            var hit = null;
+            (a.habits || []).forEach(function (h) {
+                if (hit) return;
+                if (h.lastCompletedDay === today) return;   // already done — no nagging
+                var s = modeMins(h.windowStart), e = modeMins(h.windowEnd);
+                if (s === null || e === null) return;
+                if (modeInWindow(s, e, nowMins, HABIT_OVERLAY_LEAD, HABIT_OVERLAY_LEAD)) hit = h;
+            });
+            if (!hit) return null;
+            // Dismissing it is per habit, per day — it is a moment of friction,
+            // not a wall (spec §1).
+            if (hit.overlayDismissedDay === today) return null;
+            return hit;
+        }
+
+        // Milestone fractions on the way to the target. 25/50/75 are named in
+        // the spec; 10 exists because the first stretch is where people quit.
+        const HABIT_MILESTONES = [0.10, 0.25, 0.50, 0.75];
+
+        function habitCheckMilestone(a, h) {
+            if (!a.targetDays) return null;
+            var frac = (h.completions || 0) / a.targetDays;
+            h.milestonesShown = h.milestonesShown || [];
+            var hitOne = null;
+            HABIT_MILESTONES.forEach(function (mfrac) {
+                if (hitOne) return;
+                if (frac >= mfrac && h.milestonesShown.indexOf(mfrac) === -1) {
+                    h.milestonesShown.push(mfrac);
+                    hitOne = mfrac;
+                }
+            });
+            return hitOne;
+        }
+
+        function habitQuote(seed) {
+            var i = Math.abs(Math.floor(seed || 0)) % MODE_MILESTONE_QUOTES.length;
+            return MODE_MILESTONE_QUOTES[i];
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  STAKE
+        // ══════════════════════════════════════════════════════════════════
+
+        function stakeEndDay(a) { return modeAddDays(a.startedDay, a.days); }
+        function stakeDaysLeft(a) { return modeDayDiff(modesToday(), stakeEndDay(a)); }
+        function stakeAllHit(a) {
+            return (a.items || []).every(function (it) { return (it.count || 0) >= it.target; });
+        }
+        function stakeTotalTarget(a) {
+            return (a.items || []).reduce(function (s, it) { return s + (it.target || 0); }, 0);
+        }
+        function stakeTotalCount(a) {
+            return (a.items || []).reduce(function (s, it) {
+                return s + Math.min(it.count || 0, it.target || 0);
+            }, 0);
+        }
+
+        async function stakeMaybeResolve(force) {
+            var a = modesActive();
+            if (!a || a.kind !== 'stake' || a.resolved) return false;
+            var won = stakeAllHit(a);
+            var over = stakeDaysLeft(a) <= 0;
+            // `force` is the deliberate early end, which forfeits — a stake
+            // walked away from is a stake lost, and the copy says so.
+            if (!won && !over && !force) return false;
+
+            a.resolved = true;
+            var bonus = Math.round(a.wager * MODE_WAGER_RETURN);
+            var res;
+            if (won) {
+                gritApplyDelta(a.wager + bonus, 'mode_stake_win',
+                    { mode: 'stake', modeId: a.id, wager: a.wager, bonus: bonus });
+                res = {
+                    kind: 'stake', outcome: 'won', title: 'Stake paid out',
+                    headline: '+' + (a.wager + bonus) + ' Grit',
+                    lines: (a.items || []).map(function (it) {
+                        return it.activityName + ' — ' + Math.min(it.count, it.target) + '/' + it.target;
+                    }),
+                    note: 'Every target, inside the window. Your ' + a.wager +
+                          ' Grit is back with ' + bonus + ' on top.'
+                };
+            } else {
+                res = {
+                    kind: 'stake', outcome: 'lost', title: 'Stake forfeited',
+                    headline: '−' + a.wager + ' Grit',
+                    lines: (a.items || []).map(function (it) {
+                        var done = (it.count || 0) >= it.target;
+                        return (done ? '✓ ' : '✗ ') + it.activityName + ' — ' +
+                               Math.min(it.count || 0, it.target) + '/' + it.target;
+                    }),
+                    note: 'Stake mode is all or nothing. One target short is the same as none.'
+                };
+            }
+            await modesEnd(won ? 'completed' : 'failed',
+                           stakeTotalCount(a) + '/' + stakeTotalTarget(a) + ' completions');
+            modesResolveNow(res);
+            try { await saveUserData(); } catch (e) {}
+            return true;
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  RECOVERY  (strictly additive — see the header note)
+        // ══════════════════════════════════════════════════════════════════
+        //
+        // The ceiling is read once, at activation, from bestStreak — existing
+        // historical data, no new field on the activity. It has to be captured
+        // then rather than read live, because the moment recovery starts
+        // lifting the streak, bestStreak follows it upward and would chase its
+        // own tail forever.
+        //
+        // `bonus[activityId]` is how many extra increments recovery has
+        // granted. The login pass re-adds it after processStreakSystem has
+        // re-derived the base figure, which is what makes the boost survive a
+        // walk that knows nothing about it.
+        function recoveryCeilingFor(act) {
+            return Math.max(1, act.bestStreak || act.streak || 0);
+        }
+
+        function recoveryEntry(a, activityId) {
+            return (a.activities || []).filter(function (x) {
+                return String(x.activityId) === String(activityId);
+            })[0] || null;
+        }
+
+        function recoveryAllAtCeiling(a) {
+            return (a.activities || []).every(function (x) {
+                var act = gritFindActivity(x.activityId);
+                if (!act) return true;            // gone — it can't be recovered
+                return (act.streak || 0) >= x.ceiling;
+            });
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  INSURANCE  (strictly additive — see the header note)
+        // ══════════════════════════════════════════════════════════════════
+        //
+        // The rule is one line: while insurance is on an activity, its
+        // displayed streak never goes DOWN. So after every authoritative walk,
+        //
+        //     offset = max(0, previousDisplayed − freshlyWalkedBase)
+        //     displayed = base + offset  =  max(previousDisplayed, base)
+        //
+        // Missing a day leaves the streak where it was; logging still moves it
+        // up through the normal path, because completeActivity increments the
+        // displayed value. The offset melts back to zero on its own once real
+        // history catches up, which is exactly what should happen.
+        //
+        // Shields are handled the same way: whatever the walk consumed on an
+        // insured activity is put back, so "shield state" is undamaged too.
+        function insuranceDaysOn(a) { return modeDayDiff(a.startedDay, modesToday()); }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  THE STREAK PASSES
+        // ══════════════════════════════════════════════════════════════════
+        //
+        // Two calls, both inside processStreakPauses() — the ORCHESTRATOR,
+        // never processStreakSystem() itself. One snapshots before the
+        // authoritative walk, one adds mode-owned offsets after it has
+        // finished. processStreakSystem is not read, not wrapped, and not
+        // aware any of this exists (spec §3).
+        //
+        // `modes.streakOffsets[activityId]` is a single integer per activity:
+        // how many days of streak the modes have granted or protected on top
+        // of what the user's own completion history supports. It survives the
+        // mode that created it, because a day that was genuinely insured or
+        // genuinely recovered stays earned. It is dropped the moment the walk
+        // says the streak actually broke with no insurance in force.
+        //
+        // The whole pass is guarded per activity per day, so a second call in
+        // the same session cannot add the offset twice.
+
+        let _modeStreakSnapshot = null;
+
+        // How many of an activity's own cycle windows, ending with the most
+        // recently CLOSED one, have gone by with nothing logged — counting no
+        // further back than `sinceDay`, the last day a mode's credit was
+        // earned. Strictly read-only: it uses the same two window helpers the
+        // walk does and writes nothing, so it is a measurement of the streak
+        // system, not a participant in it.
+        function modeMissedWindowsSince(act, sinceDay) {
+            if (!act) return 0;
+            var todayMid = new Date(); todayMid.setHours(0, 0, 0, 0);
+            var todayWin = getCycleWindowStart(act, todayMid);
+            if (!todayWin) return 0;
+
+            var floorWin = null;
+            if (sinceDay) floorWin = getCycleWindowStart(act, new Date(sinceDay + 'T00:00:00'));
+
+            var hist = (act.completionHistory || []).filter(function (e) {
+                return e && !e.isPenalty && (e.xp || 0) > 0 && e.date;
+            });
+
+            var cur = getCycleWindowStart(act, new Date(todayWin.getTime() - 1));
+            var missed = 0;
+            for (var i = 0; i < 400 && cur; i++) {
+                if (floorWin && cur.getTime() <= floorWin.getTime()) break;
+                var next = getNextCycleWindowStart(act, cur);
+                if (!next) break;
+                var cs = cur.getTime(), ce = next.getTime();
+                var hit = hist.some(function (e) {
+                    var t = new Date(e.date).getTime();
+                    return t >= cs && t < ce;
+                });
+                if (hit) break;
+                missed++;
+                var prev = getCycleWindowStart(act, new Date(cur.getTime() - 1));
+                if (!prev) break;
+                cur = prev;
+            }
+            return missed;
+        }
+
+        function modesTrackedActivityIds() {
+            var m = modesState();
+            var ids = new Set();
+            if (!m) return ids;
+            Object.keys(m.streakOffsets || {}).forEach(function (k) { ids.add(k); });
+            var a = m.active;
+            if (a && (a.kind === 'insurance' || a.kind === 'recovery')) {
+                (a.activities || []).forEach(function (x) { ids.add(String(x.activityId)); });
+            }
+            return ids;
+        }
+
+        function modesBeforeStreakWalk() {
+            _modeStreakSnapshot = null;
+            var ids = modesTrackedActivityIds();
+            if (!ids.size) return;
+            var snap = {};
+            ids.forEach(function (id) {
+                var act = gritFindActivity(id);
+                if (!act) return;
+                snap[id] = {
+                    streak: act.streak || 0,
+                    shieldsConsumed: act.shieldsConsumed || 0,
+                    shieldCapUsed: act.shieldCapUsed || 0,
+                    streakStartWindow: act.streakStartWindow || null
+                };
+            });
+            _modeStreakSnapshot = snap;
+        }
+
+        function modesAfterStreakWalk() {
+            var snap = _modeStreakSnapshot;
+            _modeStreakSnapshot = null;
+            var m = modesState();
+            if (!m || !snap) return false;
+
+            var a = m.active;
+            var insured = new Set();
+            if (a && a.kind === 'insurance') {
+                (a.activities || []).forEach(function (x) { insured.add(String(x.activityId)); });
+            }
+            if (!m.offsetDay || typeof m.offsetDay !== 'object') m.offsetDay = {};
+            if (!m.offsetFrom || typeof m.offsetFrom !== 'object') m.offsetFrom = {};
+            var today = modesToday();
+            var changed = false;
+
+            Object.keys(snap).forEach(function (id) {
+                if (m.offsetDay[id] === today) return;      // already applied today
+                var act = gritFindActivity(id);
+                if (!act) { delete m.streakOffsets[id]; delete m.offsetDay[id]; changed = true; return; }
+
+                var prev = snap[id];
+                var base = act.streak || 0;
+                var n = m.streakOffsets[id] || 0;
+                var isInsured = insured.has(id);
+
+                // Insurance: whatever the walk took away, hand straight back.
+                if (isInsured) {
+                    n = Math.max(n, prev.streak - base);
+                    // The credit is re-earned every day the cover is on. This
+                    // stamp is what stops the misses it covered from counting
+                    // against the user later, once it is off.
+                    m.offsetFrom[id] = today;
+                    // …and the shields it spent covering those misses.
+                    if ((act.shieldsConsumed || 0) > prev.shieldsConsumed) {
+                        act.shieldsConsumed = prev.shieldsConsumed;
+                        changed = true;
+                    }
+                    if (prev.shieldCapUsed && (act.shieldCapUsed || 0) < prev.shieldCapUsed) {
+                        act.shieldCapUsed = prev.shieldCapUsed;
+                        changed = true;
+                    }
+                    if (!act.streakStartWindow && prev.streakStartWindow) {
+                        act.streakStartWindow = prev.streakStartWindow;
+                        changed = true;
+                    }
+                } else if (n > 0) {
+                    // No cover in force. The credit stands until the activity
+                    // genuinely breaks — which it has not done just because the
+                    // walk reports a base of zero: the walk derives its figure
+                    // from history alone, and the history has a hole in it
+                    // precisely because those days were insured.
+                    //
+                    // So ask the only question that actually matters: how many
+                    // windows in a row have gone unlogged SINCE the cover
+                    // stopped? Once that run outlasts the shields the activity
+                    // has, the streak is over and the credit goes with it.
+                    if (modeMissedWindowsSince(act, m.offsetFrom[id]) > shieldFloorFor(act)) {
+                        n = 0;
+                    }
+                }
+
+                if (n > 0) {
+                    act.streak = base + n;
+                    act.bestStreak = Math.max(act.bestStreak || 0, act.streak);
+                    m.streakOffsets[id] = n;
+                    if (!m.offsetFrom[id]) m.offsetFrom[id] = today;
+                    changed = true;
+                } else if (m.streakOffsets[id]) {
+                    delete m.streakOffsets[id];
+                    delete m.offsetFrom[id];
+                    changed = true;
+                }
+                m.offsetDay[id] = today;
+            });
+
+            // Housekeeping: markers for activities nothing tracks any more.
+            Object.keys(m.offsetDay).forEach(function (id) {
+                if (!snap[id] && !m.streakOffsets[id]) delete m.offsetDay[id];
+            });
+            Object.keys(m.offsetFrom).forEach(function (id) {
+                if (!m.streakOffsets[id]) delete m.offsetFrom[id];
+            });
+
+            if (a && a.kind === 'recovery' && recoveryAllAtCeiling(a)) {
+                modesRecoveryConclude(a);
+                changed = true;
+            }
+            return changed;
+        }
+
+        function modesRecoveryConclude(a) {
+            var names = (a.activities || []).map(function (x) { return x.activityName; }).join(', ');
+            modesLocalNotify('Recovery complete ⚔️',
+                'Every activity is back at its old peak. Recovery Mode has switched itself off.');
+            modesEnd('completed', names + ' back at peak', {
+                resolution: {
+                    kind: 'recovery', outcome: 'won', title: 'Back to your peak',
+                    headline: (a.activities || []).length + ' recovered',
+                    lines: (a.activities || []).map(function (x) {
+                        return x.activityName + ' — reached ' + x.ceiling;
+                    }),
+                    note: 'Every activity under recovery has reached the highest streak it has ever had, so the mode has ended itself. From here they climb at the normal rate.'
+                }
+            }).catch(function () {});
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  COMPLETION / UNDO HOOKS
+        // ══════════════════════════════════════════════════════════════════
+        //
+        // Everything a mode does when an activity is logged happens here, on
+        // the way out of completeActivity() — never inside it.
+        function modesOnCompletion(activity) {
+            var m = modesState();
+            if (!m || !m.active || !activity) return;
+            var a = m.active;
+            var id = String(activity.id);
+            var today = modesToday();
+            var dirty = false;
+
+            // ── Focus Window: the multiplier (spec §7) ────────────────────
+            var mult = modeBestMultiplierFor(activity, Date.now());
+            if (mult > 0) {
+                var hist = activity.completionHistory || [];
+                var last = hist.length ? hist[hist.length - 1] : null;
+                var basis = last && !last.isPenalty ? Math.abs(last.xp || 0) : 0;
+                var bonus = Math.round(basis * mult);
+                if (bonus > 0) {
+                    modesAwardXP(bonus, '🎯 Inside your focus window — +' + bonus + ' XP');
+                    a.bonusXP = (a.bonusXP || 0) + bonus;
+                    a.bonusCount = (a.bonusCount || 0) + 1;
+                    dirty = true;
+                }
+            }
+
+            // ── Habit: one completion per day counts (spec §1) ────────────
+            if (a.kind === 'habit') {
+                var h = habitOf(a, id);
+                if (h && h.lastCompletedDay !== today) {
+                    h.lastCompletedDay = today;
+                    h.completions = (h.completions || 0) + 1;
+                    dirty = true;
+                    var done = (a.daysElapsed || 0) + 1 >= a.targetDays &&
+                               (a.habits || []).every(function (x) { return x.lastCompletedDay === today; });
+                    var ms = habitCheckMilestone(a, h);
+                    if (done) {
+                        habitFinish(a);
+                    } else if (ms !== null) {
+                        modesShowMilestone(h, ms, a.targetDays);
+                    }
+                }
+            }
+
+            // ── Recovery: one bonus increment per completion ──────────────
+            if (a.kind === 'recovery') {
+                var entry = recoveryEntry(a, id);
+                if (entry && entry.lastBonusDay !== today) {
+                    var streakNow = activity.streak || 0;
+                    if (streakNow < entry.ceiling) {
+                        activity.streak = streakNow + 1;
+                        activity.bestStreak = Math.max(activity.bestStreak || 0, activity.streak);
+                        m.streakOffsets[id] = (m.streakOffsets[id] || 0) + 1;
+                        if (!m.offsetFrom || typeof m.offsetFrom !== 'object') m.offsetFrom = {};
+                        m.offsetFrom[id] = today;
+                        entry.lastBonusDay = today;
+                        entry.granted = (entry.granted || 0) + 1;
+                        dirty = true;
+                        try {
+                            showToast('🩹 Recovery — ' + (activity.name || 'streak') + ' jumps to ' +
+                                      activity.streak + ' of ' + entry.ceiling, 'blue');
+                        } catch (e) {}
+                    }
+                    if ((activity.streak || 0) >= entry.ceiling && recoveryAllAtCeiling(a)) {
+                        modesRecoveryConclude(a);
+                        return;
+                    }
+                }
+            }
+
+            // ── Stake: count toward the wager ─────────────────────────────
+            if (a.kind === 'stake' && !a.resolved) {
+                var item = (a.items || []).filter(function (x) { return String(x.activityId) === id; })[0];
+                if (item && stakeDaysLeft(a) > 0) {
+                    item.count = (item.count || 0) + 1;
+                    dirty = true;
+                    if (stakeAllHit(a)) { stakeMaybeResolve().catch(function () {}); return; }
+                }
+            }
+
+            // ── Berserk: progress is XP, so nothing to count — just check ──
+            if (a.kind === 'berserk' && !a.resolved) {
+                berserkMaybeResolve().catch(function () {});
+                return;
+            }
+
+            // ── Pact: mirrored into the shared document ───────────────────
+            if (a.kind === 'pact' && a.pactId && String(a.activityId) === id) {
+                pactCommitProgress(a.pactId, 1).catch(function () {});
+            }
+
+            if (dirty) {
+                // completeActivity's own debounced save is already in flight
+                // and would carry these fields with it, but relying on that
+                // ordering would be a silent data loss the day it changes.
+                try { debouncedSaveUserData(); } catch (e) {}
+                try { modesRenderPage(); } catch (e) {}
+                try { modesRefreshBanner(); } catch (e) {}
+            }
+        }
+
+        function modesOnUndo(activity) {
+            var m = modesState();
+            if (!m || !m.active || !activity) return;
+            var a = m.active;
+            var id = String(activity.id);
+            var today = modesToday();
+
+            if (a.kind === 'habit') {
+                var h = habitOf(a, id);
+                if (h && h.lastCompletedDay === today) {
+                    h.lastCompletedDay = null;
+                    h.completions = Math.max(0, (h.completions || 0) - 1);
+                }
+            }
+            if (a.kind === 'stake' && !a.resolved) {
+                var item = (a.items || []).filter(function (x) { return String(x.activityId) === id; })[0];
+                if (item) item.count = Math.max(0, (item.count || 0) - 1);
+            }
+            if (a.kind === 'recovery') {
+                var entry = recoveryEntry(a, id);
+                if (entry && entry.lastBonusDay === today) {
+                    entry.lastBonusDay = null;
+                    entry.granted = Math.max(0, (entry.granted || 0) - 1);
+                    m.streakOffsets[id] = Math.max(0, (m.streakOffsets[id] || 0) - 1);
+                    if (!m.streakOffsets[id]) delete m.streakOffsets[id];
+                    activity.streak = Math.max(0, (activity.streak || 0) - 1);
+                }
+            }
+            if (a.kind === 'pact' && a.pactId && String(a.activityId) === id) {
+                pactCommitProgress(a.pactId, -1).catch(function () {});
+            }
+            try { debouncedSaveUserData(); } catch (e) {}
+            try { modesRenderPage(); } catch (e) {}
+            try { modesRefreshBanner(); } catch (e) {}
+        }
+
+        function habitFinish(a) {
+            var total = (a.habits || []).reduce(function (s, h) { return s + (h.completions || 0); }, 0);
+            modesEnd('completed', total + ' completions over ' + a.targetDays + ' days', {
+                resolution: {
+                    kind: 'habit', outcome: 'won', title: 'Habit complete',
+                    headline: a.targetDays + ' days',
+                    lines: (a.habits || []).map(function (h) {
+                        return h.activityName + ' — ' + h.completions + ' of ' + a.targetDays;
+                    }),
+                    note: 'You set out to do this for ' + a.targetDays + ' days, and you did. ' +
+                          'It is a habit now — keep it without the scaffolding.'
+                }
+            }).catch(function () {});
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  LOGIN / FOREGROUND PASS
+        // ══════════════════════════════════════════════════════════════════
+        //
+        // Everything that can fall due while the app is closed is settled
+        // here: the day counters advance, expired windows resolve, and any
+        // resolution that happened in the background is shown (spec §0).
+        let _modesPassAt = 0;
+
+        async function modesRunPass(force) {
+            var m = modesState();
+            if (!m) return;
+            if (!force && modesNow() - _modesPassAt < 30000) return;
+            _modesPassAt = modesNow();
+
+            var dirty = false;
+            var a = m.active;
+
+            if (a) {
+                if (a.kind === 'habit') {
+                    if (habitAdvanceDays(a)) dirty = true;
+                    if ((a.daysElapsed || 0) >= a.targetDays) { habitFinish(a); return; }
+                }
+                if (a.kind === 'focus') {
+                    var today = modesToday();
+                    if (a.lastCountedDay !== today) {
+                        var gap = a.lastCountedDay ? modeDayDiff(a.lastCountedDay, today) : 0;
+                        if (gap > 0) a.daysElapsed = (a.daysElapsed || 0) + gap;
+                        a.lastCountedDay = today;
+                        dirty = true;
+                    }
+                    if (modeFocusFinished(a)) { await focusFinish(a); return; }
+                }
+                if (a.kind === 'berserk') {
+                    if (await berserkMaybeResolve()) return;
+                }
+                if (a.kind === 'stake') {
+                    if (await stakeMaybeResolve()) return;
+                }
+                if (a.kind === 'insurance') {
+                    var days = insuranceDaysOn(a);
+                    if (days >= INSURANCE_CHECKIN_DAYS &&
+                        modeDayDiff(a.lastCheckInDay || a.startedDay, modesToday()) >= INSURANCE_CHECKIN_DAYS) {
+                        a.lastCheckInDay = modesToday();
+                        dirty = true;
+                        modesShowInsuranceCheckIn(a, days);
+                    }
+                }
+                if (a.kind === 'pact') {
+                    await pactRunMaintenance();
+                }
+            }
+
+            // An expired suspended habit stops being resumable (spec §1).
+            if (m.suspendedHabit && m.suspendedHabit.offAt) {
+                var off = new Date(m.suspendedHabit.offAt).getTime();
+                if (modesNow() - off > HABIT_RESUME_DAYS * 86400000) { m.suspendedHabit = null; dirty = true; }
+            }
+
+            modesApplyTheme();
+            modesRefreshBanner();
+            if (dirty) { try { await saveUserData(); } catch (e) {} }
+            modesDrainPending();
+            if (!a || a.kind !== 'pact') { pactCheckInvites().catch(function () {}); }
+            habitMaybeShowOverlay();
+        }
+
+        async function focusFinish(a) {
+            await modesEnd('completed', (a.bonusCount || 0) + ' boosted completions', {
+                resolution: {
+                    kind: 'focus', outcome: 'won', title: 'Focus Window closed',
+                    headline: '+' + (a.bonusXP || 0) + ' XP',
+                    lines: [
+                        modeTimeLabel(a.windowStart) + ' – ' + modeTimeLabel(a.windowEnd),
+                        a.targetDays + ' days',
+                        (a.bonusCount || 0) + ' completions inside the window'
+                    ],
+                    note: 'A fixed slot in the day, kept for ' + a.targetDays +
+                          ' days. That is the part that carries over.'
+                }
+            });
+        }
+
+        function modesOnLogin() {
+            if (!modesUid()) return;
+            _modesPassAt = 0;
+            modesRunPass(true).catch(function (e) {
+                console.warn('Modes login pass failed:', e && e.message);
+            });
+        }
+        window.modesOnLogin = modesOnLogin;
+
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState !== 'visible') return;
+            if (!modesUid()) return;
+            modesRunPass(false).catch(function () {});
+        });
+
+        // ══════════════════════════════════════════════════════════════════
+        //  PACT  —  the only mode two accounts can see
+        // ══════════════════════════════════════════════════════════════════
+        //
+        // Placement mirrors Versus Challenges exactly, and for the same
+        // reason: a document under users/{uid} could not be granted to the
+        // other side without widening that user's rules far past what is safe.
+        // So a pact lives in a TOP-LEVEL `pacts` collection, and it is the
+        // only cross-account surface. Neither partner is ever granted read
+        // access to the other's user document, activities, history or balance
+        // — everything they see about each other is mirrored onto the pact by
+        // its owner, and that mirror is a counter, a target and an agreed name.
+        //
+        // NOT a competition and NOT a wager against each other. Each person
+        // sets their own activity and their own target; the stake is
+        // individual. What is shared is the outcome: either both hit their own
+        // targets, or the pact breaks for both (spec §6).
+        //
+        // Grit invariant, same as Versus: every Grit that leaves a balance is
+        // either escrowed in the pact's `pot` or recorded in `payout` waiting
+        // to be claimed. A broken pact is the one place Grit genuinely leaves
+        // the system — that is the point of it, and it is stated up front.
+        const PACT_COL = 'pacts';
+        const PACT_SCHEMA_VERSION = 1;
+        const PACT_TERMINAL = ['resolved', 'declined', 'cancelled', 'expired'];
+        const PACT_ALL_STATUSES = ['pending', 'active'].concat(PACT_TERMINAL);
+        const PACT_CACHE_TTL_MS = 60000;
+
+        let _pactCache = { at: 0, list: [], uid: null };
+        let _pactFetchInFlight = null;
+        let _pactIndexMissing = false;
+        let _pactMaintaining = false;
+
+        function pactMyName() {
+            var p = (window.userData && window.userData.profile) || {};
+            return p.username || (window.currentUser && window.currentUser.displayName) || 'A friend';
+        }
+        function pactIsTerminal(s) { return PACT_TERMINAL.indexOf(s) !== -1; }
+        function pactOther(p, uid) {
+            var ps = p.participants || [];
+            return ps[0] === uid ? ps[1] : ps[0];
+        }
+        function pactName(p, uid) { return (p.names && p.names[uid]) || 'Your partner'; }
+        function pactTerm(p, uid) { return (p.terms && p.terms[uid]) || null; }
+        function pactProgress(p, uid) { return (p.progress && p.progress[uid]) || 0; }
+
+        function pactHit(p, uid) {
+            var t = pactTerm(p, uid);
+            return !!t && pactProgress(p, uid) >= t.target;
+        }
+
+        // Mathematically out of reach: the days remaining cannot carry the
+        // shortfall even at one completion a day. The spec asks for this
+        // explicitly — a pact that cannot be saved should break now, not sit
+        // there pretending (spec §6).
+        function pactImpossible(p, uid) {
+            if (p.status !== 'active') return false;
+            var t = pactTerm(p, uid);
+            if (!t) return false;
+            var short = t.target - pactProgress(p, uid);
+            if (short <= 0) return false;
+            var daysLeft = Math.ceil((p.endsAt - modesNow()) / 86400000);
+            return daysLeft < short;
+        }
+
+        async function pactFetch(force) {
+            var uid = modesUid();
+            if (!uid || !canPersistUserData('pactFetch')) return [];
+            if (_pactCache.uid !== uid) _pactCache = { at: 0, list: [], uid: uid };
+            if (!force && _pactCache.at && (modesNow() - _pactCache.at) < PACT_CACHE_TTL_MS) {
+                return _pactCache.list;
+            }
+            if (_pactFetchInFlight) return _pactFetchInFlight;
+
+            _pactFetchInFlight = (async function () {
+                var list = [];
+                var col = collection(db, PACT_COL);
+                try {
+                    // Same composite index shape as challenges. Every status is
+                    // included on purpose: a refund owed on a declined or
+                    // expired invite lives in a terminal document, so narrowing
+                    // this would strand escrowed Grit.
+                    var q = _pactIndexMissing
+                        ? query(col, where('participants', 'array-contains', uid))
+                        : query(col, where('participants', 'array-contains', uid),
+                                     where('status', 'in', PACT_ALL_STATUSES));
+                    var snap = await getDocs(q);
+                    snap.forEach(function (d) { list.push(Object.assign({ id: d.id }, d.data())); });
+                } catch (err) {
+                    if (!_pactIndexMissing && err && (err.code === 'failed-precondition' ||
+                        /index/i.test(err.message || ''))) {
+                        console.warn('Pacts: composite index missing, falling back to unfiltered query.');
+                        _pactIndexMissing = true;
+                        _pactFetchInFlight = null;
+                        return pactFetch(true);
+                    }
+                    console.warn('Pact fetch failed:', err && err.message);
+                    return _pactCache.list;
+                }
+                _pactCache = { at: modesNow(), list: list, uid: uid };
+                return list;
+            })();
+
+            try { return await _pactFetchInFlight; }
+            finally { _pactFetchInFlight = null; }
+        }
+
+        function pactGet(id) {
+            return _pactCache.list.filter(function (p) { return p.id === id; })[0] || null;
+        }
+
+        // ── Create (the initiator escrows immediately) ────────────────────
+        async function pactCreate(partnerUid, partnerName, term, days) {
+            var uid = modesUid();
+            if (!uid) throw new Error('Not signed in.');
+            if (!canPersistUserData('pactCreate')) throw new Error('Your account is not loaded yet.');
+            if (((window.userData.friends) || []).indexOf(partnerUid) === -1) {
+                throw new Error('You can only start a Pact with someone on your friends list.');
+            }
+            if (modesActive()) throw new Error('You already have a mode running. Only one at a time for now.');
+
+            await pactFetch(true);
+            var live = _pactCache.list.filter(function (p) {
+                return p.status === 'pending' || p.status === 'active';
+            });
+            if (live.length) throw new Error('You already have a Pact open. Finish or withdraw it first.');
+
+            try { cancelPendingUserDataSave(); } catch (e) {}
+            await saveUserData();
+
+            var id = modesNewId('pc');
+            var now = modesNow();
+            var payload = {
+                id: id,
+                schemaVersion: PACT_SCHEMA_VERSION,
+                participants: [uid, partnerUid],
+                createdBy: uid,
+                partner: partnerUid,
+                names: {},
+                status: 'pending',
+                stake: PACT_WAGER,
+                pot: PACT_WAGER,
+                durationDays: days,
+                createdAt: now,
+                expiresAt: now + PACT_INVITE_DAYS * 86400000,
+                startedAt: null,
+                endsAt: null,
+                terms: {},
+                progress: {},
+                outcome: null,
+                failedBy: null,
+                resolvedAt: null,
+                payout: {},
+                payoutClaimed: {},
+                seen: {}
+            };
+            payload.names[uid] = pactMyName();
+            payload.names[partnerUid] = partnerName || 'A friend';
+            payload.terms[uid] = term;
+            payload.progress[uid] = 0;
+            payload.progress[partnerUid] = 0;
+            payload.payout[uid] = 0;
+            payload.payout[partnerUid] = 0;
+
+            var newBalance = null;
+            await runTransaction(db, async function (tx) {
+                var bal = await vsReadBalance(tx, uid);
+                if (bal.balance < PACT_WAGER) throw new Error('SHORTFALL:' + (PACT_WAGER - bal.balance));
+                newBalance = bal.balance - PACT_WAGER;
+                tx.update(bal.ref, {
+                    'grit.balance': newBalance,
+                    'grit.lifetimeSpent': bal.spent + PACT_WAGER
+                });
+                tx.set(doc(db, PACT_COL, id), payload);
+            });
+
+            vsMirrorBalance(newBalance, -PACT_WAGER, 'mode_pact_stake',
+                { pactId: id, role: 'initiator', partnerUid: partnerUid });
+            _pactCache.list.push(payload);
+            return payload;
+        }
+
+        // ── Accept (the partner sets their OWN activity and target) ───────
+        async function pactAccept(id, term) {
+            var uid = modesUid();
+            if (!uid) throw new Error('Not signed in.');
+            if (modesActive()) throw new Error('You already have a mode running. Only one at a time for now.');
+            try { cancelPendingUserDataSave(); } catch (e) {}
+            await saveUserData();
+
+            var ref = doc(db, PACT_COL, id);
+            var newBalance = null, started = 0, ends = 0, partnerName = '';
+
+            await runTransaction(db, async function (tx) {
+                var snap = await tx.get(ref);
+                if (!snap.exists()) throw new Error('This Pact no longer exists.');
+                var p = snap.data();
+                if (p.status !== 'pending') throw new Error('This Pact is no longer open.');
+                if (p.partner !== uid) throw new Error('This invite is not yours to accept.');
+                if (modesNow() > p.expiresAt) throw new Error('This invite has expired.');
+
+                var bal = await vsReadBalance(tx, uid);
+                if (bal.balance < p.stake) throw new Error('SHORTFALL:' + (p.stake - bal.balance));
+
+                // "the pact becomes active for both starting the next day"
+                // (spec §6). Tomorrow's local midnight is the start, so neither
+                // side gets a half-day of window the other didn't.
+                var tomorrow = new Date(); tomorrow.setHours(0, 0, 0, 0);
+                tomorrow.setDate(tomorrow.getDate() + 1);
+                started = tomorrow.getTime();
+                ends = started + p.durationDays * 86400000;
+                newBalance = bal.balance - p.stake;
+                partnerName = pactName(p, p.createdBy);
+
+                tx.update(bal.ref, {
+                    'grit.balance': newBalance,
+                    'grit.lifetimeSpent': bal.spent + p.stake
+                });
+                var patch = {
+                    status: 'active',
+                    pot: p.stake * 2,
+                    startedAt: started,
+                    endsAt: ends
+                };
+                patch['terms.' + uid] = term;
+                patch['names.' + uid] = pactMyName();
+                tx.update(ref, patch);
+            });
+
+            vsMirrorBalance(newBalance, -PACT_WAGER, 'mode_pact_stake',
+                { pactId: id, role: 'partner' });
+
+            await pactFetch(true);
+            var live = pactGet(id);
+            await modesAdoptPact(live || { id: id, startedAt: started, endsAt: ends, durationDays: 0 }, term);
+            return { startedAt: started, endsAt: ends, partnerName: partnerName };
+        }
+
+        // The local half of a pact. The mode object is what the Modes page
+        // draws and what the completion hook counts against; the shared
+        // document is the record both accounts agree on.
+        async function modesAdoptPact(p, term) {
+            var m = modesState();
+            if (!m) return;
+            var uid = modesUid();
+            m.active = {
+                kind: 'pact',
+                id: modesNewId('md'),
+                pactId: p.id,
+                startedAt: new Date().toISOString(),
+                startedDay: modesToday(),
+                cost: PACT_WAGER,
+                activityId: String(term.activityId),
+                activityName: term.activityName,
+                target: term.target,
+                partnerUid: pactOther(p, uid),
+                partnerName: pactName(p, pactOther(p, uid)),
+                endsAt: p.endsAt,
+                windowStartsAt: p.startedAt
+            };
+            modesApplyTheme();
+            try { await saveUserData(); } catch (e) {}
+            try { modesRenderPage(); } catch (e) {}
+        }
+
+        // ── Progress ──────────────────────────────────────────────────────
+        // One completion, mirrored. Guarded on status and on the window, so a
+        // completion logged before the pact starts or after it ends counts for
+        // nothing — which is what "within the shared window" means.
+        async function pactCommitProgress(id, delta) {
+            var uid = modesUid();
+            if (!uid) return null;
+            var ref = doc(db, PACT_COL, id);
+            var result = null;
+            try {
+                await runTransaction(db, async function (tx) {
+                    var snap = await tx.get(ref);
+                    if (!snap.exists()) return;
+                    var p = snap.data();
+                    if (p.status !== 'active') return;
+                    var now = modesNow();
+                    if (now < p.startedAt || now > p.endsAt) return;
+                    var t = (p.terms || {})[uid];
+                    if (!t) return;
+
+                    var before = (p.progress || {})[uid] || 0;
+                    var after = Math.max(0, Math.min(t.target, before + delta));
+                    if (after === before) return;
+
+                    var patch = {};
+                    patch['progress.' + uid] = after;
+                    tx.update(ref, patch);
+                    result = { mine: after, target: t.target };
+                });
+            } catch (e) { console.warn('Pact progress failed:', e && e.message); }
+            if (result) {
+                var cached = pactGet(id);
+                if (cached) { cached.progress = cached.progress || {}; cached.progress[uid] = result.mine; }
+                await pactMaybeResolve(id);
+            }
+            return result;
+        }
+
+        // ── Resolution ────────────────────────────────────────────────────
+        // Both hit → both get their stake back plus 30%. Either falls short,
+        // or runs out of reachable days → the pact breaks for BOTH and both
+        // stakes are gone. `failedBy` names who fell short, deliberately: the
+        // spec asks for that transparency rather than a softened message.
+        function pactBuildResolution(p) {
+            var ps = p.participants || [];
+            var a = ps[0], b = ps[1];
+            var aHit = pactHit(p, a), bHit = pactHit(p, b);
+            var payout = {};
+            payout[a] = 0; payout[b] = 0;
+            if (aHit && bHit) {
+                var back = p.stake + Math.round(p.stake * MODE_WAGER_RETURN);
+                payout[a] = back; payout[b] = back;
+                return { status: 'resolved', outcome: 'kept', failedBy: null,
+                         resolvedAt: modesNow(), pot: 0, payout: payout };
+            }
+            var failed = !aHit && !bHit ? 'both' : (aHit ? b : a);
+            return { status: 'resolved', outcome: 'broken', failedBy: failed,
+                     resolvedAt: modesNow(), pot: 0, payout: payout };
+        }
+
+        async function pactMaybeResolve(id) {
+            var uid = modesUid();
+            var ref = doc(db, PACT_COL, id);
+            var resolved = null;
+            try {
+                await runTransaction(db, async function (tx) {
+                    var snap = await tx.get(ref);
+                    if (!snap.exists()) return;
+                    var p = snap.data();
+                    if (p.status !== 'active') return;
+                    var ps = p.participants || [];
+                    var bothHit = ps.every(function (u) { return pactHit(p, u); });
+                    var over = modesNow() > p.endsAt;
+                    var doomed = ps.some(function (u) { return pactImpossible(p, u); });
+                    if (!bothHit && !over && !doomed) return;
+                    var patch = pactBuildResolution(p);
+                    tx.update(ref, patch);
+                    resolved = Object.assign({}, p, patch);
+                });
+            } catch (e) { console.warn('Pact resolve failed:', e && e.message); }
+            if (resolved) {
+                await pactFetch(true);
+                await pactSettleLocal(resolved);
+            }
+            return !!resolved;
+        }
+
+        // Ends the local mode and shows the card. Runs on whichever client
+        // notices first; the other picks it up from the document on its own
+        // next pass, because the mode object carries the pactId.
+        async function pactSettleLocal(p) {
+            var uid = modesUid();
+            var m = modesState();
+            if (!m) return;
+            var mine = pactTerm(p, uid);
+            var theirs = pactTerm(p, pactOther(p, uid));
+            var themName = pactName(p, pactOther(p, uid));
+            var kept = p.outcome === 'kept';
+            var iFailed = p.failedBy === uid || p.failedBy === 'both';
+            var theyFailed = p.failedBy === pactOther(p, uid) || p.failedBy === 'both';
+
+            var lines = [];
+            if (mine) lines.push('You — ' + mine.activityName + ' ' +
+                                 Math.min(pactProgress(p, uid), mine.target) + '/' + mine.target);
+            if (theirs) lines.push(themName + ' — ' + theirs.activityName + ' ' +
+                                 Math.min(pactProgress(p, pactOther(p, uid)), theirs.target) + '/' + theirs.target);
+
+            var note;
+            if (kept) {
+                note = 'Both of you held it. Your ' + p.stake + ' Grit is back with ' +
+                       Math.round(p.stake * MODE_WAGER_RETURN) + ' on top.';
+            } else if (iFailed && theyFailed) {
+                note = 'Neither of you got there. Both stakes are gone — that was the deal.';
+            } else if (iFailed) {
+                note = 'You fell short, so the pact broke for both of you. ' + themName +
+                       ' lost their stake too. They already know.';
+            } else {
+                note = themName + ' fell short, so the pact broke for both of you. ' +
+                       'You hit your own target — that part still happened.';
+            }
+
+            var res = {
+                kind: 'pact', outcome: kept ? 'won' : 'lost',
+                title: kept ? 'Pact kept' : 'Pact broken',
+                headline: kept ? '+' + (p.stake + Math.round(p.stake * MODE_WAGER_RETURN)) + ' Grit'
+                               : '−' + p.stake + ' Grit',
+                lines: lines, note: note
+            };
+
+            if (m.active && m.active.kind === 'pact' && m.active.pactId === p.id) {
+                await modesEnd(kept ? 'completed' : 'failed',
+                               (kept ? 'Kept with ' : 'Broken with ') + themName);
+            }
+            modesResolveNow(res);
+            try { await saveUserData(); } catch (e) {}
+        }
+
+        // ── Terminate a pending invite (decline / withdraw / expire) ───────
+        async function pactTerminatePending(id, nextStatus) {
+            var uid = modesUid();
+            var ref = doc(db, PACT_COL, id);
+            var didRun = false;
+            await runTransaction(db, async function (tx) {
+                var snap = await tx.get(ref);
+                if (!snap.exists()) return;
+                var p = snap.data();
+                if (p.status !== 'pending') return;
+                if ((p.participants || []).indexOf(uid) === -1) return;
+                if (nextStatus === 'declined' && p.partner !== uid) return;
+                if (nextStatus === 'cancelled' && p.createdBy !== uid) return;
+                if (nextStatus === 'expired' && modesNow() <= p.expiresAt) return;
+
+                var payout = {};
+                (p.participants || []).forEach(function (u) { payout[u] = 0; });
+                // Only the initiator has paid while a pact is pending.
+                payout[p.createdBy] = p.pot;
+                tx.update(ref, {
+                    status: nextStatus, outcome: nextStatus, failedBy: null,
+                    resolvedAt: modesNow(), pot: 0, payout: payout
+                });
+                didRun = true;
+            });
+            if (didRun) await pactFetch(true);
+            return didRun;
+        }
+
+        // ── Payout claim ──────────────────────────────────────────────────
+        // Automatic, no button, idempotent — `payoutClaimed[myUid]` is the
+        // only key this user may write and only false → true.
+        async function pactClaimPayout(p) {
+            var uid = modesUid();
+            if (!uid) return 0;
+            var owed = (p.payout && p.payout[uid]) || 0;
+            if (owed <= 0) return 0;
+            if (p.payoutClaimed && p.payoutClaimed[uid]) return 0;
+
+            try { cancelPendingUserDataSave(); } catch (e) {}
+            await saveUserData();
+
+            var ref = doc(db, PACT_COL, p.id);
+            var credited = 0, newBalance = null;
+            await runTransaction(db, async function (tx) {
+                var snap = await tx.get(ref);
+                if (!snap.exists()) return;
+                var live = snap.data();
+                var amount = (live.payout && live.payout[uid]) || 0;
+                if (amount <= 0) return;
+                if (live.payoutClaimed && live.payoutClaimed[uid]) return;
+                var bal = await vsReadBalance(tx, uid);
+                newBalance = bal.balance + amount;
+                credited = amount;
+                tx.update(bal.ref, {
+                    'grit.balance': newBalance,
+                    'grit.lifetimeEarned': bal.earned + amount
+                });
+                var patch = {};
+                patch['payoutClaimed.' + uid] = true;
+                tx.update(ref, patch);
+            });
+            if (credited > 0) {
+                vsMirrorBalance(newBalance, credited,
+                    p.outcome === 'kept' ? 'mode_pact_payout' : 'mode_pact_refund',
+                    { pactId: p.id });
+                if (p.payoutClaimed) p.payoutClaimed[uid] = true;
+            }
+            return credited;
+        }
+
+        // ── Lazy maintenance ──────────────────────────────────────────────
+        async function pactRunMaintenance() {
+            if (_pactMaintaining) return;
+            _pactMaintaining = true;
+            try {
+                var uid = modesUid();
+                if (!uid) return;
+                var list = await pactFetch(false);
+                var touched = false;
+                for (var i = 0; i < list.length; i++) {
+                    var p = list[i];
+                    try {
+                        if (p.status === 'pending' && modesNow() > p.expiresAt) {
+                            if (await pactTerminatePending(p.id, 'expired')) touched = true;
+                        } else if (p.status === 'active') {
+                            if (await pactMaybeResolve(p.id)) touched = true;
+                        }
+                    } catch (e) { console.warn('Pact maintenance step failed:', e && e.message); }
+                }
+                if (touched) list = await pactFetch(true);
+
+                for (var j = 0; j < list.length; j++) {
+                    var q = list[j];
+                    if (!pactIsTerminal(q.status)) continue;
+                    try {
+                        var got = await pactClaimPayout(q);
+                        if (got > 0) showToast('+' + got + ' Grit returned from your Pact', 'olive');
+                    } catch (e) { console.warn('Pact claim failed:', e && e.message); }
+                }
+
+                // A resolved pact the local mode never noticed (the partner's
+                // client resolved it while this one was closed).
+                var m = modesState();
+                if (m && m.active && m.active.kind === 'pact') {
+                    var mine = pactGet(m.active.pactId);
+                    if (mine && mine.status === 'resolved') await pactSettleLocal(mine);
+                    else if (mine && pactIsTerminal(mine.status)) {
+                        await modesEnd('ended', 'Pact ended before it started');
+                    }
+                }
+
+                // The INITIATOR's side of acceptance. Their stake was escrowed
+                // when they sent the request, but the accept happens on the
+                // other person's device — so this is the only place their
+                // client learns the pact is live and adopts it as their mode.
+                if (m && !m.active) {
+                    for (var k = 0; k < list.length; k++) {
+                        var live = list[k];
+                        if (live.status !== 'active') continue;
+                        var term = pactTerm(live, uid);
+                        if (!term) continue;
+                        await modesAdoptPact(live, term);
+                        showToast('🤝 ' + pactName(live, pactOther(live, uid)) +
+                                  ' accepted your Pact — it is live.', 'green');
+                        break;
+                    }
+                }
+            } finally {
+                _pactMaintaining = false;
+            }
+        }
+
+        // Pending invites addressed to this user, for the badge and the card.
+        async function pactCheckInvites() {
+            var uid = modesUid();
+            if (!uid) return [];
+            var list = await pactFetch(false);
+            var mine = list.filter(function (p) {
+                return p.status === 'pending' && p.partner === uid && modesNow() <= p.expiresAt;
+            });
+            if (mine.length) modesRefreshBanner();
+            return mine;
+        }
+        window.pactCheckInvites = pactCheckInvites;
+
+        // ══════════════════════════════════════════════════════════════════
+        //  THE MODES PAGE  (Pursuits › Modes)
+        // ══════════════════════════════════════════════════════════════════
+
+        function modesRoot() { return document.getElementById('modesRoot'); }
+        function modesPageVisible() {
+            var el = document.getElementById('mkEmptyPursuitsModes');
+            return !!(el && el.classList.contains('active'));
+        }
+
+        window.modesOpenPage = function () {
+            modesRenderPage();
+            modesRunPass(false).catch(function () {});
+            pactCheckInvites().then(function () { modesRenderPage(); }).catch(function () {});
+        };
+
+        function modesRenderPage() {
+            var host = modesRoot();
+            if (!host) return;
+            if (!window.userData) { host.innerHTML = ''; return; }
+            var m = modesState();
+            var a = m ? m.active : null;
+
+            var html = '';
+            // No title of its own: the v5 nav renders every page's name as
+            // .mk-page-heading above the content, and every other page hides
+            // the heading it used to draw for itself. One name per page.
+            html += '<div class="md-head">' +
+                      '<div class="md-head-main">' +
+                        '<p class="md-sub">One mode at a time. Each one changes how the app treats you for as long as it runs.</p>' +
+                      '</div>' +
+                      '<div class="md-grit" title="Your Grit balance">' +
+                        '<span class="md-grit-dot">◆</span>' +
+                        '<span class="md-grit-n">' + (gritBalance() || 0).toLocaleString() + '</span>' +
+                      '</div>' +
+                    '</div>';
+
+            html += modesInviteCardsHtml();
+
+            if (a) {
+                html += modesActiveCardHtml(a);
+                html += '<div class="md-locked-note">Only one mode runs at a time in this release. ' +
+                        'End ' + MODE_META[a.kind].name + ' to pick another.</div>';
+            }
+
+            html += '<div class="md-grid">';
+            MODE_KINDS.forEach(function (k) {
+                html += modesCatalogCardHtml(k, a);
+            });
+            html += '</div>';
+
+            if (m && m.history && m.history.length) {
+                html += '<div class="md-hist">' +
+                          '<div class="md-hist-kicker">Past runs</div>' +
+                          m.history.slice(0, 6).map(function (h) {
+                              var meta = MODE_META[h.kind] || { name: h.kind, icon: '·' };
+                              return '<div class="md-hist-row md-hist-' + modeEsc(h.outcome) + '">' +
+                                       '<span class="md-hist-icon">' + meta.icon + '</span>' +
+                                       '<span class="md-hist-name">' + modeEsc(meta.name) + '</span>' +
+                                       '<span class="md-hist-sum">' + modeEsc(h.summary || '') + '</span>' +
+                                       '<span class="md-hist-out">' + modeEsc(modeOutcomeWord(h.outcome)) + '</span>' +
+                                     '</div>';
+                          }).join('') +
+                        '</div>';
+            }
+
+            host.innerHTML = html;
+        }
+        window.modesRenderPage = modesRenderPage;
+
+        function modeOutcomeWord(o) {
+            if (o === 'completed') return 'Completed';
+            if (o === 'failed')    return 'Lost';
+            if (o === 'expired')   return 'Expired';
+            return 'Ended';
+        }
+
+        function modesCatalogCardHtml(kind, active) {
+            var meta = MODE_META[kind];
+            var isActive = active && active.kind === kind;
+            var blocked = !!active && !isActive;
+            var m = modesState();
+            var resumable = kind === 'habit' && m && m.suspendedHabit && !active;
+
+            return '<div class="md-card' + (isActive ? ' is-live' : '') + (blocked ? ' is-blocked' : '') +
+                        ' md-card-' + kind + '">' +
+                     '<div class="md-card-top">' +
+                       '<span class="md-card-icon">' + meta.icon + '</span>' +
+                       '<span class="md-card-tag">' + modeEsc(meta.tag) + '</span>' +
+                     '</div>' +
+                     '<div class="md-card-name">' + modeEsc(meta.name) + '</div>' +
+                     '<p class="md-card-blurb">' + modeEsc(meta.blurb) + '</p>' +
+                     '<div class="md-card-foot">' +
+                       '<span class="md-card-cost">◆ ' + modeEsc(modeCostLabel(kind)) + '</span>' +
+                       (isActive
+                         ? '<span class="md-card-live">Running</span>'
+                         : '<button type="button" class="md-card-btn' + (blocked ? ' is-off' : '') + '" ' +
+                            (blocked ? 'disabled ' : '') +
+                            'onclick="modesOpenSetup(\'' + kind + '\')">' +
+                            (resumable ? 'Resume' : 'Activate') + '</button>') +
+                     '</div>' +
+                   '</div>';
+        }
+
+        // ── The active-mode card ──────────────────────────────────────────
+        function modesActiveCardHtml(a) {
+            var meta = MODE_META[a.kind];
+            var body = '';
+            if (a.kind === 'habit')     body = habitPanelHtml(a);
+            if (a.kind === 'berserk')   body = berserkPanelHtml(a);
+            if (a.kind === 'recovery')  body = recoveryPanelHtml(a);
+            if (a.kind === 'insurance') body = insurancePanelHtml(a);
+            if (a.kind === 'stake')     body = stakePanelHtml(a);
+            if (a.kind === 'pact')      body = pactPanelHtml(a);
+            if (a.kind === 'focus')     body = focusPanelHtml(a);
+
+            return '<div class="md-live md-live-' + a.kind + '">' +
+                     '<div class="md-live-head">' +
+                       '<span class="md-live-icon">' + meta.icon + '</span>' +
+                       '<div class="md-live-titles">' +
+                         '<div class="md-live-eyebrow">Running now</div>' +
+                         '<div class="md-live-name">' + modeEsc(meta.name) + '</div>' +
+                       '</div>' +
+                       '<button type="button" class="md-live-end" onclick="modesConfirmEnd()">End</button>' +
+                     '</div>' +
+                     '<div class="md-live-body">' + body + '</div>' +
+                   '</div>';
+        }
+
+        function modeBarHtml(done, total, cls) {
+            var pct = total > 0 ? Math.max(0, Math.min(100, (done / total) * 100)) : 0;
+            return '<div class="md-bar ' + (cls || '') + '">' +
+                     '<span class="md-bar-fill" style="width:' + pct.toFixed(1) + '%"></span>' +
+                   '</div>';
+        }
+
+        function habitPanelHtml(a) {
+            var today = modesToday();
+            var html = '<div class="md-metric">' +
+                         '<span class="md-metric-n">' + (a.daysElapsed || 0) + '</span>' +
+                         '<span class="md-metric-of">of ' + a.targetDays + ' days elapsed</span>' +
+                       '</div>';
+            html += (a.habits || []).map(function (h) {
+                var doneToday = h.lastCompletedDay === today;
+                return '<div class="md-hrow' + (doneToday ? ' is-done' : '') + '">' +
+                         '<div class="md-hrow-top">' +
+                           '<span class="md-hrow-name">' + modeEsc(h.activityName) + '</span>' +
+                           '<span class="md-hrow-count">' + (h.completions || 0) + ' of ' +
+                             (a.daysElapsed || 0) + ' days achieved</span>' +
+                         '</div>' +
+                         modeBarHtml(h.completions || 0, a.targetDays, 'md-bar-green') +
+                         '<div class="md-hrow-meta">' +
+                           '<span class="md-chip">' + modeTimeLabel(h.windowStart) + ' – ' + modeTimeLabel(h.windowEnd) + '</span>' +
+                           (h.anchor ? '<span class="md-chip md-chip-soft">' + modeEsc(h.anchor) + '</span>' : '') +
+                           (doneToday ? '<span class="md-chip md-chip-done">Done today</span>' : '') +
+                         '</div>' +
+                         (h.why ? '<p class="md-why">“' + modeEsc(h.why) + '”</p>' : '') +
+                       '</div>';
+            }).join('');
+            return html;
+        }
+
+        function berserkPanelHtml(a) {
+            var earned = berserkEarned(a);
+            var left = Math.max(0, a.endsAt - modesNow());
+            var mins = Math.floor(left / 60000);
+            var hh = Math.floor(mins / 60), mm = mins % 60;
+            return '<div class="md-metric md-metric-hot">' +
+                     '<span class="md-metric-n">' + earned.toLocaleString() + '</span>' +
+                     '<span class="md-metric-of">of ' + a.targetXP.toLocaleString() + ' XP</span>' +
+                   '</div>' +
+                   modeBarHtml(earned, a.targetXP, 'md-bar-hot') +
+                   '<div class="md-hrow-meta">' +
+                     '<span class="md-chip md-chip-hot">' + (left > 0 ? hh + 'h ' + mm + 'm left' : 'Window closed') + '</span>' +
+                     '<span class="md-chip">' + a.hours + '-hour window</span>' +
+                     '<span class="md-chip">Win +30% · Miss −30%</span>' +
+                   '</div>' +
+                   '<p class="md-note">Progress recalculates whenever you open this page. ' +
+                     'Log activities anywhere in the app — the mode is running in the background either way.</p>' +
+                   '<button type="button" class="md-refresh" onclick="modesRenderPage()">Refresh</button>';
+        }
+
+        function recoveryPanelHtml(a) {
+            return (a.activities || []).map(function (x) {
+                var act = gritFindActivity(x.activityId);
+                var cur = act ? (act.streak || 0) : 0;
+                var atCeiling = cur >= x.ceiling;
+                return '<div class="md-hrow' + (atCeiling ? ' is-done' : '') + '">' +
+                         '<div class="md-hrow-top">' +
+                           '<span class="md-hrow-name">' + modeEsc(x.activityName) + '</span>' +
+                           '<span class="md-hrow-count">' + cur + ' / ' + x.ceiling + '</span>' +
+                         '</div>' +
+                         modeBarHtml(cur, x.ceiling, 'md-bar-blue') +
+                         '<div class="md-hrow-meta">' +
+                           '<span class="md-chip">Peak ' + x.ceiling + '</span>' +
+                           (atCeiling
+                             ? '<span class="md-chip md-chip-done">At peak — normal rate</span>'
+                             : '<span class="md-chip md-chip-soft">+1 bonus per completion</span>') +
+                         '</div>' +
+                       '</div>';
+            }).join('') +
+            '<p class="md-note">Recovery ends itself the moment every activity here is back at its own all-time high.</p>';
+        }
+
+        function insurancePanelHtml(a) {
+            var m = modesState();
+            var days = insuranceDaysOn(a);
+            return '<div class="md-metric">' +
+                     '<span class="md-metric-n">' + days + '</span>' +
+                     '<span class="md-metric-of">days insured</span>' +
+                   '</div>' +
+                   (a.activities || []).map(function (x) {
+                       var act = gritFindActivity(x.activityId);
+                       var held = (m && m.streakOffsets[String(x.activityId)]) || 0;
+                       return '<div class="md-hrow">' +
+                                '<div class="md-hrow-top">' +
+                                  '<span class="md-hrow-name">' + modeEsc(x.activityName) + '</span>' +
+                                  '<span class="md-hrow-count">Streak ' + (act ? (act.streak || 0) : 0) + '</span>' +
+                                '</div>' +
+                                '<div class="md-hrow-meta">' +
+                                  '<span class="md-chip md-chip-soft">Downside suspended</span>' +
+                                  (held > 0 ? '<span class="md-chip md-chip-done">' + held + ' day' +
+                                              (held === 1 ? '' : 's') + ' held</span>' : '') +
+                                '</div>' +
+                              '</div>';
+                   }).join('') +
+                   '<p class="md-note">Missing a day costs nothing here. Logging still counts normally — ' +
+                     'insurance suspends the downside, it does not pause your progress.</p>';
+        }
+
+        function stakePanelHtml(a) {
+            var left = stakeDaysLeft(a);
+            return '<div class="md-metric">' +
+                     '<span class="md-metric-n">' + stakeTotalCount(a) + '</span>' +
+                     '<span class="md-metric-of">of ' + stakeTotalTarget(a) + ' completions</span>' +
+                   '</div>' +
+                   (a.items || []).map(function (it) {
+                       var done = (it.count || 0) >= it.target;
+                       return '<div class="md-hrow' + (done ? ' is-done' : '') + '">' +
+                                '<div class="md-hrow-top">' +
+                                  '<span class="md-hrow-name">' + modeEsc(it.activityName) + '</span>' +
+                                  '<span class="md-hrow-count">' + Math.min(it.count || 0, it.target) +
+                                    ' / ' + it.target + '</span>' +
+                                '</div>' +
+                                modeBarHtml(it.count || 0, it.target, done ? 'md-bar-green' : 'md-bar-blue') +
+                              '</div>';
+                   }).join('') +
+                   '<div class="md-hrow-meta">' +
+                     '<span class="md-chip' + (left <= 1 ? ' md-chip-hot' : '') + '">' +
+                       (left > 0 ? left + ' day' + (left === 1 ? '' : 's') + ' left' : 'Window closed') + '</span>' +
+                     '<span class="md-chip">◆ ' + a.wager + ' staked</span>' +
+                     '<span class="md-chip">Win ◆ ' + (a.wager + Math.round(a.wager * MODE_WAGER_RETURN)) + '</span>' +
+                   '</div>' +
+                   '<p class="md-note">All or nothing. Every target has to land inside the window — one short is the same as none.</p>';
+        }
+
+        function focusPanelHtml(a) {
+            var nowMins = modeMinutesNow();
+            var s = modeMins(a.windowStart), e = modeMins(a.windowEnd);
+            var open = s !== null && e !== null && modeInWindow(s, e, nowMins, 0, 0);
+            return '<div class="md-metric">' +
+                     '<span class="md-metric-n">' + (a.daysElapsed || 0) + '</span>' +
+                     '<span class="md-metric-of">of ' + a.targetDays + ' days</span>' +
+                   '</div>' +
+                   modeBarHtml(a.daysElapsed || 0, a.targetDays, 'md-bar-blue') +
+                   '<div class="md-hrow-meta">' +
+                     '<span class="md-chip' + (open ? ' md-chip-done' : '') + '">' +
+                       modeTimeLabel(a.windowStart) + ' – ' + modeTimeLabel(a.windowEnd) +
+                       (open ? ' · open now' : '') + '</span>' +
+                     '<span class="md-chip">+' + Math.round(FOCUS_MULTIPLIER * 100) + '% XP inside</span>' +
+                     '<span class="md-chip">' + (a.bonusCount || 0) + ' boosted · +' + (a.bonusXP || 0) + ' XP</span>' +
+                   '</div>' +
+                   '<p class="md-note">Anything you log inside the window earns the bonus — it is not tied to one activity.</p>';
+        }
+
+        function pactPanelHtml(a) {
+            var p = pactGet(a.pactId);
+            var uid = modesUid();
+            var mineDone = p ? pactProgress(p, uid) : 0;
+            var theirs = p ? pactTerm(p, a.partnerUid) : null;
+            var theirsDone = p ? pactProgress(p, a.partnerUid) : 0;
+            var notStarted = a.windowStartsAt && modesNow() < a.windowStartsAt;
+            var left = a.endsAt ? Math.max(0, Math.ceil((a.endsAt - modesNow()) / 86400000)) : 0;
+
+            return '<div class="md-pact">' +
+                     '<div class="md-pact-side">' +
+                       '<div class="md-pact-who">You</div>' +
+                       '<div class="md-pact-act">' + modeEsc(a.activityName) + '</div>' +
+                       '<div class="md-pact-n">' + Math.min(mineDone, a.target) + ' / ' + a.target + '</div>' +
+                       modeBarHtml(mineDone, a.target, 'md-bar-blue') +
+                     '</div>' +
+                     '<div class="md-pact-link">🤝</div>' +
+                     '<div class="md-pact-side">' +
+                       '<div class="md-pact-who">' + modeEsc(a.partnerName) + '</div>' +
+                       '<div class="md-pact-act">' + modeEsc(theirs ? theirs.activityName : '—') + '</div>' +
+                       '<div class="md-pact-n">' + (theirs ? Math.min(theirsDone, theirs.target) + ' / ' + theirs.target : '—') + '</div>' +
+                       modeBarHtml(theirsDone, theirs ? theirs.target : 1, 'md-bar-green') +
+                     '</div>' +
+                   '</div>' +
+                   '<div class="md-hrow-meta">' +
+                     '<span class="md-chip">' + (notStarted ? 'Starts tomorrow' : left + ' day' + (left === 1 ? '' : 's') + ' left') + '</span>' +
+                     '<span class="md-chip">◆ ' + PACT_WAGER + ' each</span>' +
+                   '</div>' +
+                   '<p class="md-note">If either of you falls short, the pact breaks for both. Not a race — two separate targets, one shared outcome.</p>';
+        }
+
+        // ── Pending pact invites ──────────────────────────────────────────
+        function modesInviteCardsHtml() {
+            var uid = modesUid();
+            if (!uid) return '';
+            var invites = (_pactCache.list || []).filter(function (p) {
+                return p.status === 'pending' && p.partner === uid && modesNow() <= p.expiresAt;
+            });
+            var mineOut = (_pactCache.list || []).filter(function (p) {
+                return p.status === 'pending' && p.createdBy === uid && modesNow() <= p.expiresAt;
+            });
+            var html = '';
+            invites.forEach(function (p) {
+                var from = pactName(p, p.createdBy);
+                var t = pactTerm(p, p.createdBy) || {};
+                html += '<div class="md-invite">' +
+                          '<div class="md-invite-top">🤝 <strong>' + modeEsc(from) + '</strong> wants to start a Pact with you</div>' +
+                          '<div class="md-invite-body">' +
+                            'They are committing to <strong>' + modeEsc(t.activityName || 'an activity') + ' × ' +
+                            (t.target || 0) + '</strong> over ' + p.durationDays + ' days. ' +
+                            'You pick your own activity and target — and stake ◆ ' + p.stake + ' as well. ' +
+                            'If either of you falls short, both stakes are gone.' +
+                          '</div>' +
+                          '<div class="md-invite-btns">' +
+                            '<button type="button" class="md-btn md-btn-primary" onclick="pactOpenAccept(\'' + modeEsc(p.id) + '\')">Accept</button>' +
+                            '<button type="button" class="md-btn" onclick="pactDecline(\'' + modeEsc(p.id) + '\')">Decline</button>' +
+                          '</div>' +
+                        '</div>';
+            });
+            mineOut.forEach(function (p) {
+                html += '<div class="md-invite md-invite-out">' +
+                          '<div class="md-invite-top">⏳ Waiting on <strong>' + modeEsc(pactName(p, p.partner)) + '</strong></div>' +
+                          '<div class="md-invite-body">Your ◆ ' + p.stake + ' is held until they accept or the invite expires. ' +
+                            'The pact starts the day after they accept.</div>' +
+                          '<div class="md-invite-btns">' +
+                            '<button type="button" class="md-btn" onclick="pactWithdraw(\'' + modeEsc(p.id) + '\')">Withdraw</button>' +
+                          '</div>' +
+                        '</div>';
+            });
+            return html;
+        }
+
+        window.modesConfirmEnd = function () {
+            var a = modesActive();
+            if (!a) return;
+            var meta = MODE_META[a.kind];
+            var msg;
+            if (a.kind === 'stake') {
+                msg = 'End Stake Mode now? Your ◆ ' + a.wager + ' stake is forfeited — the wager only pays if every target lands.';
+            } else if (a.kind === 'pact') {
+                msg = 'Break the pact now? Your ◆ ' + PACT_WAGER + ' is gone, and so is ' +
+                      a.partnerName + '’s. They will be told you ended it.';
+            } else if (a.kind === 'berserk') {
+                msg = 'End Berserk Mode now? Ending early counts as a miss — the 30% XP penalty applies.';
+            } else if (a.kind === 'habit') {
+                msg = 'Turn Habit Mode off? Your day count pauses right here. Turn it back on within ' +
+                      HABIT_RESUME_DAYS + ' days and you carry on from where you left off; after that it starts fresh.';
+            } else if (a.kind === 'insurance') {
+                msg = 'Turn Insurance off? The days it already protected stay protected — ' +
+                      'they were insured, and that does not get taken back. From tomorrow, ' +
+                      'missing costs you the streak like any other activity.';
+            } else {
+                msg = 'End ' + meta.name + ' now? The Grit you spent to start it is not refunded.';
+            }
+            if (!confirm(msg)) return;
+            modesEndByUser();
+        };
+
+        async function modesEndByUser() {
+            var a = modesActive();
+            if (!a) return;
+            if (a.kind === 'berserk') { await berserkMaybeResolve(true); return; }
+            if (a.kind === 'stake')   { await stakeMaybeResolve(true); return; }
+            if (a.kind === 'pact') {
+                // Breaking a pact deliberately is a forfeit for both. Resolve
+                // the shared document so the partner learns it from the record,
+                // not from a message this client sends.
+                try {
+                    var p = pactGet(a.pactId);
+                    if (p && p.status === 'pending') { await pactTerminatePending(a.pactId, 'cancelled'); }
+                    else if (p) {
+                        var ref = doc(db, PACT_COL, a.pactId);
+                        var uid = modesUid();
+                        await runTransaction(db, async function (tx) {
+                            var snap = await tx.get(ref);
+                            if (!snap.exists()) return;
+                            var live = snap.data();
+                            if (live.status !== 'active') return;
+                            var payout = {};
+                            (live.participants || []).forEach(function (u) { payout[u] = 0; });
+                            tx.update(ref, { status: 'resolved', outcome: 'broken', failedBy: uid,
+                                             resolvedAt: modesNow(), pot: 0, payout: payout });
+                        });
+                    }
+                    await pactFetch(true);
+                } catch (e) { console.warn('Pact break failed:', e && e.message); }
+                await modesEnd('failed', 'Ended early');
+                return;
+            }
+            if (a.kind === 'insurance') {
+                // The protection already granted is kept: those days genuinely
+                // were insured. The offsets simply stop growing (see the
+                // streak-pass header).
+                await modesEnd('ended', insuranceDaysOn(a) + ' days insured');
+                return;
+            }
+            if (a.kind === 'habit') {
+                await modesEnd('ended', (a.daysElapsed || 0) + ' of ' + a.targetDays + ' days');
+                return;
+            }
+            await modesEnd('ended', '');
+        }
+
+        window.pactDecline = async function (id) {
+            if (!confirm('Decline this Pact? Their stake goes straight back to them.')) return;
+            try {
+                await pactTerminatePending(id, 'declined');
+                showToast('Pact declined.', 'olive');
+                modesRenderPage();
+            } catch (e) { showToast(modeErrText(e), 'red'); }
+        };
+
+        window.pactWithdraw = async function (id) {
+            if (!confirm('Withdraw this Pact invite? Your stake comes back.')) return;
+            try {
+                await pactTerminatePending(id, 'cancelled');
+                await pactRunMaintenance();
+                showToast('Invite withdrawn — your Grit is on its way back.', 'olive');
+                modesRenderPage();
+            } catch (e) { showToast(modeErrText(e), 'red'); }
+        };
+
+        function modeErrText(e) {
+            var msg = (e && e.message) ? String(e.message) : 'Something went wrong.';
+            var m = /^SHORTFALL:(\d+)$/.exec(msg);
+            if (m) return 'You need ' + m[1] + ' more Grit for that.';
+            return msg;
+        }
+
+        // A slim banner the rest of the app can show. Only rendered where the
+        // markup exists; everywhere else this is a no-op.
+        function modesRefreshBanner() {
+            var el = document.getElementById('modesBanner');
+            if (!el) return;
+            var a = modesActive();
+            var uid = modesUid();
+            var invites = (_pactCache.list || []).filter(function (p) {
+                return p.status === 'pending' && p.partner === uid && modesNow() <= p.expiresAt;
+            }).length;
+            if (!a && !invites) { el.style.display = 'none'; el.innerHTML = ''; return; }
+            el.style.display = '';
+            if (a) {
+                var meta = MODE_META[a.kind];
+                el.className = 'md-banner md-banner-' + a.kind;
+                el.innerHTML = '<span class="md-banner-icon">' + meta.icon + '</span>' +
+                               '<span class="md-banner-text">' + modeEsc(meta.name) + ' is running</span>';
+            } else {
+                el.className = 'md-banner md-banner-invite';
+                el.innerHTML = '<span class="md-banner-icon">🤝</span>' +
+                               '<span class="md-banner-text">' + invites + ' Pact invite' +
+                               (invites === 1 ? '' : 's') + ' waiting</span>';
+            }
+        }
+        window.modesRefreshBanner = modesRefreshBanner;
+
+        // ══════════════════════════════════════════════════════════════════
+        //  SETUP SHEETS
+        // ══════════════════════════════════════════════════════════════════
+        //
+        // One bottom sheet, reused by every mode, so the seven setups read as
+        // one component rather than seven near-misses. It is the same shell the
+        // gifting and versus sheets use.
+
+        let _modeSetup = null;
+
+        function modeCloseSheet() {
+            var el = document.getElementById('modeSheet');
+            if (el) el.remove();
+            _modeSetup = null;
+        }
+        window.modeCloseSheet = modeCloseSheet;
+
+        function modeSheet(inner) {
+            var el = document.getElementById('modeSheet');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'modeSheet';
+                el.className = 'modal-overlay gift-sheet-scrim md-sheet-scrim active';
+                el.addEventListener('click', function (e) { if (e.target === el) modeCloseSheet(); });
+                document.body.appendChild(el);
+            }
+            el.innerHTML = '<div class="modal pl-modal gift-sheet md-sheet">' + inner + '</div>';
+            return el;
+        }
+
+        function modeSheetHead(title, eyebrow) {
+            return '<div class="modal-header pl-modal-header">' +
+                     '<div>' +
+                       (eyebrow ? '<div class="pl-modal-eyebrow">' + modeEsc(eyebrow) + '</div>' : '') +
+                       '<h3 class="modal-title">' + modeEsc(title) + '</h3></div>' +
+                     '<button class="pl-modal-close" type="button" onclick="modeCloseSheet()" aria-label="Close">' +
+                       '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+                     '</button></div>';
+        }
+
+        function modeSheetFoot(label, onclick, disabled, sub) {
+            return '<div class="md-sheet-foot">' +
+                     (sub ? '<div class="md-sheet-cost">' + sub + '</div>' : '') +
+                     '<button type="button" class="md-btn md-btn-primary md-btn-wide"' +
+                       (disabled ? ' disabled' : '') + ' onclick="' + onclick + '">' +
+                       modeEsc(label) + '</button>' +
+                   '</div>';
+        }
+
+        function modeAffordable(cost) { return (gritBalance() || 0) >= cost; }
+
+        function modeCostLine(cost) {
+            var bal = gritBalance() || 0;
+            return '<span class="md-cost-n">◆ ' + cost + '</span>' +
+                   '<span class="md-cost-bal">' + (bal >= cost
+                     ? 'you have ' + bal
+                     : 'you have ' + bal + ' — ' + (cost - bal) + ' short') + '</span>';
+        }
+
+        window.modesOpenSetup = function (kind) {
+            if (modesActive()) {
+                showToast('Only one mode at a time for now — end the running one first.', 'olive');
+                return;
+            }
+            var m = modesState();
+            if (kind === 'habit' && m && m.suspendedHabit) { habitOpenResume(); return; }
+            _modeSetup = { kind: kind, step: 0, picks: [], detailIndex: 0 };
+            if (kind === 'habit')     { _modeSetup.targetDays = HABIT_DEFAULT_DAYS; habitRenderSetup(); }
+            if (kind === 'berserk')   { _modeSetup.hours = 2; berserkRenderSetup(); }
+            if (kind === 'recovery')  { recoveryRenderSetup(); }
+            if (kind === 'insurance') { insuranceRenderSetup(); }
+            if (kind === 'stake')     { _modeSetup.days = STAKE_MIN_DAYS; _modeSetup.wager = MODE_WAGER_MIN; stakeRenderSetup(); }
+            if (kind === 'focus')     { _modeSetup.windowStart = '18:00'; _modeSetup.windowEnd = '20:00';
+                                        _modeSetup.days = 14; focusRenderSetup(); }
+            if (kind === 'pact')      { _modeSetup.days = 7; _modeSetup.target = 5; pactRenderSetup(); }
+        };
+
+        // ── Shared activity picker ────────────────────────────────────────
+        function modePickerHtml(max, opts) {
+            opts = opts || {};
+            var acts = modeEligibleActivities({ streakOnly: !!opts.streakOnly });
+            if (!acts.length) {
+                return '<p class="md-empty">You have no activities that can carry this mode yet. ' +
+                       'Create one on the Activities tab first.</p>';
+            }
+            var picked = _modeSetup.picks || [];
+            return '<div class="md-picker">' + acts.map(function (a) {
+                var on = picked.indexOf(a.id) !== -1;
+                var meta = opts.showPeak
+                    ? 'peak ' + Math.max(a.bestStreak, a.streak)
+                    : (a.dimName || '');
+                var blocked = opts.streakOnly && Math.max(a.bestStreak, a.streak) < 1 && opts.needPeak;
+                return '<button type="button" class="md-pick' + (on ? ' is-on' : '') +
+                         (blocked ? ' is-off' : '') + '"' + (blocked ? ' disabled' : '') +
+                         ' onclick="modeTogglePick(\'' + modeEsc(a.id) + '\',' + max + ')">' +
+                         '<span class="md-pick-name">' + modeEsc(a.name) + '</span>' +
+                         '<span class="md-pick-meta">' + modeEsc(meta) + '</span>' +
+                       '</button>';
+            }).join('') + '</div>' +
+            '<p class="md-hint">Pick up to ' + max + '. ' + (opts.hint || '') + '</p>';
+        }
+
+        window.modeTogglePick = function (id, max) {
+            if (!_modeSetup) return;
+            var i = _modeSetup.picks.indexOf(id);
+            if (i !== -1) _modeSetup.picks.splice(i, 1);
+            else {
+                if (_modeSetup.picks.length >= max) {
+                    showToast('That is the maximum for this mode — ' + max + '.', 'olive');
+                    return;
+                }
+                _modeSetup.picks.push(id);
+            }
+            modeRerenderSetup();
+        };
+
+        function modeRerenderSetup() {
+            if (!_modeSetup) return;
+            var k = _modeSetup.kind;
+            if (k === 'habit')     habitRenderSetup();
+            if (k === 'berserk')   berserkRenderSetup();
+            if (k === 'recovery')  recoveryRenderSetup();
+            if (k === 'insurance') insuranceRenderSetup();
+            if (k === 'stake')     stakeRenderSetup();
+            if (k === 'focus')     focusRenderSetup();
+            if (k === 'pact')      pactRenderSetup();
+        }
+
+        window.modeSetField = function (field, value) {
+            if (!_modeSetup) return;
+            _modeSetup[field] = value;
+            modeRerenderSetup();
+        };
+        window.modeSetNum = function (field, value, lo, hi) {
+            if (!_modeSetup) return;
+            var n = parseInt(value, 10);
+            if (isNaN(n)) return;
+            _modeSetup[field] = Math.max(lo, Math.min(hi, n));
+            modeRerenderSetup();
+        };
+        // Free-text and time inputs must not re-render on every keystroke —
+        // that would blow away the caret. They write straight through.
+        window.modeWriteField = function (field, value) {
+            if (_modeSetup) _modeSetup[field] = value;
+        };
+        window.modeWriteDetail = function (idx, field, value) {
+            if (!_modeSetup || !_modeSetup.details) return;
+            if (!_modeSetup.details[idx]) _modeSetup.details[idx] = {};
+            _modeSetup.details[idx][field] = value;
+        };
+
+        // ══ HABIT ═════════════════════════════════════════════════════════
+        function habitRenderSetup() {
+            var s = _modeSetup;
+            var cost = MODE_COST.habit;
+            var html = modeSheetHead('Habit Mode', 'Build');
+
+            if (s.step === 0) {
+                html += '<div class="modal-body md-body">' +
+                          '<p class="md-lede">Pick one to three activities to turn into real habits. ' +
+                          'Each one gets a time window, an optional anchor, and your own reason for doing it.</p>' +
+                          modePickerHtml(HABIT_MAX_ACTS, { hint: 'These become the only thing the app asks you about during their windows.' }) +
+                        '</div>' +
+                        modeSheetFoot('Next', 'habitSetupNext()', s.picks.length === 0,
+                                      modeCostLine(cost));
+            } else if (s.step === 1) {
+                var i = s.detailIndex;
+                var act = modeEligibleActivities().filter(function (a) { return a.id === s.picks[i]; })[0] || { name: 'Activity' };
+                var d = (s.details && s.details[i]) || {};
+                html += '<div class="modal-body md-body">' +
+                          '<div class="md-step">Habit ' + (i + 1) + ' of ' + s.picks.length + '</div>' +
+                          '<div class="md-step-name">' + modeEsc(act.name) + '</div>' +
+
+                          '<label class="md-label">Every day, between</label>' +
+                          '<div class="md-time-row">' +
+                            '<input type="time" class="md-input md-time" value="' + modeEsc(d.windowStart || '22:00') + '" ' +
+                              'onchange="modeWriteDetail(' + i + ',\'windowStart\',this.value)">' +
+                            '<span class="md-time-and">and</span>' +
+                            '<input type="time" class="md-input md-time" value="' + modeEsc(d.windowEnd || '23:00') + '" ' +
+                              'onchange="modeWriteDetail(' + i + ',\'windowEnd\',this.value)">' +
+                          '</div>' +
+                          '<p class="md-hint">You will be nudged an hour before it opens, and again half an hour after it closes if it is still unlogged.</p>' +
+
+                          '<label class="md-label">Anchor <span class="md-label-opt">optional</span></label>' +
+                          '<input type="text" class="md-input" maxlength="80" placeholder="right after brushing my teeth" ' +
+                            'value="' + modeEsc(d.anchor || '') + '" ' +
+                            'oninput="modeWriteDetail(' + i + ',\'anchor\',this.value)">' +
+                          '<p class="md-hint">Just words. Nothing is tracked or timed from this — it goes into your reminders so they read like your own life.</p>' +
+
+                          '<label class="md-label">Why is this important to you?</label>' +
+                          '<textarea class="md-input md-textarea" maxlength="240" rows="3" ' +
+                            'placeholder="Say it in your own words." ' +
+                            'oninput="modeWriteDetail(' + i + ',\'why\',this.value)">' + modeEsc(d.why || '') + '</textarea>' +
+                          '<p class="md-hint">Saved exactly as you write it. On a day you miss, this comes back to you word for word — never rewritten, never summarised.</p>' +
+                        '</div>' +
+                        modeSheetFoot(i + 1 < s.picks.length ? 'Next habit' : 'Set the length',
+                                      'habitDetailNext()', false, '');
+            } else {
+                html += '<div class="modal-body md-body">' +
+                          '<p class="md-lede">How long are you running this for?</p>' +
+                          '<div class="md-bignum">' + s.targetDays + '<span>days</span></div>' +
+                          '<input type="range" class="md-range" min="' + HABIT_MIN_DAYS + '" max="' + HABIT_MAX_DAYS + '" ' +
+                            'value="' + s.targetDays + '" oninput="modeSetNum(\'targetDays\',this.value,' +
+                            HABIT_MIN_DAYS + ',' + HABIT_MAX_DAYS + ')">' +
+                          '<p class="md-hint">33 is the default for a reason — long enough to stick, short enough to finish. ' +
+                            'The count only moves while the mode is on.</p>' +
+                          '<div class="md-summary">' +
+                            s.picks.map(function (id, i) {
+                                var a = modeEligibleActivities().filter(function (x) { return x.id === id; })[0] || {};
+                                var d = (s.details && s.details[i]) || {};
+                                return '<div class="md-summary-row"><strong>' + modeEsc(a.name || '') + '</strong> — ' +
+                                       modeTimeLabel(d.windowStart || '22:00') + ' to ' + modeTimeLabel(d.windowEnd || '23:00') +
+                                       (d.anchor ? ', ' + modeEsc(d.anchor) : '') + '</div>';
+                            }).join('') +
+                          '</div>' +
+                        '</div>' +
+                        modeSheetFoot('Start Habit Mode', 'habitStart()', !modeAffordable(cost),
+                                      modeCostLine(cost));
+            }
+            modeSheet(html);
+        }
+
+        window.habitSetupNext = function () {
+            if (!_modeSetup || !_modeSetup.picks.length) return;
+            _modeSetup.details = _modeSetup.picks.map(function () {
+                return { windowStart: '22:00', windowEnd: '23:00', anchor: '', why: '' };
+            });
+            _modeSetup.step = 1;
+            _modeSetup.detailIndex = 0;
+            habitRenderSetup();
+        };
+
+        window.habitDetailNext = function () {
+            var s = _modeSetup;
+            if (!s) return;
+            var d = s.details[s.detailIndex] || {};
+            if (modeMins(d.windowStart) === null || modeMins(d.windowEnd) === null) {
+                showToast('Pick a start and an end time for the window.', 'red'); return;
+            }
+            if (!String(d.why || '').trim()) {
+                showToast('Write why this one matters — it is the part that brings you back.', 'red'); return;
+            }
+            if (s.detailIndex + 1 < s.picks.length) { s.detailIndex++; }
+            else { s.step = 2; }
+            habitRenderSetup();
+        };
+
+        window.habitStart = async function () {
+            var s = _modeSetup;
+            if (!s) return;
+            var acts = modeEligibleActivities();
+            var habits = s.picks.map(function (id, i) {
+                var a = acts.filter(function (x) { return x.id === id; })[0] || {};
+                var d = s.details[i] || {};
+                return {
+                    activityId: id, activityName: a.name || 'Activity',
+                    windowStart: d.windowStart, windowEnd: d.windowEnd,
+                    anchor: String(d.anchor || '').trim(),
+                    why: String(d.why || '').trim(),
+                    completions: 0, lastCompletedDay: null,
+                    milestonesShown: [], overlayDismissedDay: null
+                };
+            });
+            var res = await modesActivate('habit', {
+                habits: habits, targetDays: s.targetDays,
+                daysElapsed: 0, lastCountedDay: modesToday()
+            }, MODE_COST.habit, 'mode_habit');
+            if (!res.ok) { showToast(res.message, 'red'); return; }
+            modeCloseSheet();
+            showToast('🌱 Habit Mode is on — ' + habits.length + ' habit' + (habits.length === 1 ? '' : 's') +
+                      ' for ' + s.targetDays + ' days', 'green');
+            modesRenderPage();
+        };
+
+        function habitOpenResume() {
+            var m = modesState();
+            var sus = m && m.suspendedHabit;
+            if (!sus) { return; }
+            var p = sus.payload;
+            var offDays = Math.floor((modesNow() - new Date(sus.offAt).getTime()) / 86400000);
+            var html = modeSheetHead('Habit Mode', 'Resume');
+            html += '<div class="modal-body md-body">' +
+                      '<p class="md-lede">You paused this ' + (offDays === 0 ? 'today' : offDays + ' day' + (offDays === 1 ? '' : 's') + ' ago') +
+                        '. Pick it back up where you left it, or start over.</p>' +
+                      '<div class="md-summary">' +
+                        '<div class="md-summary-row"><strong>' + (p.daysElapsed || 0) + ' of ' + p.targetDays + ' days</strong> elapsed</div>' +
+                        (p.habits || []).map(function (h) {
+                            return '<div class="md-summary-row">' + modeEsc(h.activityName) + ' — ' +
+                                   (h.completions || 0) + ' achieved</div>';
+                        }).join('') +
+                      '</div>' +
+                      '<p class="md-hint">Resuming costs nothing. Starting fresh archives this run and costs ◆ ' +
+                        MODE_COST.habit + ' like a new activation.</p>' +
+                    '</div>' +
+                    '<div class="md-sheet-foot md-sheet-foot-2">' +
+                      '<button type="button" class="md-btn" onclick="habitStartFresh()">Start fresh</button>' +
+                      '<button type="button" class="md-btn md-btn-primary" onclick="habitResume()">Resume</button>' +
+                    '</div>';
+            modeSheet(html);
+        }
+
+        window.habitResume = async function () {
+            var m = modesState();
+            if (!m || !m.suspendedHabit) return;
+            if (m.active) { showToast('End the running mode first.', 'olive'); return; }
+            var p = m.suspendedHabit.payload;
+            // The day count picks up from where it stopped: time spent with the
+            // mode off never counted, so it is not counted now either (spec §1).
+            p.lastCountedDay = modesToday();
+            m.active = p;
+            m.suspendedHabit = null;
+            try { await saveUserData(); } catch (e) {}
+            try { await modesSyncNotifications(); } catch (e) {}
+            modeCloseSheet();
+            showToast('🌱 Habit Mode resumed at day ' + (p.daysElapsed || 0), 'green');
+            modesRenderPage();
+        };
+
+        window.habitStartFresh = function () {
+            var m = modesState();
+            if (m) {
+                if (m.suspendedHabit) {
+                    m.history.unshift({ id: m.suspendedHabit.payload.id, kind: 'habit', outcome: 'ended',
+                        startedAt: m.suspendedHabit.payload.startedAt, endedAt: m.suspendedHabit.offAt,
+                        summary: (m.suspendedHabit.payload.daysElapsed || 0) + ' of ' +
+                                 m.suspendedHabit.payload.targetDays + ' days (archived)' });
+                }
+                m.suspendedHabit = null;
+            }
+            saveUserData().catch(function () {});
+            _modeSetup = { kind: 'habit', step: 0, picks: [], detailIndex: 0, targetDays: HABIT_DEFAULT_DAYS };
+            habitRenderSetup();
+        };
+
+        // ══ BERSERK ═══════════════════════════════════════════════════════
+        function berserkRenderSetup() {
+            var s = _modeSetup;
+            var cost = MODE_COST.berserk;
+            var target = berserkTargetFor(s.hours);
+            var perHour = berserkPerHourTarget();
+            var swing = Math.round(target * BERSERK_SWING);
+
+            var html = modeSheetHead('Berserk Mode', 'Extreme');
+            html += '<div class="modal-body md-body md-body-hot">' +
+                      '<p class="md-lede">Commit to a window. Hit the XP target inside it for a 30% bonus. ' +
+                        'Miss it and 30% comes off. There is no middle.</p>' +
+                      '<div class="md-bignum md-bignum-hot">' + s.hours + '<span>hour' + (s.hours === 1 ? '' : 's') + '</span></div>' +
+                      '<input type="range" class="md-range md-range-hot" min="' + BERSERK_MIN_HOURS + '" max="' + BERSERK_MAX_HOURS + '" ' +
+                        'value="' + s.hours + '" oninput="modeSetNum(\'hours\',this.value,' +
+                        BERSERK_MIN_HOURS + ',' + BERSERK_MAX_HOURS + ')">' +
+                      '<div class="md-stakes">' +
+                        '<div class="md-stake"><span class="md-stake-k">Target</span><span class="md-stake-v">' + target.toLocaleString() + ' XP</span></div>' +
+                        '<div class="md-stake md-stake-win"><span class="md-stake-k">If you clear it</span><span class="md-stake-v">+' + swing.toLocaleString() + ' XP</span></div>' +
+                        '<div class="md-stake md-stake-lose"><span class="md-stake-k">If you miss</span><span class="md-stake-v">−30% of what you earned</span></div>' +
+                      '</div>' +
+                      '<p class="md-hint">Built from your trailing 7-day average of ' + Math.round(perHour) +
+                        ' XP an hour, damped so a great week raises the bar a little rather than a lot. ' +
+                        'It is meant to be hard and reachable, not either one alone.</p>' +
+                      '<p class="md-hint md-hint-hot">The whole app turns red while this runs. It keeps running whether you stay on this page or close the app entirely — log activities as normal and the target fills.</p>' +
+                    '</div>' +
+                    modeSheetFoot('Go berserk', 'berserkStart()', !modeAffordable(cost), modeCostLine(cost));
+            modeSheet(html);
+        }
+
+        window.berserkStart = async function () {
+            var s = _modeSetup;
+            if (!s) return;
+            var now = modesNow();
+            var target = berserkTargetFor(s.hours);
+            var res = await modesActivate('berserk', {
+                hours: s.hours,
+                startedAtMs: now,
+                endsAt: now + s.hours * 3600000,
+                targetXP: target,
+                perHourTarget: berserkPerHourTarget(),
+                resolved: false
+            }, MODE_COST.berserk, 'mode_berserk');
+            if (!res.ok) { showToast(res.message, 'red'); return; }
+            modeCloseSheet();
+            showToast('🔥 Berserk — ' + target.toLocaleString() + ' XP in ' + s.hours + 'h', 'red');
+            modesRenderPage();
+        };
+
+        // ══ RECOVERY ══════════════════════════════════════════════════════
+        function recoveryRenderSetup() {
+            var s = _modeSetup;
+            var cost = MODE_COST.recovery;
+            var acts = modeEligibleActivities({ streakOnly: true });
+            var picked = s.picks.filter(function (id) {
+                return acts.some(function (a) { return a.id === id; });
+            });
+            var html = modeSheetHead('Recovery Mode', 'Return');
+            html += '<div class="modal-body md-body">' +
+                      '<p class="md-lede">Pick up to three activities to put into recovery. Each one climbs an extra ' +
+                        'step per completion until it is back at the highest streak it has ever reached — then it goes back to normal.</p>' +
+                      modePickerHtml(RECOVERY_MAX_ACTS, { streakOnly: true, showPeak: true, needPeak: true,
+                        hint: 'Your own past peak is the finish line. Nothing here can push a streak past it.' }) +
+                      (picked.length ? '<div class="md-summary">' + picked.map(function (id) {
+                          var a = acts.filter(function (x) { return x.id === id; })[0] || {};
+                          var ceiling = Math.max(a.bestStreak || 0, a.streak || 0, 1);
+                          return '<div class="md-summary-row">' + modeEsc(a.name) + ' — now ' + (a.streak || 0) +
+                                 ', peak <strong>' + ceiling + '</strong></div>';
+                      }).join('') + '</div>' : '') +
+                    '</div>' +
+                    modeSheetFoot('Start recovering', 'recoveryStart()',
+                                  !picked.length || !modeAffordable(cost), modeCostLine(cost));
+            modeSheet(html);
+        }
+
+        window.recoveryStart = async function () {
+            var s = _modeSetup;
+            if (!s || !s.picks.length) return;
+            var list = [];
+            s.picks.forEach(function (id) {
+                var act = gritFindActivity(id);
+                if (!act) return;
+                list.push({
+                    activityId: String(id), activityName: act.name || 'Activity',
+                    ceiling: recoveryCeilingFor(act),
+                    startStreak: act.streak || 0,
+                    granted: 0, lastBonusDay: null
+                });
+            });
+            if (!list.length) { showToast('Those activities are no longer available.', 'red'); return; }
+            var res = await modesActivate('recovery', { activities: list }, MODE_COST.recovery, 'mode_recovery');
+            if (!res.ok) { showToast(res.message, 'red'); return; }
+            modeCloseSheet();
+            showToast('🩹 Recovery Mode is on — chasing your own peak', 'green');
+            modesRenderPage();
+        };
+
+        // ══ INSURANCE ═════════════════════════════════════════════════════
+        function insuranceRenderSetup() {
+            var s = _modeSetup;
+            var cost = MODE_COST.insurance;
+            var html = modeSheetHead('Insurance Mode', 'Shield');
+            html += '<div class="modal-body md-body">' +
+                      '<p class="md-lede">Pick up to three activities to insure. While it runs, missing a day ' +
+                        'costs them nothing — no broken streak, no spent shield. Logging still counts exactly as it always did.</p>' +
+                      modePickerHtml(INSURANCE_MAX_ACTS, { streakOnly: true,
+                        hint: 'Insurance suspends the downside only. It never pauses your progress.' }) +
+                      '<p class="md-hint">There is no end date. It runs until you turn it off, and it checks in with you ' +
+                        'after about ' + INSURANCE_CHECKIN_DAYS + ' days to make sure you still want it.</p>' +
+                    '</div>' +
+                    modeSheetFoot('Insure them', 'insuranceStart()',
+                                  !s.picks.length || !modeAffordable(cost), modeCostLine(cost));
+            modeSheet(html);
+        }
+
+        window.insuranceStart = async function () {
+            var s = _modeSetup;
+            if (!s || !s.picks.length) return;
+            var list = [];
+            s.picks.forEach(function (id) {
+                var act = gritFindActivity(id);
+                if (!act) return;
+                list.push({ activityId: String(id), activityName: act.name || 'Activity' });
+            });
+            if (!list.length) { showToast('Those activities are no longer available.', 'red'); return; }
+            var res = await modesActivate('insurance', {
+                activities: list, lastCheckInDay: null
+            }, MODE_COST.insurance, 'mode_insurance');
+            if (!res.ok) { showToast(res.message, 'red'); return; }
+            modeCloseSheet();
+            showToast('🛡 Insurance is on — ' + list.length + ' activity' + (list.length === 1 ? '' : 's') + ' covered', 'green');
+            modesRenderPage();
+        };
+
+        // ══ STAKE ═════════════════════════════════════════════════════════
+        function stakeRenderSetup() {
+            var s = _modeSetup;
+            if (!s.targets) s.targets = {};
+            var acts = modeEligibleActivities();
+            var total = s.picks.reduce(function (n, id) { return n + (s.targets[id] || 1); }, 0);
+            var okDays = s.days >= STAKE_MIN_DAYS;
+            var okTotal = total >= STAKE_MIN_TOTAL;
+            var payout = s.wager + Math.round(s.wager * MODE_WAGER_RETURN);
+
+            var html = modeSheetHead('Stake Mode', 'Wager');
+            html += '<div class="modal-body md-body">' +
+                      '<p class="md-lede">Bet Grit against your own targets. Hit every one inside the window and you get ' +
+                        'the stake back with 30% on top. Miss one and the whole thing is gone.</p>' +
+                      modePickerHtml(STAKE_MAX_ACTS, { hint: 'Then set how many completions each one needs.' }) +
+                      (s.picks.length ? '<div class="md-targets">' + s.picks.map(function (id) {
+                          var a = acts.filter(function (x) { return x.id === id; })[0] || {};
+                          var v = s.targets[id] || 1;
+                          return '<div class="md-target-row">' +
+                                   '<span class="md-target-name">' + modeEsc(a.name || '') + '</span>' +
+                                   '<div class="md-stepper">' +
+                                     '<button type="button" onclick="stakeBump(\'' + modeEsc(id) + '\',-1)">−</button>' +
+                                     '<span>' + v + '</span>' +
+                                     '<button type="button" onclick="stakeBump(\'' + modeEsc(id) + '\',1)">+</button>' +
+                                   '</div>' +
+                                 '</div>';
+                      }).join('') + '</div>' : '') +
+
+                      '<label class="md-label">Window</label>' +
+                      '<div class="md-bignum">' + s.days + '<span>days</span></div>' +
+                      '<input type="range" class="md-range" min="' + STAKE_MIN_DAYS + '" max="60" value="' + s.days + '" ' +
+                        'oninput="modeSetNum(\'days\',this.value,' + STAKE_MIN_DAYS + ',60)">' +
+
+                      '<label class="md-label">Stake</label>' +
+                      '<div class="md-wager">' +
+                        [25, 50, 75, 100].map(function (w) {
+                            return '<button type="button" class="md-wager-btn' + (s.wager === w ? ' is-on' : '') + '" ' +
+                                   'onclick="modeSetNum(\'wager\',' + w + ',' + MODE_WAGER_MIN + ',' + MODE_WAGER_MAX + ')">◆ ' + w + '</button>';
+                        }).join('') +
+                      '</div>' +
+                      '<div class="md-stakes">' +
+                        '<div class="md-stake md-stake-win"><span class="md-stake-k">All targets hit</span><span class="md-stake-v">◆ ' + payout + '</span></div>' +
+                        '<div class="md-stake md-stake-lose"><span class="md-stake-k">One short</span><span class="md-stake-v">◆ 0</span></div>' +
+                      '</div>' +
+                      (!okDays || !okTotal
+                        ? '<p class="md-warn">A stake needs at least ' + STAKE_MIN_DAYS + ' days and ' +
+                          STAKE_MIN_TOTAL + ' completions in total. Right now: ' + s.days + ' days, ' + total + ' completions.</p>'
+                        : '') +
+                    '</div>' +
+                    modeSheetFoot('Place the stake', 'stakeStart()',
+                                  !s.picks.length || !okDays || !okTotal || !modeAffordable(s.wager),
+                                  modeCostLine(s.wager));
+            modeSheet(html);
+        }
+
+        window.stakeBump = function (id, delta) {
+            if (!_modeSetup) return;
+            if (!_modeSetup.targets) _modeSetup.targets = {};
+            var v = (_modeSetup.targets[id] || 1) + delta;
+            _modeSetup.targets[id] = Math.max(1, Math.min(200, v));
+            stakeRenderSetup();
+        };
+
+        window.stakeStart = async function () {
+            var s = _modeSetup;
+            if (!s || !s.picks.length) return;
+            var items = [];
+            s.picks.forEach(function (id) {
+                var act = gritFindActivity(id);
+                if (!act) return;
+                items.push({ activityId: String(id), activityName: act.name || 'Activity',
+                             target: s.targets[id] || 1, count: 0 });
+            });
+            var total = items.reduce(function (n, it) { return n + it.target; }, 0);
+            if (total < STAKE_MIN_TOTAL || s.days < STAKE_MIN_DAYS) {
+                showToast('A stake needs at least ' + STAKE_MIN_DAYS + ' days and ' +
+                          STAKE_MIN_TOTAL + ' completions.', 'red');
+                return;
+            }
+            var res = await modesActivate('stake', {
+                items: items, days: s.days, wager: s.wager, resolved: false
+            }, s.wager, 'mode_stake_wager');
+            if (!res.ok) { showToast(res.message, 'red'); return; }
+            modeCloseSheet();
+            showToast('🎲 Stake placed — ◆ ' + s.wager + ' on ' + total + ' completions in ' + s.days + ' days', 'green');
+            modesRenderPage();
+        };
+
+        // ══ FOCUS WINDOW ══════════════════════════════════════════════════
+        function focusRenderSetup() {
+            var s = _modeSetup;
+            var cost = MODE_COST.focus;
+            var html = modeSheetHead('Focus Window', 'Rhythm');
+            html += '<div class="modal-body md-body">' +
+                      '<p class="md-lede">One slot in the day, the same slot every day. Anything you log inside it ' +
+                        'earns +' + Math.round(FOCUS_MULTIPLIER * 100) + '% XP — whatever the activity.</p>' +
+                      '<label class="md-label">Every day, between</label>' +
+                      '<div class="md-time-row">' +
+                        '<input type="time" class="md-input md-time" value="' + modeEsc(s.windowStart) + '" ' +
+                          'onchange="modeSetField(\'windowStart\',this.value)">' +
+                        '<span class="md-time-and">and</span>' +
+                        '<input type="time" class="md-input md-time" value="' + modeEsc(s.windowEnd) + '" ' +
+                          'onchange="modeSetField(\'windowEnd\',this.value)">' +
+                      '</div>' +
+                      '<label class="md-label">For</label>' +
+                      '<div class="md-bignum">' + s.days + '<span>days</span></div>' +
+                      '<input type="range" class="md-range" min="' + FOCUS_MIN_DAYS + '" max="' + FOCUS_MAX_DAYS + '" ' +
+                        'value="' + s.days + '" oninput="modeSetNum(\'days\',this.value,' +
+                        FOCUS_MIN_DAYS + ',' + FOCUS_MAX_DAYS + ')">' +
+                      '<p class="md-hint">The window does not move day to day — that fixed slot is the whole mechanism. ' +
+                        'Bonuses never stack: if something else could also boost a completion, only the biggest one applies.</p>' +
+                    '</div>' +
+                    modeSheetFoot('Open the window', 'focusStart()', !modeAffordable(cost), modeCostLine(cost));
+            modeSheet(html);
+        }
+
+        window.focusStart = async function () {
+            var s = _modeSetup;
+            if (!s) return;
+            if (modeMins(s.windowStart) === null || modeMins(s.windowEnd) === null) {
+                showToast('Pick a start and an end time.', 'red'); return;
+            }
+            if (modeMins(s.windowStart) === modeMins(s.windowEnd)) {
+                showToast('The window needs to be longer than nothing.', 'red'); return;
+            }
+            var res = await modesActivate('focus', {
+                windowStart: s.windowStart, windowEnd: s.windowEnd,
+                targetDays: s.days, daysElapsed: 0, lastCountedDay: modesToday(),
+                bonusXP: 0, bonusCount: 0
+            }, MODE_COST.focus, 'mode_focus');
+            if (!res.ok) { showToast(res.message, 'red'); return; }
+            modeCloseSheet();
+            showToast('🎯 Focus Window open — ' + modeTimeLabel(s.windowStart) + ' to ' +
+                      modeTimeLabel(s.windowEnd), 'green');
+            modesRenderPage();
+        };
+
+        // ══ PACT ══════════════════════════════════════════════════════════
+        function pactRenderSetup() {
+            var s = _modeSetup;
+            var friends = (window.userData.friends || []);
+            if (!friends.length) {
+                modeSheet(modeSheetHead('Pact Mode', 'Together') +
+                    '<div class="modal-body md-body">' +
+                      '<p class="md-empty">A Pact needs someone to make it with. Add a friend on the Social tab first.</p>' +
+                    '</div>');
+                return;
+            }
+            var acts = modeEligibleActivities();
+            var html = modeSheetHead('Pact Mode', 'Together');
+
+            if (!s.partnerUid) {
+                html += '<div class="modal-body md-body">' +
+                          '<p class="md-lede">Two people, two separate targets, one shared outcome. ' +
+                            'You each stake ◆ ' + PACT_WAGER + '. If either of you falls short, both stakes are gone.</p>' +
+                          '<label class="md-label">Who are you making it with?</label>' +
+                          friends.map(function (u) {
+                              var p = (window._friendProfileCache || {})[u] || {};
+                              return '<button type="button" class="md-pick md-pick-friend" ' +
+                                       'onclick="pactPickPartner(\'' + modeEsc(u) + '\')">' +
+                                       '<span class="md-pick-name">' + modeEsc(p.displayName || 'Adventurer') + '</span>' +
+                                       (p.level ? '<span class="md-pick-meta">Lv ' + p.level + '</span>' : '') +
+                                     '</button>';
+                          }).join('') +
+                        '</div>';
+            } else {
+                var chosen = acts.filter(function (a) { return a.id === s.activityId; })[0];
+                html += '<div class="modal-body md-body">' +
+                          '<div class="md-step-name">With ' + modeEsc(giftFriendName(s.partnerUid)) + '</div>' +
+                          '<label class="md-label">Your activity</label>' +
+                          '<div class="md-picker md-picker-short">' + acts.map(function (a) {
+                              return '<button type="button" class="md-pick' + (s.activityId === a.id ? ' is-on' : '') + '" ' +
+                                       'onclick="modeSetField(\'activityId\',\'' + modeEsc(a.id) + '\')">' +
+                                       '<span class="md-pick-name">' + modeEsc(a.name) + '</span>' +
+                                       '<span class="md-pick-meta">' + modeEsc(a.dimName || '') + '</span>' +
+                                     '</button>';
+                          }).join('') + '</div>' +
+                          '<p class="md-hint">They pick their own — it does not have to match yours.</p>' +
+
+                          '<label class="md-label">Your target</label>' +
+                          '<div class="md-target-row md-target-solo">' +
+                            '<span class="md-target-name">' + modeEsc(chosen ? chosen.name : 'completions') + '</span>' +
+                            '<div class="md-stepper">' +
+                              '<button type="button" onclick="modeSetNum(\'target\',' + (s.target - 1) + ',' + PACT_MIN_TARGET + ',200)">−</button>' +
+                              '<span>' + s.target + '</span>' +
+                              '<button type="button" onclick="modeSetNum(\'target\',' + (s.target + 1) + ',' + PACT_MIN_TARGET + ',200)">+</button>' +
+                            '</div>' +
+                          '</div>' +
+                          '<p class="md-hint">Total completions inside the window — not one a day. Some things cannot be done daily, and the pact does not pretend otherwise.</p>' +
+
+                          '<label class="md-label">Window</label>' +
+                          '<div class="md-bignum">' + s.days + '<span>days</span></div>' +
+                          '<input type="range" class="md-range" min="' + PACT_MIN_DAYS + '" max="60" value="' + s.days + '" ' +
+                            'oninput="modeSetNum(\'days\',this.value,' + PACT_MIN_DAYS + ',60)">' +
+                          '<p class="md-hint">It starts the day after they accept, so you both get the same window.</p>' +
+                        '</div>' +
+                        modeSheetFoot('Send the request', 'pactSend()',
+                                      !s.activityId || !modeAffordable(PACT_WAGER),
+                                      modeCostLine(PACT_WAGER));
+            }
+            modeSheet(html);
+        }
+
+        window.pactPickPartner = async function (uid) {
+            if (!_modeSetup) return;
+            try { await giftEnsureFriendNames(); } catch (e) {}
+            _modeSetup.partnerUid = uid;
+            pactRenderSetup();
+        };
+
+        window.pactSend = async function () {
+            var s = _modeSetup;
+            if (!s || !s.partnerUid || !s.activityId) return;
+            var act = gritFindActivity(s.activityId);
+            if (!act) { showToast('That activity no longer exists.', 'red'); return; }
+            var term = { activityId: String(s.activityId), activityName: act.name || 'Activity', target: s.target };
+            try {
+                await pactCreate(s.partnerUid, giftFriendName(s.partnerUid), term, s.days);
+                modeCloseSheet();
+                showToast('🤝 Request sent to ' + giftFriendName(s.partnerUid) +
+                          ' — your ◆ ' + PACT_WAGER + ' is held until they answer.', 'green');
+                modesRenderPage();
+            } catch (e) { showToast(modeErrText(e), 'red'); }
+        };
+
+        window.pactOpenAccept = async function (id) {
+            var p = pactGet(id);
+            if (!p) { await pactFetch(true); p = pactGet(id); }
+            if (!p) { showToast('That Pact is no longer available.', 'red'); return; }
+            _modeSetup = { kind: 'pactAccept', pactId: id, target: PACT_MIN_TARGET, activityId: null };
+            pactRenderAccept();
+        };
+
+        function pactRenderAccept() {
+            var s = _modeSetup;
+            var p = pactGet(s.pactId);
+            if (!p) { modeCloseSheet(); return; }
+            var from = pactName(p, p.createdBy);
+            var theirs = pactTerm(p, p.createdBy) || {};
+            var acts = modeEligibleActivities();
+            var chosen = acts.filter(function (a) { return a.id === s.activityId; })[0];
+
+            var html = modeSheetHead('Pact with ' + from, 'Accept');
+            html += '<div class="modal-body md-body">' +
+                      '<div class="md-summary">' +
+                        '<div class="md-summary-row"><strong>' + modeEsc(from) + '</strong> is committing to ' +
+                          modeEsc(theirs.activityName || 'an activity') + ' × ' + (theirs.target || 0) +
+                          ' over ' + p.durationDays + ' days.</div>' +
+                      '</div>' +
+                      '<p class="md-lede">Pick your own activity and your own target. Same window, separate goals. ' +
+                        'If either of you falls short, the pact breaks for both — and both stakes go.</p>' +
+
+                      '<label class="md-label">Your activity</label>' +
+                      '<div class="md-picker md-picker-short">' + acts.map(function (a) {
+                          return '<button type="button" class="md-pick' + (s.activityId === a.id ? ' is-on' : '') + '" ' +
+                                   'onclick="pactAcceptSet(\'activityId\',\'' + modeEsc(a.id) + '\')">' +
+                                   '<span class="md-pick-name">' + modeEsc(a.name) + '</span>' +
+                                   '<span class="md-pick-meta">' + modeEsc(a.dimName || '') + '</span>' +
+                                 '</button>';
+                      }).join('') + '</div>' +
+
+                      '<label class="md-label">Your target</label>' +
+                      '<div class="md-target-row md-target-solo">' +
+                        '<span class="md-target-name">' + modeEsc(chosen ? chosen.name : 'completions') + '</span>' +
+                        '<div class="md-stepper">' +
+                          '<button type="button" onclick="pactAcceptSet(\'target\',' + Math.max(PACT_MIN_TARGET, s.target - 1) + ')">−</button>' +
+                          '<span>' + s.target + '</span>' +
+                          '<button type="button" onclick="pactAcceptSet(\'target\',' + Math.min(200, s.target + 1) + ')">+</button>' +
+                        '</div>' +
+                      '</div>' +
+                      '<p class="md-hint">Starts tomorrow and runs ' + p.durationDays + ' days for both of you.</p>' +
+                    '</div>' +
+                    modeSheetFoot('Accept and stake ◆ ' + p.stake, 'pactDoAccept()',
+                                  !s.activityId || !modeAffordable(p.stake), modeCostLine(p.stake));
+            modeSheet(html);
+        }
+
+        window.pactAcceptSet = function (field, value) {
+            if (!_modeSetup) return;
+            _modeSetup[field] = value;
+            pactRenderAccept();
+        };
+
+        window.pactDoAccept = async function () {
+            var s = _modeSetup;
+            if (!s || !s.activityId) return;
+            var act = gritFindActivity(s.activityId);
+            if (!act) { showToast('That activity no longer exists.', 'red'); return; }
+            var term = { activityId: String(s.activityId), activityName: act.name || 'Activity', target: s.target };
+            try {
+                var out = await pactAccept(s.pactId, term);
+                modeCloseSheet();
+                showToast('🤝 Pact set with ' + out.partnerName + ' — it starts tomorrow.', 'green');
+                modesRenderPage();
+            } catch (e) { showToast(modeErrText(e), 'red'); }
+        };
+
+        // ══════════════════════════════════════════════════════════════════
+        //  RESOLUTION CARD / MILESTONE / OVERLAY / CHECK-IN
+        // ══════════════════════════════════════════════════════════════════
+
+        function modesShowResolution(res, onClose) {
+            if (!res) { if (onClose) onClose(); return; }
+            var existing = document.getElementById('modeResolveCard');
+            if (existing) existing.remove();
+
+            var won = res.outcome === 'won';
+            var el = document.createElement('div');
+            el.id = 'modeResolveCard';
+            el.className = 'md-res-scrim md-res-' + (won ? 'win' : 'lose');
+            el.innerHTML =
+                '<div class="md-res" role="dialog" aria-modal="true">' +
+                  '<div class="md-res-icon">' + (MODE_META[res.kind] ? MODE_META[res.kind].icon : '◆') + '</div>' +
+                  '<div class="md-res-title">' + modeEsc(res.title) + '</div>' +
+                  '<div class="md-res-headline">' + modeEsc(res.headline) + '</div>' +
+                  (res.lines && res.lines.length
+                    ? '<div class="md-res-lines">' + res.lines.map(function (l) {
+                        return '<div class="md-res-line">' + modeEsc(l) + '</div>';
+                      }).join('') + '</div>'
+                    : '') +
+                  (res.note ? '<p class="md-res-note">' + modeEsc(res.note) + '</p>' : '') +
+                  '<button type="button" class="md-btn md-btn-primary md-btn-wide" id="modeResOk">Done</button>' +
+                '</div>';
+            document.body.appendChild(el);
+            function close() {
+                el.classList.add('is-leaving');
+                setTimeout(function () { el.remove(); if (onClose) onClose(); }, 240);
+            }
+            el.querySelector('#modeResOk').onclick = close;
+            el.addEventListener('click', function (e) { if (e.target === el) close(); });
+        }
+
+        function modesShowMilestone(h, frac, targetDays) {
+            var pct = Math.round(frac * 100);
+            var quote = habitQuote((h.completions || 0) + pct);
+            var el = document.createElement('div');
+            el.className = 'md-mile-scrim';
+            el.innerHTML =
+                '<div class="md-mile">' +
+                  '<div class="md-mile-pct">' + pct + '%</div>' +
+                  '<div class="md-mile-name">' + modeEsc(h.activityName) + '</div>' +
+                  '<div class="md-mile-count">' + (h.completions || 0) + ' of ' + targetDays + ' days</div>' +
+                  '<p class="md-mile-quote">“' + modeEsc(quote) + '”</p>' +
+                  '<button type="button" class="md-btn md-btn-primary md-btn-wide">Keep going</button>' +
+                '</div>';
+            document.body.appendChild(el);
+            function close() { el.classList.add('is-leaving'); setTimeout(function () { el.remove(); }, 220); }
+            el.querySelector('button').onclick = close;
+            el.addEventListener('click', function (e) { if (e.target === el) close(); });
+            setTimeout(close, 9000);
+        }
+
+        // ── The habit focus overlay (spec §1) ─────────────────────────────
+        // Around the window, opening the app puts one habit in front of
+        // everything else. It is a deliberate moment of friction, not a wall:
+        // one tap clears it for the rest of the day.
+        function habitMaybeShowOverlay() {
+            if (document.getElementById('modeHabitOverlay')) return;
+            if (document.getElementById('modeResolveCard')) return;
+            var h = habitOverlayDue();
+            if (!h) return;
+            var a = modesActive();
+            var nowMins = modeMinutesNow();
+            var s = modeMins(h.windowStart), e = modeMins(h.windowEnd);
+            var before = nowMins < s;
+            var after = !before && nowMins > e;
+
+            var el = document.createElement('div');
+            el.id = 'modeHabitOverlay';
+            el.className = 'md-ov';
+            el.innerHTML =
+                '<div class="md-ov-inner">' +
+                  '<button type="button" class="md-ov-close" aria-label="Close">' +
+                    '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+                  '</button>' +
+                  '<div class="md-ov-eyebrow">' + (before ? 'Coming up' : after ? 'Window closing' : 'Right now') + '</div>' +
+                  '<div class="md-ov-name">' + modeEsc(h.activityName) + '</div>' +
+                  '<div class="md-ov-window">' + modeTimeLabel(h.windowStart) + ' – ' + modeTimeLabel(h.windowEnd) + '</div>' +
+                  (h.anchor ? '<div class="md-ov-anchor">' + modeEsc(h.anchor) + '</div>' : '') +
+                  (h.why ? '<p class="md-ov-why">“' + modeEsc(h.why) + '”</p>' : '') +
+                  '<div class="md-ov-count">' + (h.completions || 0) + ' of ' + ((a && a.daysElapsed) || 0) + ' days achieved</div>' +
+                  '<button type="button" class="md-btn md-btn-primary md-btn-wide md-ov-go">Take me to it</button>' +
+                  '<button type="button" class="md-ov-later">Not now</button>' +
+                '</div>';
+            document.body.appendChild(el);
+
+            function dismiss() {
+                h.overlayDismissedDay = modesToday();
+                saveUserData().catch(function () {});
+                el.classList.add('is-leaving');
+                setTimeout(function () { el.remove(); }, 220);
+            }
+            el.querySelector('.md-ov-close').onclick = dismiss;
+            el.querySelector('.md-ov-later').onclick = dismiss;
+            el.querySelector('.md-ov-go').onclick = function () {
+                dismiss();
+                setTimeout(function () {
+                    try { window.mkOpenActivityFromReminder(h.activityId); } catch (e) {}
+                }, 260);
+            };
+        }
+        window.habitMaybeShowOverlay = habitMaybeShowOverlay;
+
+        function modesShowInsuranceCheckIn(a, days) {
+            var el = document.createElement('div');
+            el.className = 'md-mile-scrim';
+            el.innerHTML =
+                '<div class="md-mile">' +
+                  '<div class="md-mile-pct">🛡</div>' +
+                  '<div class="md-mile-name">Insurance has been on ' + days + ' days</div>' +
+                  '<p class="md-mile-quote">Still want it? It keeps running either way — this is a check-in, not a shutoff.</p>' +
+                  '<div class="md-sheet-foot md-sheet-foot-2">' +
+                    '<button type="button" class="md-btn" id="mdInsReview">Review it</button>' +
+                    '<button type="button" class="md-btn md-btn-primary" id="mdInsKeep">Keep it on</button>' +
+                  '</div>' +
+                '</div>';
+            document.body.appendChild(el);
+            function close() { el.classList.add('is-leaving'); setTimeout(function () { el.remove(); }, 220); }
+            el.querySelector('#mdInsKeep').onclick = close;
+            el.querySelector('#mdInsReview').onclick = function () {
+                close();
+                setTimeout(function () { try { window.mkGoModes && window.mkGoModes(); } catch (e) {} }, 200);
+            };
+            el.addEventListener('click', function (e) { if (e.target === el) close(); });
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        //  WIRING
+        // ══════════════════════════════════════════════════════════════════
+
+        (function () {
+            var _orig = window.completeActivity;
+            if (typeof _orig !== 'function') return;
+            window.completeActivity = async function (di, pi, ai) {
+                var act = null;
+                try { act = window.userData.dimensions[di].paths[pi].activities[ai]; } catch (e) {}
+                var before = act ? (act.completionCount || 0) : 0;
+                await _orig.apply(this, arguments);
+                // Only when the completion actually landed — canCompleteActivity
+                // and the once-per-day guard both return early without one.
+                if (act && (act.completionCount || 0) > before) {
+                    try { modesOnCompletion(act); } catch (e) { console.warn('Mode completion hook failed', e); }
+                }
+            };
+        })();
+
+        (function () {
+            var _orig = window.undoActivity;
+            if (typeof _orig !== 'function') return;
+            window.undoActivity = async function (di, pi, ai) {
+                var act = null;
+                try { act = window.userData.dimensions[di].paths[pi].activities[ai]; } catch (e) {}
+                var before = act ? (act.completionCount || 0) : 0;
+                await _orig.apply(this, arguments);
+                if (act && (act.completionCount || 0) < before) {
+                    try { modesOnUndo(act); } catch (e) { console.warn('Mode undo hook failed', e); }
+                }
+            };
+        })();
+
+        // Berserk repaints the whole app, so the class has to survive a theme
+        // change and a tab switch.
+        (function () {
+            var _orig = window.applyThemePreset;
+            if (typeof _orig !== 'function') return;
+            window.applyThemePreset = function () {
+                var r = _orig.apply(this, arguments);
+                modesApplyTheme();
+                return r;
+            };
+        })();
+
+        (function () {
+            var _orig = window.switchTab;
+            if (typeof _orig !== 'function') return;
+            window.switchTab = function () {
+                var r = _orig.apply(this, arguments);
+                modesRefreshBanner();
+                return r;
+            };
+        })();
+
+        // ════════════════════════════════════════════════════════════════════
+        // ══ END MODES ═══════════════════════════════════════════════════════
         // ════════════════════════════════════════════════════════════════════

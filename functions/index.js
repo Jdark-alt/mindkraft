@@ -32,6 +32,7 @@ const {
 } = require('./lib/schedule');
 
 const { findActivity, resolveActivityName } = require('./lib/activities');
+const { modeReminderCopy } = require('./lib/modes');
 const questComposer = require('./lib/quest-composer');
 const { callModel, parseModelJson } = require('./lib/model');
 
@@ -210,6 +211,34 @@ async function processUser(uid, snaps, now) {
             }
         }
 
+        // Mode reminders decide at send time whether there is anything worth
+        // saying, and what. A null means "not this time" — the document rolls
+        // forward and tries again tomorrow rather than being retired, because
+        // "already logged today" is a temporary condition, not a dead reminder.
+        let modeCopy = null;
+        if (reminder.type === 'mode') {
+            if (!userData) {
+                await rollForward(snap.ref, reminder, timezone, null, nowDate);
+                stats.skipped += 1;
+                continue;
+            }
+            modeCopy = modeReminderCopy(reminder, userData, timezone, todayLocal, getLocalDateString);
+            if (!modeCopy) {
+                const modes = userData.modes || {};
+                const active = modes.active || null;
+                const stale = !active || String(active.id) !== String(reminder.modeId);
+                if (stale) {
+                    // The mode it belongs to is gone. Retire it for good.
+                    logger.info('Mode no longer active — deactivating its reminder', { uid, reminderId: snap.id });
+                    await snap.ref.update({ active: false, updatedAt: FieldValue.serverTimestamp() });
+                } else {
+                    await rollForward(snap.ref, reminder, timezone, null, nowDate);
+                }
+                stats.skipped += 1;
+                continue;
+            }
+        }
+
         if (subscriptionDead || !isUsableSubscription(subscription)) {
             logger.info('No usable push subscription — skipping send', { uid, reminderId: snap.id });
             await rollForward(snap.ref, reminder, timezone, null, nowDate);
@@ -217,7 +246,7 @@ async function processUser(uid, snaps, now) {
             continue;
         }
 
-        const result = await sendPush(subscription, buildPayload(reminder, activityName));
+        const result = await sendPush(subscription, buildPayload(reminder, activityName, modeCopy));
 
         if (result.ok) {
             const extra = { lastSentDate: todayLocal };
@@ -344,6 +373,113 @@ exports.onGiftConsumed = onDocumentWritten(
             tag: 'mindkraft-gift-used-' + String(event.params.giftId),
             data: { type: 'gift', activityId: null },
         });
+    }
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// PACT NOTIFICATIONS
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Pact Mode is the only mode two accounts share, so it is the only one whose
+// beats have to reach someone who is not the person that caused them. Four
+// transitions are worth a push and no others:
+//
+//   created            → tell the partner there is a request waiting
+//   pending → active   → tell the initiator it was accepted
+//   pending → declined → tell the initiator it was not
+//   active  → resolved → tell BOTH how it ended
+//
+// Every name in these payloads is denormalized onto the pact document when it
+// is written, so this function never reads another user's profile.
+//
+// The failure copy names who fell short. That is deliberate and specified:
+// both partners already know who is who, and hiding it would undercut the
+// honesty the mode is built on.
+
+function pactOtherUid(pact, uid) {
+    const ps = pact.participants || [];
+    return ps[0] === uid ? ps[1] : ps[0];
+}
+
+function pactDisplayName(pact, uid) {
+    return (pact.names && pact.names[uid]) || 'Your partner';
+}
+
+exports.onPactWrite = onDocumentWritten(
+    {
+        document: 'pacts/{pactId}',
+        region: REGION,
+        memory: '256MiB',
+    },
+    async (event) => {
+        const afterSnap = event.data && event.data.after;
+        if (!afterSnap || !afterSnap.exists) return;
+        const after = afterSnap.data();
+        const beforeSnap = event.data && event.data.before;
+        const before = beforeSnap && beforeSnap.exists ? beforeSnap.data() : null;
+        const pactId = event.params.pactId;
+        const tag = 'mindkraft-pact-' + String(pactId);
+
+        // Created.
+        if (!before) {
+            if (after.status !== 'pending' || !after.partner) return;
+            const from = pactDisplayName(after, after.createdBy);
+            await pushToUser(after.partner, {
+                title: 'Mindkraft ⚔️',
+                body: from + ' wants to start a Pact with you.',
+                tag,
+                data: { type: 'pact', activityId: null },
+            });
+            return;
+        }
+
+        if (before.status === after.status) return;
+
+        if (before.status === 'pending' && after.status === 'active') {
+            const partnerName = pactDisplayName(after, after.partner);
+            await pushToUser(after.createdBy, {
+                title: 'Mindkraft ⚔️',
+                body: partnerName + ' accepted your Pact. It starts tomorrow.',
+                tag,
+                data: { type: 'pact', activityId: null },
+            });
+            return;
+        }
+
+        if (before.status === 'pending' && after.status === 'declined') {
+            const partnerName = pactDisplayName(after, after.partner);
+            await pushToUser(after.createdBy, {
+                title: 'Mindkraft ⚔️',
+                body: partnerName + ' declined the Pact. Your Grit is on its way back.',
+                tag,
+                data: { type: 'pact', activityId: null },
+            });
+            return;
+        }
+
+        if (after.status === 'resolved') {
+            const participants = after.participants || [];
+            const kept = after.outcome === 'kept';
+            await Promise.all(participants.map((uid) => {
+                const themName = pactDisplayName(after, pactOtherUid(after, uid));
+                let body;
+                if (kept) {
+                    body = 'Pact kept. You and ' + themName + ' both hit your targets — your Grit is back with a bonus.';
+                } else if (after.failedBy === 'both') {
+                    body = 'Pact broken. Neither of you reached your target, so both stakes are gone.';
+                } else if (after.failedBy === uid) {
+                    body = 'Pact broken. You fell short, so ' + themName + ' lost their stake too.';
+                } else {
+                    body = 'Pact broken. ' + themName + ' fell short, so both stakes are gone.';
+                }
+                return pushToUser(uid, {
+                    title: 'Mindkraft ⚔️',
+                    body,
+                    tag,
+                    data: { type: 'pact', activityId: null },
+                });
+            }));
+        }
     }
 );
 

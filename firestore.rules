@@ -7,12 +7,13 @@ rules_version = '2';
 //  firebase.json, so `firebase deploy` will not push it; the rules are
 //  managed in the Firebase console. Keep the two in sync by hand.
 //
-//  There are three cross-account surfaces: the versus-challenge block at
-//  the bottom, the gift pair (a sender writing into a receiver's subtree and
-//  the receiver stamping four fields back on the sender's mirror), and
-//  leaderboardBoards, whose read rule is itself the mutuality test. Each is
-//  scoped to the accounts named inside the document, and no rule anywhere
-//  grants one party read access to anything else the other owns.
+//  There are four cross-account surfaces: the versus-challenge block at the
+//  bottom, the pacts block above it (Pursuits › Modes), the gift pair (a
+//  sender writing into a receiver's subtree and the receiver stamping four
+//  fields back on the sender's mirror), and leaderboardBoards, whose read
+//  rule is itself the mutuality test. Each is scoped to the accounts named
+//  inside the document, and no rule anywhere grants one party read access to
+//  anything else the other owns.
 // ══════════════════════════════════════════════════════════════════════════
 
 service cloud.firestore {
@@ -30,14 +31,32 @@ service cloud.firestore {
 
       // Activity reminders are created by the createActivityReminder
       // Cloud Function (which bypasses rules) so the 5-per-user cap is
-      // enforced server-side. Only the general singleton is client-created.
+      // enforced server-side. The general singleton and the mode reminders
+      // are the two client-created kinds.
+      //
+      // Mode reminders (Pursuits › Modes) are written by the client because
+      // they are derived entirely from the mode the user just configured in
+      // their own document — no cross-user surface, and no cap worth
+      // enforcing server-side. The document id is pinned to a `mode-` prefix
+      // so the client's own reconciliation can tell its documents apart from
+      // the general and activity ones, and so this rule can never be used to
+      // overwrite either of those.
       allow create: if request.auth != null
                     && request.auth.uid == uid
-                    && reminderId == 'general'
-                    && request.resource.data.type == 'general'
                     && request.resource.data.localTime is string
                     && request.resource.data.localTime.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$')
-                    && request.resource.data.active is bool;
+                    && request.resource.data.active is bool
+                    && (
+                         (
+                           reminderId == 'general'
+                           && request.resource.data.type == 'general'
+                         ) || (
+                           reminderId.matches('^mode-.*')
+                           && request.resource.data.type == 'mode'
+                           && request.resource.data.modeKind in ['habit', 'focus']
+                           && request.resource.data.modeId is string
+                         )
+                       );
     }
 
     // Append-only Grit ledger. Entries are never mutated or deleted — a
@@ -240,6 +259,106 @@ service cloud.firestore {
     //  Mindkraft, and Grit has no external value. It is a decision, not an
     //  oversight.
     // ══════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════
+    //  PACTS  —  pacts/{pactId}
+    //
+    //  Pact Mode's shared record, and the only cross-account surface any mode
+    //  has. Same placement reasoning as challenges below: two accounts read
+    //  and write one document, which a users/{uid} subcollection could not
+    //  support without widening that user's rules far past what is safe.
+    //
+    //  What each side may do is scoped to what the flow actually needs:
+    //    • the initiator creates it, naming themselves as createdBy, with
+    //      their own stake already escrowed in `pot`
+    //    • the partner accepts it — and may only write their OWN term and
+    //      name plus the activation fields; the initiator's term is pinned
+    //    • either side moves only its own progress counter
+    //    • resolution writes the terminal fields, and each side may flip only
+    //      its own payoutClaimed key, false → true
+    //
+    //  Nobody is granted read access to the other participant's user document,
+    //  activities, history or Grit balance. Everything visible about a partner
+    //  is denormalized onto this document by its owner. Reads are scoped to
+    //  participants, which is also what stops a pact leaking the social graph.
+    // ══════════════════════════════════════════════════════════════════
+    match /pacts/{pactId} {
+      function next()    { return request.resource.data; }
+      function prev()    { return resource.data; }
+      function changed() { return next().diff(prev()).affectedKeys(); }
+      function isParticipant() {
+        return request.auth != null && request.auth.uid in prev().participants;
+      }
+      // The participant who is NOT the caller. Used to prove a write left the
+      // other side's numbers exactly where they were.
+      function otherUid() {
+        return prev().participants[0] == request.auth.uid
+               ? prev().participants[1]
+               : prev().participants[0];
+      }
+
+      allow read: if isParticipant();
+
+      allow create: if request.auth != null
+                    && next().id == pactId
+                    && next().createdBy == request.auth.uid
+                    && next().partner != request.auth.uid
+                    && next().participants.size() == 2
+                    && next().participants.hasOnly([request.auth.uid, next().partner])
+                    && next().status == 'pending'
+                    && next().stake is int
+                    && next().stake > 0
+                    && next().pot == next().stake
+                    && next().durationDays is int
+                    && next().durationDays >= 5
+                    && next().startedAt == null
+                    && next().endsAt == null
+                    && next().outcome == null
+                    && next().failedBy == null
+                    && next().resolvedAt == null
+                    // You may only make a pact with someone on your own
+                    // friends list. get() reads the CALLER's own document and
+                    // grants nobody any read access; .get('friends', []) so an
+                    // account predating the field is denied rather than erroring.
+                    && next().partner in
+                       get(/databases/$(database)/documents/users/$(request.auth.uid))
+                         .data.get('friends', []);
+
+      // Accept: pending → active. Only the named partner, and the initiator's
+      // agreed term is pinned so acceptance cannot rewrite the other half of
+      // the deal.
+      allow update: if isParticipant()
+                    && prev().status == 'pending'
+                    && next().status == 'active'
+                    && request.auth.uid == prev().partner
+                    && next().pot == prev().stake * 2
+                    && changed().hasOnly(['status', 'pot', 'startedAt', 'endsAt', 'terms', 'names'])
+                    && next().terms.get(prev().createdBy, {}) == prev().terms.get(prev().createdBy, {});
+
+      // Progress: your own counter, nothing else.
+      allow update: if isParticipant()
+                    && prev().status == 'active'
+                    && next().status == 'active'
+                    && changed().hasOnly(['progress'])
+                    && next().progress.get(otherUid(), 0) == prev().progress.get(otherUid(), 0);
+
+      // Resolution: terminal fields only, and only out of a live status.
+      // Either participant's client may be the one that gets there first.
+      allow update: if isParticipant()
+                    && (prev().status == 'pending' || prev().status == 'active')
+                    && next().status in ['resolved', 'declined', 'cancelled', 'expired']
+                    && next().pot == 0
+                    && changed().hasOnly(['status', 'outcome', 'failedBy', 'resolvedAt', 'pot', 'payout']);
+
+      // Claiming: your own key, false → true, and nothing else moves.
+      allow update: if isParticipant()
+                    && changed().hasOnly(['payoutClaimed'])
+                    && next().payoutClaimed.get(request.auth.uid, false) == true
+                    && prev().payoutClaimed.get(request.auth.uid, false) == false;
+
+      // A pact that happened stays in the record.
+      allow delete: if false;
+    }
+
     match /challenges/{challengeId} {
 
       // Firestore caps a single rule evaluation at 1000 expressions, and a

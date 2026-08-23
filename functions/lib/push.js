@@ -48,8 +48,31 @@ function isUsableSubscription(sub) {
  * `tag` is what stops notifications stacking. The general reminder keeps its
  * existing tag; activity reminders get a per-activity tag so two different
  * activities due at the same minute don't silently replace each other.
+ *
+ * Mode reminders carry their copy in `modeCopy`, decided by the caller — the
+ * body depends on state the sender has already read (was the habit logged
+ * today, was yesterday missed) and on the user's own words, which are stored
+ * verbatim on the reminder document and never rewritten here or anywhere else.
  */
-function buildPayload(reminder, activityName) {
+function buildPayload(reminder, activityName, modeCopy) {
+    if (reminder.type === 'mode') {
+        return {
+            title: 'Mindkraft ⚔️',
+            body: (modeCopy && modeCopy.body) || 'Your mode window is coming up.',
+            // Per mode document, so a habit's pre-window nudge and its
+            // post-window nudge don't silently replace each other, and neither
+            // collides with an ordinary activity reminder for the same thing.
+            tag: 'mindkraft-mode-' + String(reminder.modeKind || 'x') + '-' +
+                 String(reminder.activityId || reminder.modeId || 'x') + '-' +
+                 String(reminder.phase || 'x'),
+            data: {
+                type: 'mode',
+                modeKind: reminder.modeKind || null,
+                activityId: reminder.activityId != null ? String(reminder.activityId) : null,
+            },
+        };
+    }
+
     if (reminder.type === 'activity') {
         const name = activityName || reminder.activityName || 'Your activity';
         return {

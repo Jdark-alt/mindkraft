@@ -307,6 +307,140 @@ await t('nobody else may delete a board', () => {
     .then(() => assertFails(deleteDoc(doc(dbB, 'leaderboardBoards', A))));
 });
 
+console.log('── PACTS ──');
+// Pact Mode's shared record. Same escrow shape as a challenge, but the two
+// sides commit SEPARATE targets and share only the outcome — so the accept
+// rule has to let the partner write their own term while pinning the
+// initiator's, and neither side may touch the other's progress counter.
+const pactDoc = (id, o = {}) => Object.assign({
+  id, schemaVersion: 1, participants: [A, B], createdBy: A, partner: B,
+  names: { [A]: 'Ana', [B]: 'Ben' }, status: 'pending',
+  stake: 40, pot: 40, durationDays: 7,
+  createdAt: NOW, expiresAt: NOW + 7 * 86400000,
+  startedAt: null, endsAt: null,
+  terms: { [A]: { activityId: 'a1', activityName: 'Run', target: 5 } },
+  progress: { [A]: 0, [B]: 0 },
+  outcome: null, failedBy: null, resolvedAt: null,
+  payout: { [A]: 0, [B]: 0 }, payoutClaimed: { [A]: false, [B]: false }, seen: {}
+}, o);
+const seedPact = (id, o) => env.withSecurityRulesDisabled(async ctx =>
+  setDoc(doc(ctx.firestore(), 'pacts', id), pactDoc(id, o)));
+
+await t('initiator creates a valid pact', () =>
+  assertSucceeds(setDoc(doc(dbA, 'pacts', 'p1'), pactDoc('p1'))));
+await t('a pact with a non-friend is refused', () =>
+  assertFails(setDoc(doc(dbC, 'pacts', 'px1'), pactDoc('px1', {
+    participants: [C, B], createdBy: C, partner: B,
+    names: { [C]: 'Cal', [B]: 'Ben' },
+    terms: { [C]: { activityId: 'a1', activityName: 'Run', target: 5 } },
+    progress: { [C]: 0, [B]: 0 }, payout: { [C]: 0, [B]: 0 },
+    payoutClaimed: { [C]: false, [B]: false } }))));
+await t('you cannot create a pact on someone else\'s behalf', () =>
+  assertFails(setDoc(doc(dbB, 'pacts', 'px2'), pactDoc('px2'))));
+await t('a pact with yourself is refused', () =>
+  assertFails(setDoc(doc(dbA, 'pacts', 'px3'), pactDoc('px3', {
+    participants: [A], partner: A }))));
+await t('the pot must equal the stake at create — no minting', () =>
+  assertFails(setDoc(doc(dbA, 'pacts', 'px4'), pactDoc('px4', { pot: 400 }))));
+await t('a window under 5 days is refused', () =>
+  assertFails(setDoc(doc(dbA, 'pacts', 'px5'), pactDoc('px5', { durationDays: 2 }))));
+await t('a pact cannot be created already active', () =>
+  assertFails(setDoc(doc(dbA, 'pacts', 'px6'), pactDoc('px6', { status: 'active', startedAt: NOW }))));
+
+await t('a participant reads the pact', () => assertSucceeds(getDoc(doc(dbB, 'pacts', 'p1'))));
+await t('a stranger cannot read the pact', () => assertFails(getDoc(doc(dbC, 'pacts', 'p1'))));
+
+await seedPact('p2');
+await t('the partner accepts with their own term', () =>
+  assertSucceeds(updateDoc(doc(dbB, 'pacts', 'p2'), {
+    status: 'active', pot: 80, startedAt: NOW, endsAt: NOW + 7 * 86400000,
+    ['terms.' + B]: { activityId: 'b1', activityName: 'Swim', target: 4 },
+    ['names.' + B]: 'Ben' })));
+await seedPact('p3');
+await t('accepting cannot rewrite the initiator\'s term', () =>
+  assertFails(updateDoc(doc(dbB, 'pacts', 'p3'), {
+    status: 'active', pot: 80, startedAt: NOW, endsAt: NOW + 7 * 86400000,
+    ['terms.' + A]: { activityId: 'a1', activityName: 'Run', target: 1 },
+    ['terms.' + B]: { activityId: 'b1', activityName: 'Swim', target: 4 } })));
+await seedPact('p4');
+await t('the initiator cannot accept their own pact', () =>
+  assertFails(updateDoc(doc(dbA, 'pacts', 'p4'), {
+    status: 'active', pot: 80, startedAt: NOW, endsAt: NOW + 7 * 86400000,
+    ['terms.' + A]: { activityId: 'a1', activityName: 'Run', target: 5 } })));
+await seedPact('p5');
+await t('accepting cannot inflate the pot', () =>
+  assertFails(updateDoc(doc(dbB, 'pacts', 'p5'), {
+    status: 'active', pot: 800, startedAt: NOW, endsAt: NOW + 7 * 86400000,
+    ['terms.' + B]: { activityId: 'b1', activityName: 'Swim', target: 4 } })));
+
+const ACTIVE = { status: 'active', pot: 80, startedAt: NOW, endsAt: NOW + 7 * 86400000,
+  terms: { [A]: { activityId: 'a1', activityName: 'Run', target: 5 },
+           [B]: { activityId: 'b1', activityName: 'Swim', target: 4 } } };
+await seedPact('p6', ACTIVE);
+await t('you move your own progress', () =>
+  assertSucceeds(updateDoc(doc(dbA, 'pacts', 'p6'), { ['progress.' + A]: 1 })));
+await t('you cannot move your partner\'s progress', () =>
+  assertFails(updateDoc(doc(dbA, 'pacts', 'p6'), { ['progress.' + B]: 4 })));
+await t('a stranger cannot move anyone\'s progress', () =>
+  assertFails(updateDoc(doc(dbC, 'pacts', 'p6'), { ['progress.' + A]: 9 })));
+
+await seedPact('p7', ACTIVE);
+await t('either side may record the resolution', () =>
+  assertSucceeds(updateDoc(doc(dbB, 'pacts', 'p7'), {
+    status: 'resolved', outcome: 'broken', failedBy: A, resolvedAt: NOW,
+    pot: 0, payout: { [A]: 0, [B]: 0 } })));
+await t('a resolution that leaves Grit in the pot is refused', () => {
+  return seedPact('p8', ACTIVE).then(() => assertFails(updateDoc(doc(dbA, 'pacts', 'p8'), {
+    status: 'resolved', outcome: 'kept', failedBy: null, resolvedAt: NOW,
+    pot: 80, payout: { [A]: 52, [B]: 52 } })));
+});
+await t('resolution cannot smuggle a term change through with it', () => {
+  return seedPact('p9', ACTIVE).then(() => assertFails(updateDoc(doc(dbA, 'pacts', 'p9'), {
+    status: 'resolved', outcome: 'kept', resolvedAt: NOW, pot: 0,
+    payout: { [A]: 52, [B]: 52 },
+    ['terms.' + B]: { activityId: 'b1', activityName: 'Swim', target: 1 } })));
+});
+
+const RESOLVED = Object.assign({}, ACTIVE, { status: 'resolved', outcome: 'kept',
+  resolvedAt: NOW, pot: 0, payout: { [A]: 52, [B]: 52 } });
+await seedPact('p10', RESOLVED);
+await t('you claim your own payout', () =>
+  assertSucceeds(updateDoc(doc(dbA, 'pacts', 'p10'), { ['payoutClaimed.' + A]: true })));
+await t('you cannot claim on your partner\'s behalf', () => {
+  return seedPact('p11', RESOLVED).then(() => assertFails(
+    updateDoc(doc(dbA, 'pacts', 'p11'), { ['payoutClaimed.' + B]: true })));
+});
+await t('a claim cannot be replayed to pay twice', () => {
+  return seedPact('p12', Object.assign({}, RESOLVED, { payoutClaimed: { [A]: true, [B]: false } }))
+    .then(() => assertFails(updateDoc(doc(dbA, 'pacts', 'p12'), { ['payoutClaimed.' + A]: true })));
+});
+await t('a claim cannot raise its own payout on the way through', () => {
+  return seedPact('p13', RESOLVED).then(() => assertFails(updateDoc(doc(dbA, 'pacts', 'p13'), {
+    ['payoutClaimed.' + A]: true, ['payout.' + A]: 5000 })));
+});
+await t('a pact that happened cannot be deleted', () =>
+  assertFails(deleteDoc(doc(dbA, 'pacts', 'p10'))));
+
+console.log('── MODE REMINDERS ──');
+const modeReminder = (o = {}) => Object.assign({
+  type: 'mode', modeKind: 'habit', modeId: 'md-1', phase: 'pre',
+  activityId: 'a1', activityName: 'Run', localTime: '21:00', timezone: 'UTC',
+  windowStart: '22:00', windowEnd: '23:00', why: 'mine', anchor: '',
+  active: true, nextSendAt: null, lastSentDate: null
+}, o);
+await t('you create your own mode reminder', () =>
+  assertSucceeds(setDoc(doc(dbA, 'users', A, 'reminders', 'mode-habit-1'), modeReminder())));
+await t('a mode reminder cannot masquerade as the general one', () =>
+  assertFails(setDoc(doc(dbA, 'users', A, 'reminders', 'general'), modeReminder())));
+await t('a mode reminder cannot take an activity-reminder id', () =>
+  assertFails(setDoc(doc(dbA, 'users', A, 'reminders', 'ar-1'), modeReminder())));
+await t('an unknown modeKind is refused', () =>
+  assertFails(setDoc(doc(dbA, 'users', A, 'reminders', 'mode-x-1'), modeReminder({ modeKind: 'berserk' }))));
+await t('a bad time is refused', () =>
+  assertFails(setDoc(doc(dbA, 'users', A, 'reminders', 'mode-habit-2'), modeReminder({ localTime: '99:99' }))));
+await t('you cannot plant a reminder in someone else\'s tree', () =>
+  assertFails(setDoc(doc(dbB, 'users', A, 'reminders', 'mode-habit-3'), modeReminder())));
+
 console.log('── NO CROSS-ACCOUNT LEAK ──');
 await t('a participant still cannot read the other\'s user document', () => assertFails(getDoc(doc(dbB,'users',A))));
 

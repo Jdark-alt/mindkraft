@@ -1,6 +1,11 @@
 // Builds a throwaway copy of the app whose Firebase CDN imports are remapped
 // to the local stubs, serves it, and hands back a Chromium page with app.js
 // fully evaluated. The repo's own index.html and app.js are never modified.
+//
+// build() takes an optional second block of hooks, appended after the shared
+// ones. Suites that need to reach different module-private state (the modes
+// suite reaches the streak passes and the mode rate card) pass their own
+// rather than growing one shared hook object that every suite carries.
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -97,7 +102,7 @@ const IMPORT_MAP = `<script type="importmap">{"imports":{
   "https://www.gstatic.com/firebasejs/10.8.0/firebase-functions.js":"./stub-firestore.js"
 }}</script>`;
 
-export function build() {
+export function build(extraHooks) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mk-social-'));
     let html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
     html = html.replace('<head>', '<head>\n' + IMPORT_MAP);
@@ -109,7 +114,8 @@ export function build() {
     // ledger buffer, the retry-stable id map — without any of it being
     // exported into the shipped app.
     fs.writeFileSync(path.join(dir, 'app.js'),
-        fs.readFileSync(path.join(root, 'app.js'), 'utf8') + '\n' + HOOKS);
+        fs.readFileSync(path.join(root, 'app.js'), 'utf8') + '\n' + HOOKS +
+        (extraHooks ? '\n' + extraHooks : ''));
     for (const f of ['stub-firestore.js', 'stub-auth.js']) {
         fs.copyFileSync(path.join(here, f), path.join(dir, f));
     }
