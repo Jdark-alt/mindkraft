@@ -1024,7 +1024,7 @@
                                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
                             </button>
                         </div>
-                        <button class="act-tb-btn qc-plan-btn" onclick="openQuestComposer()" title="Plan it for me">
+                        <button class="qc-plan-btn" onclick="openQuestComposer()" title="Plan it for me">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="3.2"/></svg>
                             <span>Plan it for me</span>
                         </button>
@@ -1972,6 +1972,7 @@
                 </button>
             </div>
             <div class="modal-body pl-modal-body">
+                <div id="qcForm">
                 <p class="qc-lead">Describe the project or routine. I'll build it out of the activities you already do, and add steps where there's a gap.</p>
                 <textarea id="qcRequest" class="pl-input qc-textarea" maxlength="280" rows="3" placeholder="Run a 10K in eight weeks"></textarea>
                 <div class="qc-count"><span id="qcCount">0</span>/280</div>
@@ -1987,10 +1988,46 @@
                     <button type="button" class="qc-opt" data-size="months" onclick="qcPickSize('months')">A few months</button>
                 </div>
                 <div id="qcError" class="qc-error" style="display:none;"></div>
+                </div>
+
+                <!-- Building state — replaces the form while the model works -->
+                <div id="qcBuilding" class="qc-building" style="display:none;">
+                    <div class="qc-build-stage">
+                        <span class="qc-build-line"></span>
+                        <span class="qc-build-node n1"></span>
+                        <span class="qc-build-node n2"></span>
+                        <span class="qc-build-node n3"></span>
+                        <span class="qc-build-node n4"></span>
+                    </div>
+                    <div class="qc-build-title">Building your quest</div>
+                    <div id="qcBuildStep" class="qc-build-step">Reading your activities…</div>
+                </div>
             </div>
             <div class="modal-footer pl-modal-footer">
                 <button class="pl-btn-ghost" type="button" onclick="closeQuestComposer()">Cancel</button>
                 <button id="qcSubmit" class="pl-btn-primary" type="button" onclick="qcSubmit()">Plan it</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- New activities created by a composed quest — review before they stick -->
+    <div id="qcReviewModal" class="modal-overlay">
+        <div class="modal pl-modal">
+            <div class="modal-header pl-modal-header">
+                <div>
+                    <div class="pl-modal-eyebrow">Added to your tracker</div>
+                    <h3 class="modal-title"><span id="qcReviewCount">0 new activities</span></h3>
+                </div>
+                <button class="pl-modal-close" type="button" onclick="qcCloseNewActivityReview()" aria-label="Close">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="modal-body pl-modal-body">
+                <p class="qc-lead">Your quest needed steps you don't already track, so these were created as real activities — they earn XP, keep a streak, and count toward your week. Rename, reword or remove any of them now.</p>
+                <div id="qcReviewBody"></div>
+            </div>
+            <div class="modal-footer pl-modal-footer">
+                <button id="qcReviewAccept" class="pl-btn-primary" type="button" onclick="qcCloseNewActivityReview()">Add all</button>
             </div>
         </div>
     </div>
@@ -3030,7 +3067,8 @@
             { key: 'pursuits', name: 'Pursuits', subs: [
                 { label: 'Quests',     kind: 'legacy', tab: 'projects', action: {
                     lead:  '#projectsListView .pr-toolbar .act-tb-btn',
-                    trail: '#projectsListView .pr-toolbar .act-tb-add-main' } },
+                    trail: ['#projectsListView .pr-toolbar .qc-plan-btn',
+                            '#projectsListView .pr-toolbar .act-tb-add-main'] } },
                 { label: 'Modes',      kind: 'empty',  el: 'mkEmptyPursuitsModes' },
                 { label: 'Narratives', kind: 'empty',  el: 'mkEmptyPursuitsNarratives' }
             ] },

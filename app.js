@@ -19057,8 +19057,13 @@
                 getProjects().push(proj);
                 // A composed or accepted draft materializes its new-activity
                 // leaves now that the builder saved.
-                if (window._qcDraft) qcFinishDraft(proj);
+                var _qcCtx = window._qcDraft ? qcFinishDraft(proj) : null;
                 saveUserData(); closeProjectModal(); showToast('✓ Quest created', 'green'); openProjectDetail(proj.id);
+                // New activities were added to the tracker — show them, let the
+                // user rename, reword, re-price or remove any of them.
+                if (_qcCtx && _qcCtx.created && _qcCtx.created.length) {
+                    setTimeout(function() { qcOpenNewActivityReview(proj.id, _qcCtx.created); }, 260);
+                }
             }
         };
 
@@ -19133,7 +19138,10 @@
             var ctx = window._qcDraft;
             window._qcDraft = null;
             if (!ctx || !proj) return null;
-            var created = 0;
+            // Every activity minted here is reported back, so the user gets to
+            // see and change what was added to their tracker rather than
+            // discovering it later.
+            ctx.created = [];
             (function walk(nodes) {
                 (nodes || []).forEach(function(l) {
                     if (l.kind === 'group') return walk(l.children);
@@ -19143,11 +19151,11 @@
                         if (l.name && l.name.trim()) spec.name = l.name.trim();
                         var act = createActivityFromSpec(spec, ctx.nodeId || null, null);
                         l.type = 'activity'; l.linkedActivityId = act.id; l.name = '';
-                        created++;
+                        ctx.created.push({ activityId: act.id, leafId: l.id });
                     }
                 });
             })(proj.groups);
-            if (created && typeof computeProjectDimensions === 'function') {
+            if (ctx.created.length && typeof computeProjectDimensions === 'function') {
                 var dims = computeProjectDimensions(proj.groups);
                 proj.dimensionIds = dims.dimensionIds; proj.dimensionId = dims.dimensionId;
             }
@@ -19221,6 +19229,8 @@
         window.closeQuestComposer = function() {
             var m = document.getElementById('questComposerModal');
             if (m) m.classList.remove('active');
+            clearInterval(_qcStepTimer);
+            _qcStepTimer = null;
         };
 
         function qcSyncCount() {
@@ -19255,12 +19265,50 @@
             el.style.display = msg ? '' : 'none';
         }
 
+        // The wait is 5-15 seconds of someone watching a screen, so it gets a
+        // real state rather than a disabled button: the form steps aside, a
+        // pipeline assembles itself, and the caption moves through what is
+        // actually happening. The captions are paced, not synced to real
+        // progress — a streamed call has no honest percentage to report, and a
+        // fake bar that stalls at 80% is worse than none.
+        var QC_BUILD_STEPS = [
+            'Reading your activities\u2026',
+            'Working out the shape\u2026',
+            'Choosing what you already do\u2026',
+            'Ordering the steps\u2026',
+            'Almost there\u2026'
+        ];
+        var _qcStepTimer = null;
+
         function qcSetBusy(busy) {
             _qcBusy = busy;
             var btn = document.getElementById('qcSubmit');
-            if (!btn) return;
-            btn.disabled = busy;
-            btn.textContent = busy ? 'Planning\u2026' : 'Plan it';
+            var form = document.getElementById('qcForm');
+            var build = document.getElementById('qcBuilding');
+            var cancel = document.querySelector('#questComposerModal .pl-btn-ghost');
+
+            if (btn) { btn.disabled = busy; btn.style.display = busy ? 'none' : ''; }
+            if (cancel) cancel.textContent = busy ? 'Cancel' : 'Cancel';
+            if (form) form.style.display = busy ? 'none' : '';
+            if (build) build.style.display = busy ? '' : 'none';
+
+            clearInterval(_qcStepTimer);
+            _qcStepTimer = null;
+            if (!busy) return;
+
+            var i = 0;
+            var step = document.getElementById('qcBuildStep');
+            if (step) step.textContent = QC_BUILD_STEPS[0];
+            _qcStepTimer = setInterval(function() {
+                i = Math.min(i + 1, QC_BUILD_STEPS.length - 1);
+                var el = document.getElementById('qcBuildStep');
+                if (!el) return;
+                el.classList.remove('is-in');
+                // reflow, so the fade replays on a repeated class
+                void el.offsetWidth;
+                el.textContent = QC_BUILD_STEPS[i];
+                el.classList.add('is-in');
+            }, 2600);
         }
 
         // The client's own activity index, for re-checking linkedActivityId
@@ -19296,7 +19344,7 @@
                 // input, and this crossed a trust boundary.
                 _buildActIdx();
                 var ctx = qcClientCtx();
-                var counter = { newActs: 0, leaves: 0 };
+                var counter = { newActs: 0, leaves: 0, linked: {} };
                 var groups = ((res.spec && res.spec.groups) || [])
                     .map(function(g) { return qcValidateGroup(g, ctx, counter, 1); })
                     .filter(Boolean);
@@ -19313,6 +19361,159 @@
                 qcSetBusy(false);
                 qcSetError(err && err.message === 'qc_timeout' ? 'That took too long. Try again?' : RETRY);
             }
+        };
+
+        // ── New-activity review ──────────────────────────────────────────────
+        // A composed quest can mint real activities, and an activity is a
+        // durable commitment — it earns XP forever, keeps a streak, and counts
+        // toward the weekly quota. So nothing arrives silently: whatever was
+        // created is shown, editable, and removable in one pass.
+        var _qcReview = null;   // { projectId, items:[{activityId, leafId}] }
+
+        // Resolved straight off userData rather than through the shared
+        // activity index: that index is memoised on a fingerprint of dimension
+        // / path / activity COUNTS, so a tree that changes without changing
+        // any count hands back stale objects — and an edit written to a stale
+        // object goes nowhere. This walk is a few dozen items and always live.
+        function qcFindActivity(activityId) {
+            if (!activityId) return null;
+            var dims = (window.userData && window.userData.dimensions) || [];
+            for (var di = 0; di < dims.length; di++) {
+                var paths = dims[di].paths || [];
+                for (var pi = 0; pi < paths.length; pi++) {
+                    var acts = paths[pi].activities || [];
+                    for (var ai = 0; ai < acts.length; ai++) {
+                        if (acts[ai] && acts[ai].id === activityId) {
+                            return { activity: acts[ai], dim: dims[di], path: paths[pi], index: ai };
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
+        function qcOpenNewActivityReview(projectId, created) {
+            var items = (created || []).filter(function(c) { return !!qcFindActivity(c.activityId); });
+            if (!items.length) return;
+            _qcReview = { projectId: projectId, items: items };
+            qcRenderNewActivityReview();
+            var m = document.getElementById('qcReviewModal');
+            if (m) m.classList.add('active');
+        }
+
+        window.qcCloseNewActivityReview = function() {
+            var m = document.getElementById('qcReviewModal');
+            if (m) m.classList.remove('active');
+            _qcReview = null;
+            saveUserData();
+            if (typeof renderActivities === 'function') { try { renderActivities(); } catch (e) {} }
+        };
+
+        function qcRenderNewActivityReview() {
+            var host = document.getElementById('qcReviewBody');
+            if (!host || !_qcReview) return;
+            var live = _qcReview.items.filter(function(it) { return !!qcFindActivity(it.activityId); });
+            _qcReview.items = live;
+
+            if (!live.length) {
+                host.innerHTML = '<div class="qc-rev-empty">All removed — the quest keeps those steps as plain tasks.</div>';
+                qcSyncReviewCount();
+                return;
+            }
+
+            var freqs = ['daily', 'weekly', 'biweekly', 'monthly', 'occasional'];
+            host.innerHTML = live.map(function(it) {
+                var found = qcFindActivity(it.activityId);
+                var a = found.activity, dim = found.dim || {};
+                var opts = freqs.map(function(f) {
+                    return '<option value="' + f + '"' + (a.frequency === f ? ' selected' : '') + '>' + f + '</option>';
+                }).join('');
+                return '' +
+                '<div class="qc-rev-card" data-act="' + prAttr(a.id) + '">' +
+                    '<div class="qc-rev-top">' +
+                        '<span class="qc-rev-badge">New activity</span>' +
+                        (dim.name ? '<span class="qc-rev-dim">' + escapeHtml(dim.name) + '</span>' : '') +
+                        '<button class="qc-rev-remove" onclick="qcRemoveNewActivity(\'' + a.id + '\')" title="Don\u2019t add this one">Remove</button>' +
+                    '</div>' +
+                    '<input class="pl-input qc-rev-name" type="text" maxlength="80" value="' + prAttr(a.name || '') + '" ' +
+                        'oninput="qcEditNewActivity(\'' + a.id + '\',\'name\',this.value)" placeholder="Activity name">' +
+                    '<textarea class="pl-input qc-rev-desc" rows="2" maxlength="200" ' +
+                        'oninput="qcEditNewActivity(\'' + a.id + '\',\'description\',this.value)" ' +
+                        'placeholder="What does doing this actually involve?">' + escapeHtml(a.description || '') + '</textarea>' +
+                    '<div class="qc-rev-row">' +
+                        '<label class="qc-rev-field"><span>XP</span>' +
+                            '<input class="pl-input" type="number" min="1" max="50" value="' + (a.baseXP || 8) + '" ' +
+                                'oninput="qcEditNewActivity(\'' + a.id + '\',\'baseXP\',this.value)"></label>' +
+                        '<label class="qc-rev-field qc-rev-field-wide"><span>How often</span>' +
+                            '<select class="pl-input ay-select" onchange="qcEditNewActivity(\'' + a.id + '\',\'frequency\',this.value)">' + opts + '</select></label>' +
+                    '</div>' +
+                '</div>';
+            }).join('');
+            qcSyncReviewCount();
+        }
+
+        function qcSyncReviewCount() {
+            var n = (_qcReview && _qcReview.items.length) || 0;
+            var el = document.getElementById('qcReviewCount');
+            if (el) el.textContent = n === 1 ? '1 new activity' : n + ' new activities';
+            var btn = document.getElementById('qcReviewAccept');
+            if (btn) btn.textContent = n ? (n === 1 ? 'Add it' : 'Add all ' + n) : 'Done';
+        }
+
+        window.qcEditNewActivity = function(activityId, field, value) {
+            var found = qcFindActivity(activityId);
+            if (!found) return;
+            var a = found.activity;
+            if (field === 'baseXP') {
+                a.baseXP = Math.min(50, Math.max(1, parseInt(value, 10) || 1));
+            } else if (field === 'frequency') {
+                a.frequency = value;
+                // The mastery target is derived from the pace, so it has to
+                // move with it rather than keep the original frequency's shape.
+                if (typeof ttMasteryDefaultFor === 'function') a.techTreeMastery = ttMasteryDefaultFor(value);
+            } else if (field === 'name') {
+                a.name = String(value || '').slice(0, 80);
+            } else if (field === 'description') {
+                a.description = String(value || '').slice(0, 200);
+            }
+            debouncedSaveUserData();
+        };
+
+        // Removing keeps the step: the leaf falls back to the plain task it was
+        // before the activity was minted, so the quest never loses a step.
+        window.qcRemoveNewActivity = function(activityId) {
+            if (!_qcReview) return;
+            var entry = _qcReview.items.find(function(it) { return it.activityId === activityId; });
+            var found = qcFindActivity(activityId);
+            if (!entry || !found) return;
+            var name = found.activity.name || 'this activity';
+
+            var proj = findProject(_qcReview.projectId);
+            if (proj) {
+                var leaf = findNode(proj, entry.leafId);
+                if (leaf && leaf.kind === 'leaf') {
+                    leaf.type = 'task';
+                    leaf.linkedActivityId = null;
+                    leaf.name = name;
+                }
+            }
+
+            (window.userData.dimensions || []).forEach(function(d) {
+                (d.paths || []).forEach(function(pth) {
+                    var i = (pth.activities || []).findIndex(function(x) { return x.id === activityId; });
+                    if (i >= 0) pth.activities.splice(i, 1);
+                });
+            });
+
+            _qcReview.items = _qcReview.items.filter(function(it) { return it.activityId !== activityId; });
+            if (proj && typeof computeProjectDimensions === 'function') {
+                var dims = computeProjectDimensions(proj.groups);
+                proj.dimensionIds = dims.dimensionIds; proj.dimensionId = dims.dimensionId;
+            }
+            saveUserData();
+            qcRenderNewActivityReview();
+            if (window._openProjectId === _qcReview.projectId) renderProjectDetail(_qcReview.projectId);
+            showToast('Kept as a task — ' + name, 'olive');
         };
 
         // ── The callable ─────────────────────────────────────────────────────
@@ -19412,11 +19613,24 @@
                 // Re-checked here in case the activity was deleted between the
                 // call returning and the user saving.
                 if (l.linkedActivityId && ctx.activityIds.has(l.linkedActivityId)) {
+                    // One activity, one leaf. The model likes to repeat an
+                    // activity in every group it feels relevant to, which shows
+                    // up as duplicate cards for the same thing. A repeat is
+                    // FOLDED INTO the first leaf rather than dropped, so the
+                    // work it represents survives.
+                    if (!counter.linked) counter.linked = {};
+                    var seen = counter.linked[l.linkedActivityId];
+                    if (seen) {
+                        seen.requiredCount = Math.min(99, seen.requiredCount + req);
+                        return null;
+                    }
                     counter.leaves++;
-                    return {
+                    var built = {
                         id: qcNewId('lf'), kind: 'leaf', type: 'activity', linkedActivityId: l.linkedActivityId,
                         name: '', resetMode: resetMode, requiredCount: req, completedCount: 0
                     };
+                    counter.linked[l.linkedActivityId] = built;
+                    return built;
                 }
                 var spec = l.spec || {};
                 if (counter.newActs >= QC_MAX_NEW_ACTIVITIES) {
@@ -19429,6 +19643,7 @@
                         name: '', resetMode: resetMode, requiredCount: req, completedCount: 0,
                         spec: {
                             name: String(spec.name || l.name || 'Practice').slice(0, 80),
+                            description: String(spec.description || '').slice(0, 200),
                             baseXP: Math.min(50, Math.max(1, parseInt(spec.baseXP, 10) || 8)),
                             frequency: QC_VALID_FREQUENCIES.indexOf(spec.frequency) !== -1 ? spec.frequency : 'weekly',
                             dimensionId: ctx.dimIds.has(spec.dimensionId) ? spec.dimensionId : ctx.fallbackDim

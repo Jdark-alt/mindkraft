@@ -105,17 +105,19 @@ Output ONE JSON object. No prose, no markdown fences.
 LEAF, pick per step:
  reuses a real activity: {"kind":"leaf","type":"activity","linkedActivityId":"<real activityId from INPUT>","resetMode":"per-cycle","requiredCount":n}
  one-off step:           {"kind":"leaf","type":"task","name":str,"resetMode":"once","requiredCount":1}
- new practice:           {"kind":"leaf","type":"activity","spec":{"name":str,"baseXP":1..50,"frequency":"daily|weekly|biweekly|monthly|occasional","dimensionId":"<real dimensionId>"},"resetMode":"per-cycle","requiredCount":n}
+ new practice:           {"kind":"leaf","type":"activity","spec":{"name":str,"description":str,"baseXP":1..50,"frequency":"daily|weekly|biweekly|monthly|occasional","dimensionId":"<real dimensionId>"},"resetMode":"per-cycle","requiredCount":n}
 
 RULES
-1. STRONGLY PREFER linked leaves. The user's existing activities are the raw material; a quest that ignores them has failed at its job. Use a real linkedActivityId wherever the work is something they already do.
-2. At most ${MAX_NEW_ACTIVITIES} new-practice leaves, and only where there is a genuine gap the existing activities cannot fill.
-3. Use task leaves for one-off steps that are not habits — book the venue, buy soil. Never turn a one-time errand into an activity.
-4. At most ${MAX_LEAVES} leaves in total, nesting at most ${MAX_DEPTH} deep. A sprawling tree is unreadable and impossible to finish.
-5. ordered:true only when the sequence genuinely matters. Default to a checklist.
-6. repeat > 1 only for a recurring quest or a genuinely cyclical group.
-7. Terse names. A group name is two or three words.
-8. Honour the requested size. "A few days" means one group and a handful of leaves, not a twelve-week programme.`;
+1. BUILD IT OUT OF WHAT THEY ALREADY DO. The activities in INPUT are the raw material. A quest assembled from their real activities is the good outcome; one padded with new practices and errands is a failure, even if it reads well. Reach for a real linkedActivityId first, every time.
+2. NEW PRACTICES ARE A LAST RESORT — at most ${MAX_NEW_ACTIVITIES}, and zero is the normal, correct answer. Propose one ONLY when the quest is impossible without it and nothing in INPUT comes close. Discovering new practices is another part of this app's job, not yours. If you are tempted by a new practice, look again for an existing activity that covers it.
+3. Task leaves are for genuine one-off errands that are not habits — book the venue, buy soil. Use them sparingly; a checklist of chores is not a quest. Never turn a one-time errand into an activity.
+4. NEVER use the same linkedActivityId twice anywhere in the quest. One activity, one leaf. If it is needed throughout, give that single leaf a higher requiredCount, or put it in a group with repeat > 1 — never a second copy in another group.
+5. Every new-practice spec MUST carry a "description": one short sentence saying what doing it actually involves, so it stands on its own in the user's tracker.
+6. At most ${MAX_LEAVES} leaves in total, nesting at most ${MAX_DEPTH} deep. A sprawling tree is unreadable and impossible to finish.
+7. ordered:true only when the sequence genuinely matters. Default to a checklist.
+8. repeat > 1 only for a recurring quest or a genuinely cyclical group.
+9. Terse names. A group name is two or three words.
+10. Honour the requested size. "A few days" means one group and a handful of leaves, not a twelve-week programme.`;
 
 function buildComposePrompt({ activities, dimensions, request, shape, size }) {
     const sizeLine = size
@@ -189,11 +191,23 @@ function validateLeaf(l, ctx, counter) {
         // The authoritative activity list lives here, so an invented id is
         // caught rather than carried into the builder.
         if (l.linkedActivityId && ctx.activityIds.has(l.linkedActivityId)) {
+            // One activity, one leaf. The model likes to repeat an activity in
+            // every group it feels relevant to, which shows up as duplicate
+            // cards for the same thing. A repeat is FOLDED INTO the first leaf
+            // rather than dropped, so the work it represents survives.
+            if (!counter.linked) counter.linked = {};
+            const seen = counter.linked[l.linkedActivityId];
+            if (seen) {
+                seen.requiredCount = Math.min(99, seen.requiredCount + req);
+                return null;
+            }
             counter.leaves++;
-            return {
+            const built = {
                 id: newId('lf'), kind: 'leaf', type: 'activity', linkedActivityId: l.linkedActivityId,
                 name: '', resetMode, requiredCount: req, completedCount: 0,
             };
+            counter.linked[l.linkedActivityId] = built;
+            return built;
         }
         const spec = l.spec || {};
         if (counter.newActs >= MAX_NEW_ACTIVITIES) {
@@ -206,6 +220,7 @@ function validateLeaf(l, ctx, counter) {
                 name: '', resetMode, requiredCount: req, completedCount: 0,
                 spec: {
                     name: String(spec.name || l.name || 'Practice').slice(0, 80),
+                    description: String(spec.description || '').slice(0, 200),
                     baseXP: Math.min(50, Math.max(1, parseInt(spec.baseXP, 10) || 8)),
                     frequency: VALID_FREQUENCIES.indexOf(spec.frequency) !== -1 ? spec.frequency : 'weekly',
                     dimensionId: ctx.dimIds.has(spec.dimensionId) ? spec.dimensionId : ctx.fallbackDim,
@@ -233,7 +248,7 @@ function validateLeaf(l, ctx, counter) {
 function validateSpec(raw, ctx, fallbackShape) {
     if (!raw || typeof raw !== 'object') return null;
     const s = raw.spec || raw;
-    const counter = { newActs: 0, leaves: 0 };
+    const counter = { newActs: 0, leaves: 0, linked: {} };
 
     const rawGroups = Array.isArray(s.groups) ? s.groups
         : (Array.isArray(raw.groups) ? raw.groups : []);

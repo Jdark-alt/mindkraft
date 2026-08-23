@@ -7,7 +7,7 @@ const ctx = {
     dimIds: new Set(['d1', 'd2']),
     fallbackDim: 'd1',
 };
-const counter = () => ({ newActs: 0, leaves: 0 });
+const counter = () => ({ newActs: 0, leaves: 0, linked: {} });
 const leaf = (o) => Object.assign({ kind: 'leaf' }, o);
 const grp = (children, o) => Object.assign({ kind: 'group', name: 'G', children }, o || {});
 
@@ -196,6 +196,80 @@ test('the prompt carries the request, shape and the real ids', () => {
     assert.match(p.user, /Run a 10K in eight weeks/);
     assert.match(p.user, /"a1"/);
     assert.match(p.user, /a few weeks/);
-    assert.match(p.system, /STRONGLY PREFER linked leaves/);
+    assert.match(p.system, /BUILD IT OUT OF WHAT THEY ALREADY DO/);
     assert.match(p.system, /No prose, no markdown fences/);
+});
+
+// ── one activity, one leaf ──────────────────────────────────────────────────
+
+test('the same activity in two groups collapses to one leaf', () => {
+    const spec = qc.validateSpec({ name:'X', groups:[
+        grp([leaf({type:'activity',linkedActivityId:'a1',requiredCount:2}), leaf({type:'task',name:'p'})], {name:'Week 1'}),
+        grp([leaf({type:'activity',linkedActivityId:'a1',requiredCount:3}), leaf({type:'task',name:'q'})], {name:'Week 2'}),
+    ]}, ctx);
+    const linked = [];
+    (function walk(ns){ ns.forEach(n => n.kind==='group' ? walk(n.children) : (n.linkedActivityId && linked.push(n))); })(spec.groups);
+    assert.strictEqual(linked.length, 1, 'exactly one leaf for a1');
+    assert.strictEqual(linked[0].requiredCount, 5, 'the repeat folded into it, work preserved');
+});
+
+test('a duplicate inside a single group also collapses', () => {
+    const spec = qc.validateSpec({ name:'X', groups:[grp([
+        leaf({type:'activity',linkedActivityId:'a1',requiredCount:1}),
+        leaf({type:'activity',linkedActivityId:'a1',requiredCount:1}),
+        leaf({type:'activity',linkedActivityId:'a2',requiredCount:1}),
+    ])]}, ctx);
+    const linked = [];
+    (function walk(ns){ ns.forEach(n => n.kind==='group' ? walk(n.children) : (n.linkedActivityId && linked.push(n))); })(spec.groups);
+    assert.deepStrictEqual(linked.map(l=>l.linkedActivityId).sort(), ['a1','a2']);
+    assert.strictEqual(linked.find(l=>l.linkedActivityId==='a1').requiredCount, 2);
+});
+
+test('different activities are never merged', () => {
+    const spec = qc.validateSpec({ name:'X', groups:[grp([
+        leaf({type:'activity',linkedActivityId:'a1'}),
+        leaf({type:'activity',linkedActivityId:'a2'}),
+        leaf({type:'activity',linkedActivityId:'a3'}),
+    ])]}, ctx);
+    assert.strictEqual(spec.groups[0].children.length, 3);
+});
+
+test('a group left empty by deduping does not survive as a husk', () => {
+    const spec = qc.validateSpec({ name:'X', groups:[
+        grp([leaf({type:'activity',linkedActivityId:'a1'})], {name:'First'}),
+        grp([leaf({type:'activity',linkedActivityId:'a1'})], {name:'Duplicate only'}),
+    ]}, ctx);
+    assert.strictEqual(spec.groups.length, 1, 'the all-duplicate group is dropped');
+    assert.strictEqual(spec.groups[0].name, 'First');
+});
+
+// ── new activities carry a description ──────────────────────────────────────
+
+test('a new-practice description is carried through', () => {
+    const l = qc.validateLeaf(leaf({ type:'activity', spec:{
+        name:'Tempo run', description:'A sustained 20-minute effort at threshold pace.',
+        baseXP:12, frequency:'weekly', dimensionId:'d1' } }), ctx, counter());
+    assert.strictEqual(l.spec.description, 'A sustained 20-minute effort at threshold pace.');
+});
+
+test('a missing description is an empty string, never undefined', () => {
+    const l = qc.validateLeaf(leaf({ type:'activity',
+        spec:{ name:'X', baseXP:8, frequency:'daily', dimensionId:'d1' } }), ctx, counter());
+    assert.strictEqual(l.spec.description, '');
+});
+
+test('an over-long description is truncated', () => {
+    const l = qc.validateLeaf(leaf({ type:'activity',
+        spec:{ name:'X', description:'z'.repeat(500), baseXP:8, frequency:'daily', dimensionId:'d1' } }), ctx, counter());
+    assert.strictEqual(l.spec.description.length, 200);
+});
+
+// ── the prompt states the new rules ─────────────────────────────────────────
+
+test('the prompt forbids duplicate ids and demands a description', () => {
+    const p = qc.buildComposePrompt({ activities:[], dimensions:[], request:'x', shape:'oneoff', size:null });
+    assert.match(p.system, /NEVER use the same linkedActivityId twice/);
+    assert.match(p.system, /MUST carry a "description"/);
+    assert.match(p.system, /LAST RESORT/);
+    assert.match(p.system, /"description":str/, 'the schema advertises it');
 });
