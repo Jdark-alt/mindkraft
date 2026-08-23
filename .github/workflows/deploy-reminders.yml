@@ -80,10 +80,16 @@ jobs:
           # Functions are named ONE BY ONE, never a bare `--only functions`.
           # A bare deploy also DELETES any deployed function missing from the
           # source, so a bad merge could silently take notifications down.
-          # ADD NEW FUNCTIONS TO THIS LIST — one left out is one never
-          # deployed, and it fails silently.
+          #
+          # The `reminders:` segment is the CODEBASE name from firebase.json.
+          # Without it the filter matches nothing and the deploy aborts with
+          # "No function matches given --only filters" — which is a safe
+          # failure, but a confusing one.
+          #
+          # ADD NEW FUNCTIONS TO THIS LIST, with the codebase prefix — one
+          # left out is one never deployed.
           npx --yes firebase-tools@13 deploy \
-            --only functions:sendDueReminders,functions:onGiftReceived,functions:onGiftConsumed,functions:onReminderWrite,functions:createActivityReminder,functions:composeQuest,firestore:indexes \
+            --only functions:reminders:sendDueReminders,functions:reminders:onGiftReceived,functions:reminders:onGiftConsumed,functions:reminders:onReminderWrite,functions:reminders:createActivityReminder,functions:reminders:composeQuest,firestore:indexes \
             --project "$FIREBASE_PROJECT" \
             --non-interactive \
             --force
