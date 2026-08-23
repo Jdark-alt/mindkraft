@@ -588,7 +588,7 @@ exports.composeQuest = onCall(
         // Activities are read here rather than accepted from the client: it
         // keeps the request tiny, stops a malicious client padding the payload
         // to burn tokens, and makes the snapshot authoritative.
-        const activities = questComposer.liveActivities(userData);
+        const activities = questComposer.activityMenu(userData);
         if (activities.length < questComposer.MIN_ACTIVITIES) {
             return { ok: false, reason: 'gate' };
         }

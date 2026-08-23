@@ -19349,6 +19349,7 @@
                     .map(function(g) { return qcValidateGroup(g, ctx, counter, 1); })
                     .filter(Boolean);
                 if (!groups.length) { qcSetError(RETRY); qcSetBusy(false); return; }
+                qcDemoteExcessNewActivities(counter);
 
                 closeQuestComposer();
                 qcSetBusy(false);
@@ -19554,7 +19555,32 @@
         // drops the `spec` wrapper and puts leaves where groups belong, and an
         // earlier strict implementation discarded the whole quest when it did
         // — which is why quests "never generated". Repair, do not reject.
-        var QC_MAX_NEW_ACTIVITIES = 3;
+        // New practices are capped as a SHARE of the quest, not a flat count:
+        // three new activities in a four-step quest is a different thing from
+        // three in a twenty-step pipeline. Applied once the total is known.
+        var QC_NEW_ACTIVITY_SHARE = 0.3;
+        var QC_MIN_NEW_ACTIVITIES = 2;
+        var QC_MAX_NEW_ACTIVITIES = 6;
+        function qcNewActivityAllowance(totalLeaves) {
+            return Math.max(QC_MIN_NEW_ACTIVITIES,
+                Math.min(QC_MAX_NEW_ACTIVITIES, Math.round(totalLeaves * QC_NEW_ACTIVITY_SHARE)));
+        }
+        // The excess is DEMOTED to tasks, never dropped: the step stays in the
+        // plan, it just stops being a lifelong commitment.
+        function qcDemoteExcessNewActivities(counter) {
+            var made = counter.newLeaves || [];
+            var allowed = qcNewActivityAllowance(counter.leaves);
+            if (made.length <= allowed) return 0;
+            var excess = made.slice(allowed);
+            excess.forEach(function(leaf) {
+                leaf.type = 'task';
+                leaf.name = String((leaf.spec && leaf.spec.name) || 'Step').slice(0, 80);
+                leaf.linkedActivityId = null;
+                delete leaf.spec;
+            });
+            counter.newActs -= excess.length;
+            return excess.length;
+        }
         var QC_MAX_LEAVES = 20;
         var QC_MAX_DEPTH = 3;
         var QC_VALID_FREQUENCIES = ['daily', 'weekly', 'biweekly', 'monthly', 'occasional'];
@@ -19638,7 +19664,7 @@
                 } else if (spec && (spec.baseXP || spec.frequency || spec.dimensionId || l.name)) {
                     counter.newActs++;
                     counter.leaves++;
-                    return {
+                    var madeNew = {
                         id: qcNewId('lf'), kind: 'leaf', type: 'activity', linkedActivityId: null,
                         name: '', resetMode: resetMode, requiredCount: req, completedCount: 0,
                         spec: {
@@ -19649,6 +19675,9 @@
                             dimensionId: ctx.dimIds.has(spec.dimensionId) ? spec.dimensionId : ctx.fallbackDim
                         }
                     };
+                    if (!counter.newLeaves) counter.newLeaves = [];
+                    counter.newLeaves.push(madeNew);
+                    return madeNew;
                 } else {
                     type = 'task';
                 }

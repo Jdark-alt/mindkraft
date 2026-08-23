@@ -9,7 +9,17 @@
 // crosses a trust boundary and the builder assumes well-formed input.
 // EDIT BOTH OR NEITHER.
 
-const MAX_NEW_ACTIVITIES = 3;   // new practices per quest
+// New practices are capped as a SHARE of the quest, not a flat count: three
+// new activities in a four-step quest is a different thing from three in a
+// twenty-step pipeline. Roughly a third may be new, with a floor so a small
+// quest can still introduce one, and a ceiling so nothing runs away.
+const NEW_ACTIVITY_SHARE = 0.3;
+const MIN_NEW_ACTIVITIES = 2;
+const MAX_NEW_ACTIVITIES = 6;
+function newActivityAllowance(totalLeaves) {
+    return Math.max(MIN_NEW_ACTIVITIES,
+        Math.min(MAX_NEW_ACTIVITIES, Math.round(totalLeaves * NEW_ACTIVITY_SHARE)));
+}
 const MAX_LEAVES = 20;          // total leaves, enforced not just requested
 const MAX_DEPTH = 3;            // group nesting
 const MAX_ACTIVITIES_SENT = 40; // raw material offered to the model
@@ -68,33 +78,53 @@ function collectActivities(userData) {
     return out;
 }
 
-/** Live activities, most-recently-completed first, capped. */
-function liveActivities(userData, now = new Date()) {
+/**
+ * The activity menu offered to the model: everything the user owns, ranked so
+ * what they are actively doing comes first.
+ *
+ * This deliberately does NOT hard-filter on recency. It used to, using the
+ * Grit liveness window, and that was wrong: someone building a video pipeline
+ * has "shoot a video" and "ideate and script" in their tracker but may not
+ * have touched them this week — so the composer never saw them and built the
+ * quest out of the one activity that happened to be recent. An activity you
+ * own is raw material whether or not you did it on Tuesday.
+ *
+ * Recency still matters, so it is passed to the model as a signal rather than
+ * a gate, and the 40-cap keeps a big tracker from flooding the prompt.
+ */
+function activityMenu(userData, now = new Date()) {
     const refMs = now.getTime();
     return collectActivities(userData)
         .filter(({ act }) => isCountable(act))
         .map(({ act, dim }) => ({ act, dim, last: lastCompletionMs(act) }))
-        .filter(({ act, last }) => last > 0 && refMs - last <= lookbackDays(act) * 86400000)
-        .sort((a, b) => b.last - a.last)
+        .sort((a, b) => b.last - a.last)          // actively used first
         .slice(0, MAX_ACTIVITIES_SENT)
-        .map(({ act, dim }) => ({
-            id: act.id,
-            name: String(act.name || '').slice(0, 80),
-            frequency: act.frequency || 'weekly',
-            dimensionId: dim.id,
-            dimension: String(dim.name || '').slice(0, 40),
-            baseXP: Math.max(1, act.baseXP || 1),
-            streak: act.streak || 0,
-        }));
+        .map(({ act, dim, last }) => {
+            const entry = {
+                id: act.id,
+                name: String(act.name || '').slice(0, 80),
+                frequency: act.frequency || 'weekly',
+                dimensionId: dim.id,
+                dimension: String(dim.name || '').slice(0, 40),
+                baseXP: Math.max(1, act.baseXP || 1),
+                streak: act.streak || 0,
+                doneRecently: last > 0 && refMs - last <= lookbackDays(act) * 86400000,
+            };
+            // The description is what tells the model whether a vaguely named
+            // activity actually covers the work in front of it.
+            const desc = String(act.description || '').trim();
+            if (desc) entry.description = desc.slice(0, 160);
+            return entry;
+        });
 }
 
 // ── Prompt ──────────────────────────────────────────────────────────────────
 // The LEAF vocabulary is carried over verbatim from the tech-tree generator,
 // where it was tuned against how this model actually malforms output.
 
-const SYSTEM_PROMPT = `You decompose a stated intention into a quest: a structure of groups, steps and repeat counts, built mostly out of activities the user ALREADY does.
+const SYSTEM_PROMPT = `You are a planner. You take something a person is trying to get done and turn it into a quest: a real structure of stages, steps and repeat counts, built mostly out of activities they ALREADY track.
 
-Your job is decomposition and ordering, not discovery. Do not propose a life direction; take the request as given and make it doable.
+Your job is decomposition and ordering. Do not propose a life direction — this app has a separate Map for discovery. Take the stated intention and make it genuinely doable.
 
 Output ONE JSON object. No prose, no markdown fences.
 
@@ -107,17 +137,26 @@ LEAF, pick per step:
  one-off step:           {"kind":"leaf","type":"task","name":str,"resetMode":"once","requiredCount":1}
  new practice:           {"kind":"leaf","type":"activity","spec":{"name":str,"description":str,"baseXP":1..50,"frequency":"daily|weekly|biweekly|monthly|occasional","dimensionId":"<real dimensionId>"},"resetMode":"per-cycle","requiredCount":n}
 
-RULES
-1. BUILD IT OUT OF WHAT THEY ALREADY DO. The activities in INPUT are the raw material. A quest assembled from their real activities is the good outcome; one padded with new practices and errands is a failure, even if it reads well. Reach for a real linkedActivityId first, every time.
-2. NEW PRACTICES ARE A LAST RESORT — at most ${MAX_NEW_ACTIVITIES}, and zero is the normal, correct answer. Propose one ONLY when the quest is impossible without it and nothing in INPUT comes close. Discovering new practices is another part of this app's job, not yours. If you are tempted by a new practice, look again for an existing activity that covers it.
-3. Task leaves are for genuine one-off errands that are not habits — book the venue, buy soil. Use them sparingly; a checklist of chores is not a quest. Never turn a one-time errand into an activity.
-4. NEVER use the same linkedActivityId twice anywhere in the quest. One activity, one leaf. If it is needed throughout, give that single leaf a higher requiredCount, or put it in a group with repeat > 1 — never a second copy in another group.
-5. Every new-practice spec MUST carry a "description": one short sentence saying what doing it actually involves, so it stands on its own in the user's tracker.
-6. At most ${MAX_LEAVES} leaves in total, nesting at most ${MAX_DEPTH} deep. A sprawling tree is unreadable and impossible to finish.
-7. ordered:true only when the sequence genuinely matters. Default to a checklist.
-8. repeat > 1 only for a recurring quest or a genuinely cyclical group.
-9. Terse names. A group name is two or three words.
-10. Honour the requested size. "A few days" means one group and a handful of leaves, not a twelve-week programme.`;
+── PLAN PROPERLY ──────────────────────────────────────────────────────────
+1. BUILD THE REAL SHAPE OF THE WORK. Most things worth doing have stages, and each stage is a GROUP. A video habit is not one list — it is planning, production, post-production, publishing, and reviewing how it did. Name the stages the way someone doing the work would.
+2. USE ordered:true WHEN THE SEQUENCE IS REAL. A production line is ordered: you cannot edit footage you have not shot. A set of independent chores is not — leave those unordered. Do not make everything ordered, and do not make everything a flat checklist. Judge each group on its own.
+3. SIZE IT HONESTLY. "A few days" is one group and a handful of steps. "A few weeks" is two or three groups. "A few months" can be three to five. A recurring routine is usually one or two groups that cycle. Never pad to look thorough.
+4. repeat > 1 only for a group that genuinely runs more than once per cycle.
+5. Terse names. A group name is two or three words.
+
+── USE WHAT THEY ALREADY DO ───────────────────────────────────────────────
+6. READ THE WHOLE ACTIVITY LIST BEFORE YOU BUILD. Match on MEANING, not wording: "ideate and script", "shoot a video" and "edit a video" are three separate stages of one pipeline and all three belong in a video quest. Missing an activity that obviously fits is the single worst thing you can do here — it makes the quest feel like it was written by someone who never looked.
+7. \`doneRecently:false\` does NOT mean unavailable. It is still their activity and still the right leaf if it fits the work. Recency only breaks ties.
+8. NEVER link a vague or catch-all activity — "do something new", "be productive", "misc" — unless the request is literally about that. A generic activity dragged into a specific quest is noise, and the user notices immediately. If nothing genuinely fits a step, write a task or a new practice instead.
+
+── WHEN TO ADD SOMETHING NEW ──────────────────────────────────────────────
+9. Roughly TWO THIRDS of the quest should be activities they already have. The remaining third may be new steps where there is a real gap — do not force the ratio in either direction, and never invent a step the quest does not need.
+10. A TASK is for a one-off or per-cycle step that is not a habit worth tracking forever: design the thumbnail, write the description, publish it, book the venue, buy soil. Reach for a task before a new practice — most gaps are tasks.
+11. A NEW PRACTICE is only for something they should be doing repeatedly, and would want a streak on. It must carry a "description": one short sentence on what doing it actually involves.
+
+── LIMITS ─────────────────────────────────────────────────────────────────
+12. NEVER use the same linkedActivityId twice anywhere in the quest. One activity, one leaf. If it recurs throughout, raise its requiredCount or put it in a group with repeat > 1.
+13. At most ${MAX_LEAVES} leaves in total, nesting at most ${MAX_DEPTH} deep.`;
 
 function buildComposePrompt({ activities, dimensions, request, shape, size }) {
     const sizeLine = size
@@ -211,11 +250,11 @@ function validateLeaf(l, ctx, counter) {
         }
         const spec = l.spec || {};
         if (counter.newActs >= MAX_NEW_ACTIVITIES) {
-            type = 'task';  // demote the excess rather than dropping it
+            type = 'task';  // hard ceiling; the share is applied afterwards
         } else if (spec && (spec.baseXP || spec.frequency || spec.dimensionId || l.name)) {
             counter.newActs++;
             counter.leaves++;
-            return {
+            const madeNew = {
                 id: newId('lf'), kind: 'leaf', type: 'activity', linkedActivityId: null,
                 name: '', resetMode, requiredCount: req, completedCount: 0,
                 spec: {
@@ -226,6 +265,9 @@ function validateLeaf(l, ctx, counter) {
                     dimensionId: ctx.dimIds.has(spec.dimensionId) ? spec.dimensionId : ctx.fallbackDim,
                 },
             };
+            if (!counter.newLeaves) counter.newLeaves = [];
+            counter.newLeaves.push(madeNew);
+            return madeNew;
         } else {
             type = 'task';
         }
@@ -270,6 +312,8 @@ function validateSpec(raw, ctx, fallbackShape) {
     const groups = groupsIn.map((g) => validateGroup(g, ctx, counter, 1)).filter(Boolean);
     if (!groups.length) return null;
 
+    demoteExcessNewActivities(counter);
+
     const cadence = s.cadence || raw.cadence;
     const cadType = (cadence && cadence.type === 'recurring') ? 'recurring'
         : (cadence && cadence.type === 'oneoff') ? 'oneoff'
@@ -284,6 +328,28 @@ function validateSpec(raw, ctx, fallbackShape) {
     };
 }
 
+/**
+ * Applies the new-practice share once the quest's real size is known. The
+ * excess is DEMOTED to tasks, never dropped: the step is still part of the
+ * plan, it just stops being a lifelong commitment. Later leaves go first, so
+ * the ones the model reached for earliest — usually the load-bearing ones —
+ * survive.
+ */
+function demoteExcessNewActivities(counter) {
+    const made = counter.newLeaves || [];
+    const allowed = newActivityAllowance(counter.leaves);
+    if (made.length <= allowed) return 0;
+    const excess = made.slice(allowed);
+    excess.forEach((leaf) => {
+        leaf.type = 'task';
+        leaf.name = String((leaf.spec && leaf.spec.name) || 'Step').slice(0, 80);
+        leaf.linkedActivityId = null;
+        delete leaf.spec;
+    });
+    counter.newActs -= excess.length;
+    return excess.length;
+}
+
 function buildCtx(userData, activities) {
     const dimIds = new Set((userData.dimensions || []).map((d) => d.id));
     return {
@@ -295,5 +361,6 @@ function buildCtx(userData, activities) {
 
 module.exports = {
     MAX_NEW_ACTIVITIES, MAX_LEAVES, MAX_DEPTH, MIN_ACTIVITIES, REQUEST_MAX_CHARS,
-    liveActivities, buildComposePrompt, validateGroup, validateLeaf, validateSpec, buildCtx,
+    newActivityAllowance, demoteExcessNewActivities,
+    activityMenu, buildComposePrompt, validateGroup, validateLeaf, validateSpec, buildCtx,
 };

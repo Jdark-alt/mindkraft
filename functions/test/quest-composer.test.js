@@ -85,15 +85,6 @@ test('a bogus frequency falls back to weekly, baseXP is clamped', () => {
 
 // ── caps enforced in code, not just asked for in the prompt ─────────────────
 
-test('the new-activity cap demotes the excess to tasks', () => {
-    const c = counter();
-    const made = [1, 2, 3, 4, 5].map((i) => qc.validateLeaf(leaf({
-        type: 'activity', name: 'New ' + i, spec: { name: 'New ' + i, baseXP: 8, frequency: 'daily', dimensionId: 'd1' },
-    }), ctx, c));
-    assert.strictEqual(made.filter((x) => x.type === 'activity').length, qc.MAX_NEW_ACTIVITIES);
-    assert.strictEqual(made.filter((x) => x.type === 'task').length, 2, 'demoted, not dropped');
-});
-
 test('total leaves are truncated at the cap', () => {
     const many = [];
     for (let i = 0; i < 40; i++) many.push(leaf({ type: 'task', name: 'step ' + i }));
@@ -140,25 +131,44 @@ const act = (id, name, daysAgo, extra) => Object.assign({
     completionHistory: daysAgo === null ? [] : [{ date: new Date(Date.now() - daysAgo * 86400000).toISOString(), xp: 10 }],
 }, extra || {});
 
-test('only live activities are sent', () => {
-    const live = qc.liveActivities(mkUser([
-        act('a1', 'Run', 1),        // inside a 7-day window
-        act('a2', 'Parked', 40),    // long dormant
-        act('a3', 'Never', null),   // never completed
+test('a dormant activity is still offered — it is still theirs', () => {
+    // The bug this replaces: hard-filtering on recency hid "shoot a video"
+    // from a video quest because it had not been done that week.
+    const menu = qc.activityMenu(mkUser([
+        act('a1', 'Edit a video', 1),
+        act('a2', 'Shoot a video', 40),
+        act('a3', 'Ideate and script', 25),
     ]));
-    assert.deepStrictEqual(live.map((a) => a.id), ['a1']);
+    assert.deepStrictEqual(menu.map((a) => a.id).sort(), ['a1', 'a2', 'a3']);
 });
 
-test('the lookback window is frequency-shaped', () => {
-    const live = qc.liveActivities(mkUser([
-        act('m1', 'Monthly', 20, { frequency: 'monthly' }),   // 30-day window — live
-        act('w1', 'Weekly', 20, { frequency: 'weekly' }),     // 7-day window — dormant
+test('recency is a signal, not a gate, and ranks the list', () => {
+    const menu = qc.activityMenu(mkUser([
+        act('old', 'Old', 40),
+        act('fresh', 'Fresh', 1),
     ]));
-    assert.deepStrictEqual(live.map((a) => a.id), ['m1']);
+    assert.strictEqual(menu[0].id, 'fresh', 'most recent first');
+    assert.strictEqual(menu[0].doneRecently, true);
+    assert.strictEqual(menu[1].doneRecently, false);
+});
+
+test('a never-completed activity is offered too', () => {
+    const menu = qc.activityMenu(mkUser([act('a1', 'Brand new', null)]));
+    assert.deepStrictEqual(menu.map((a) => a.id), ['a1']);
+    assert.strictEqual(menu[0].doneRecently, false);
+});
+
+test('the description is passed so vague names can be judged', () => {
+    const menu = qc.activityMenu(mkUser([
+        Object.assign(act('a1', 'Do something new', 1), { description: 'Try an unfamiliar hobby.' }),
+        act('a2', 'No description', 1),
+    ]));
+    assert.strictEqual(menu.find((a) => a.id === 'a1').description, 'Try an unfamiliar hobby.');
+    assert.ok(!('description' in menu.find((a) => a.id === 'a2')));
 });
 
 test('archived, deleted and punitive activities are excluded', () => {
-    const live = qc.liveActivities(mkUser([
+    const live = qc.activityMenu(mkUser([
         act('a1', 'Fine', 1),
         act('a2', 'Archived', 1, { archived: true }),
         act('a3', 'Deleted', 1, { deleted: true }),
@@ -170,17 +180,19 @@ test('archived, deleted and punitive activities are excluded', () => {
 test('most recently completed first, capped at 40', () => {
     const acts = [];
     for (let i = 0; i < 60; i++) acts.push(act('a' + i, 'A' + i, (i % 6) * 0.5));
-    const live = qc.liveActivities(mkUser(acts));
+    const live = qc.activityMenu(mkUser(acts));
     assert.strictEqual(live.length, 40);
     assert.ok(live[0].name);
 });
 
-test('a penalty entry does not count as a completion', () => {
+test('a penalty entry does not count as a real completion', () => {
     const user = mkUser([{
         id: 'p1', name: 'Penalised', baseXP: 5, frequency: 'weekly',
         completionHistory: [{ date: new Date().toISOString(), xp: -5, isPenalty: true }],
     }]);
-    assert.strictEqual(qc.liveActivities(user).length, 0);
+    const menu = qc.activityMenu(user);
+    assert.strictEqual(menu.length, 1, 'still offered — it is still their activity');
+    assert.strictEqual(menu[0].doneRecently, false, 'but a penalty is not a completion');
 });
 
 // ── prompt ──────────────────────────────────────────────────────────────────
@@ -196,7 +208,7 @@ test('the prompt carries the request, shape and the real ids', () => {
     assert.match(p.user, /Run a 10K in eight weeks/);
     assert.match(p.user, /"a1"/);
     assert.match(p.user, /a few weeks/);
-    assert.match(p.system, /BUILD IT OUT OF WHAT THEY ALREADY DO/);
+    assert.match(p.system, /built mostly out of activities they ALREADY track/);
     assert.match(p.system, /No prose, no markdown fences/);
 });
 
@@ -269,7 +281,72 @@ test('an over-long description is truncated', () => {
 test('the prompt forbids duplicate ids and demands a description', () => {
     const p = qc.buildComposePrompt({ activities:[], dimensions:[], request:'x', shape:'oneoff', size:null });
     assert.match(p.system, /NEVER use the same linkedActivityId twice/);
-    assert.match(p.system, /MUST carry a "description"/);
-    assert.match(p.system, /LAST RESORT/);
+    assert.match(p.system, /It must carry a "description"/);
+    assert.match(p.system, /A NEW PRACTICE is only for/);
     assert.match(p.system, /"description":str/, 'the schema advertises it');
+});
+
+// ── the new-practice share ──────────────────────────────────────────────────
+
+test('the allowance scales with the size of the quest', () => {
+    assert.strictEqual(qc.newActivityAllowance(3), 2, 'a small quest still gets a floor of 2');
+    assert.strictEqual(qc.newActivityAllowance(10), 3, '~30%');
+    assert.strictEqual(qc.newActivityAllowance(20), 6, 'capped');
+    assert.strictEqual(qc.newActivityAllowance(60), 6, 'never runs away');
+});
+
+test('a big quest may introduce more than the old flat three', () => {
+    const kids = [];
+    for (let i = 0; i < 12; i++) kids.push(leaf({ type:'task', name:'step ' + i }));
+    for (let i = 0; i < 5; i++) kids.push(leaf({ type:'activity',
+        spec:{ name:'New ' + i, description:'d', baseXP:8, frequency:'weekly', dimensionId:'d1' } }));
+    const spec = qc.validateSpec({ name:'X', groups:[grp(kids)] }, ctx);
+    const leaves = [];
+    (function walk(ns){ ns.forEach(n => n.kind==='group' ? walk(n.children) : leaves.push(n)); })(spec.groups);
+    const news = leaves.filter(l => l.type === 'activity' && l.spec);
+    assert.strictEqual(news.length, 5, '17 leaves allows 5 new practices');
+});
+
+test('a tiny quest cannot be mostly new practices', () => {
+    const kids = [leaf({ type:'activity', linkedActivityId:'a1' })];
+    for (let i = 0; i < 5; i++) kids.push(leaf({ type:'activity',
+        spec:{ name:'New ' + i, description:'d', baseXP:8, frequency:'weekly', dimensionId:'d1' } }));
+    const spec = qc.validateSpec({ name:'X', groups:[grp(kids)] }, ctx);
+    const leaves = [];
+    (function walk(ns){ ns.forEach(n => n.kind==='group' ? walk(n.children) : leaves.push(n)); })(spec.groups);
+    const news = leaves.filter(l => l.type === 'activity' && l.spec);
+    assert.strictEqual(news.length, 2, '6 leaves allows only the floor of 2');
+    assert.strictEqual(leaves.length, 6, 'and nothing was lost');
+    const demoted = leaves.filter(l => l.type === 'task');
+    assert.strictEqual(demoted.length, 3, 'the 3 excess new practices became tasks, keeping the steps');
+    assert.ok(demoted.every(l => l.name), 'each demoted step kept a name');
+});
+
+// ── the prompt says the things that were going wrong ────────────────────────
+
+test('the prompt tells it to read the whole list and match on meaning', () => {
+    const p = qc.buildComposePrompt({ activities:[], dimensions:[], request:'x', shape:'oneoff', size:null });
+    assert.match(p.system, /READ THE WHOLE ACTIVITY LIST/);
+    assert.match(p.system, /Match on MEANING/);
+    assert.match(p.system, /ideate and script/, 'the pipeline example is spelled out');
+});
+
+test('the prompt forbids dragging in vague catch-all activities', () => {
+    const p = qc.buildComposePrompt({ activities:[], dimensions:[], request:'x', shape:'oneoff', size:null });
+    assert.match(p.system, /NEVER link a vague or catch-all activity/);
+    assert.match(p.system, /do something new/);
+});
+
+test('the prompt asks for real stages and considered ordering', () => {
+    const p = qc.buildComposePrompt({ activities:[], dimensions:[], request:'x', shape:'oneoff', size:null });
+    assert.match(p.system, /BUILD THE REAL SHAPE OF THE WORK/);
+    assert.match(p.system, /USE ordered:true WHEN THE SEQUENCE IS REAL/);
+    assert.match(p.system, /Do not make everything ordered/);
+    assert.match(p.system, /TWO THIRDS/);
+    assert.match(p.system, /Reach for a task before a new practice/);
+});
+
+test('dormancy is explicitly not a reason to skip an activity', () => {
+    const p = qc.buildComposePrompt({ activities:[], dimensions:[], request:'x', shape:'oneoff', size:null });
+    assert.match(p.system, /doneRecently:false.* does NOT mean unavailable/s);
 });
