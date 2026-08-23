@@ -36,3 +36,19 @@ test('the deploy is never a bare functions deploy', () => {
     // A bare deploy DELETES any deployed function missing from source.
     assert.ok(!/--only\s+functions[,\s]/.test(workflow), 'bare `--only functions` found');
 });
+
+test('composeQuest declares the secret it needs', () => {
+    // Dropping `secrets` would deploy cleanly and then fail at runtime with an
+    // undefined key — the worst shape of failure, since the deploy looks fine.
+    const block = index.slice(index.indexOf('exports.composeQuest'));
+    assert.match(block, /secrets:\s*\['ANTHROPIC_API_KEY'\]/,
+        'composeQuest must declare ANTHROPIC_API_KEY in its secrets');
+});
+
+test('the composer callable never writes to the user document', () => {
+    // The whole design rests on this: the draft comes back in the response, so
+    // saveUserData()'s full-document overwrite can never clobber it.
+    const block = index.slice(index.indexOf('exports.composeQuest'));
+    assert.ok(!block.includes(".collection('users')"), 'must not touch users/');
+    assert.ok(!/\.(set|update)\(/.test(block), 'must not write');
+});
