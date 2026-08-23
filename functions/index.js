@@ -508,3 +508,62 @@ exports.createActivityReminder = onCall(
         return { id: newRef.id, activityId, activityName, localTime, timezone, active: true };
     }
 );
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// ══ QUEST COMPOSER ════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════
+//
+// STUB. Returns a fixed echo so the plumbing can be proven before the model
+// is involved: auth, region, secret binding, SDK loading on the client, and
+// round-trip latency. Six things have to be right at once and a failure in
+// any of them looks like a failure in the others, so they get proven first
+// and separately.
+//
+// The real implementation reads the caller's live activities, calls the
+// model, validates twice and returns a quest spec. It writes NOTHING to the
+// user document — the draft comes back in the response and goes into the
+// builder, which is what keeps it clear of saveUserData()'s full-document
+// overwrite.
+//
+// The secret is declared here but deliberately NOT read yet: declaring it
+// makes the deploy fail loudly if the binding or the service account's
+// secretAccessor role is wrong, which is exactly what this step is for.
+
+exports.composeQuest = onCall(
+    {
+        region: REGION,
+        memory: '256MiB',
+        timeoutSeconds: 60,
+        maxInstances: 3,
+        secrets: ['ANTHROPIC_API_KEY'],
+    },
+    async (request) => {
+        // The uid comes from the verified token, never from the payload.
+        if (!request.auth || !request.auth.uid) {
+            throw new HttpsError('unauthenticated', 'You must be signed in to plan a quest.');
+        }
+        const uid = request.auth.uid;
+        const data = request.data || {};
+
+        // Same truncation the real handler will apply, so the stub exercises
+        // the same input handling.
+        const requestText = String(data.request == null ? '' : data.request).slice(0, 280);
+        const shape = data.shape === 'recurring' ? 'recurring' : 'oneoff';
+        const size = ['days', 'weeks', 'months'].indexOf(data.size) !== -1 ? data.size : null;
+
+        logger.info('composeQuest stub', { uid, shape, size, requestChars: requestText.length });
+
+        return {
+            ok: true,
+            stub: true,
+            uid,
+            echo: { request: requestText, shape, size },
+            // Proves the secret is bound and readable without ever revealing
+            // it: a length, not a value.
+            secretBound: typeof process.env.ANTHROPIC_API_KEY === 'string'
+                && process.env.ANTHROPIC_API_KEY.length > 0,
+            at: new Date().toISOString(),
+        };
+    }
+);

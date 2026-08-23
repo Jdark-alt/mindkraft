@@ -13695,22 +13695,8 @@
 .tt-acc-grp{margin-top:13px;}
 .tt-acc-gh{display:flex;align-items:baseline;justify-content:space-between;font-size:10px;font-weight:800;letter-spacing:0.11em;text-transform:uppercase;color:#9a9a9a;margin:0 2px 7px;}
 .tt-acc-gh span{font-size:10.5px;font-weight:600;color:#666;text-transform:none;letter-spacing:0;}
-.tt-acc-row{display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:11px;background:#1e1e1e;border:1px solid rgba(255,255,255,0.06);margin-bottom:6px;position:relative;overflow:hidden;}
-.tt-acc-row::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--rc,#444);}
-.tt-acc-rb{flex:1;min-width:0;}
-.tt-acc-rn{font-size:13.5px;font-weight:600;color:#f0f0f0;}
-.tt-acc-rs{font-size:11px;color:#7a7a7a;margin-top:2px;}
-.tt-chip{font-size:8.5px;font-weight:800;padding:3px 7px;border-radius:5px;letter-spacing:0.05em;text-transform:uppercase;flex-shrink:0;background:rgba(168,68,110,0.2);color:#e396b8;}
-.tt-chip-yours{background:rgba(255,255,255,0.06);color:#9a9a9a;}
 .tt-acc-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:16px;}
-.tt-newact-badge{font-size:9.5px;font-weight:700;color:#a9bd7a;}
-
-/* Quest-patch proposal cards */
-.tt-prop{padding:11px 12px;border-radius:11px;border:1px solid rgba(138,154,91,0.3);background:rgba(138,154,91,0.07);}
-.tt-prop-k{font-size:8.5px;font-weight:800;color:#8a9a5b;letter-spacing:0.14em;text-transform:uppercase;}
-.tt-prop-t{font-size:12.5px;font-weight:600;color:#e0e0e0;margin-top:4px;line-height:1.5;}
-.tt-prop-t b{color:#f0f0f0;}
-.tt-prop-a{display:flex;gap:6px;margin-top:9px;}
+.qc-newact-badge{font-size:9.5px;font-weight:700;color:#a9bd7a;}
 
 @media (prefers-reduced-motion: reduce) {
     .tt-pulse, .tt-node.tt-flash, .tt-gold-flash, .tt-reveal .tt-web-svg .tt-node { animation-duration: 0.01ms !important; }
