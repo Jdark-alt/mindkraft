@@ -14478,6 +14478,12 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
     background: var(--color-border);
     border: 1px solid var(--color-border);
     border-radius: 12px; overflow: hidden;
+    /* The authoring sheet's body is a flex column (.ay-modal-body), and
+       `overflow: hidden` zeroes this panel's automatic minimum size — so
+       without this the flex container crushes it to its 2px of border the
+       moment the form grows past one requirement, and the numbers vanish
+       while the cells inside still measure their full height. */
+    flex-shrink: 0;
 }
 .vs-stake-cell {
     padding: 13px 8px 11px; text-align: center;
@@ -14541,7 +14547,10 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
     font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
     color: var(--color-text-secondary); margin: 18px 0 8px;
 }
-.vs-review { border: 1px solid var(--color-border); border-radius: 10px; overflow: hidden; }
+.vs-review {
+    border: 1px solid var(--color-border); border-radius: 10px; overflow: hidden;
+    flex-shrink: 0;   /* same reason as .vs-stakes */
+}
 .vs-review-row {
     display: flex; align-items: center; gap: 10px;
     padding: 11px 12px; border-bottom: 1px solid var(--color-border); font-size: 13px;

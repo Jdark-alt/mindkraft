@@ -127,6 +127,17 @@ const out = await page.evaluate(async () => {
   window.vsPickAct(1, 'a2');
   await new Promise(r => setTimeout(r, 120));
 
+  // The stakes panel is a flex item of .ay-modal-body with overflow:hidden,
+  // which zeroes its automatic minimum size — it collapsed to its 2px of
+  // border once the form grew past one requirement, while the cells inside
+  // still measured full height. Measure the container, not the cells.
+  document.getElementById('appContainer').style.display = 'block';
+  await new Promise(r => setTimeout(r, 100));
+  const panelH = $('.vs-stakes').getBoundingClientRect().height;
+  const cellH  = $('.vs-stake-cell').getBoundingClientRect().height;
+  ok('the stakes panel does not collapse as the form grows',
+     panelH >= cellH && panelH > 40, { panelH: Math.round(panelH), cellH: Math.round(cellH) });
+
   document.getElementById('vsName').value = 'Two weeks of mornings';
   document.getElementById('vsRowTarget0').value = '20';
   document.getElementById('vsRowTarget1').value = '10';
@@ -166,10 +177,6 @@ const out = await page.evaluate(async () => {
      txt('.vs-count'));
   ok('the hero shows a percentage', txt('.vs-hero-pct') === '40%', txt('.vs-hero-pct'));
   ok('the pot reads in gold', txt('.vs-gold') === '50 Grit pot', txt('.vs-gold'));
-  // The harness never runs the real sign-in, so the app shell is still
-  // hidden; show it so the board actually lays out.
-  document.getElementById('appContainer').style.display = 'block';
-  await new Promise(r => setTimeout(r, 120));
   const oppW  = $('.vs-opp').getBoundingClientRect().width;
   const heroW = $('.vs-hero').getBoundingClientRect().width;
   ok('the opponent bar is subordinate in width', oppW > 0 && oppW < heroW * 0.8,
