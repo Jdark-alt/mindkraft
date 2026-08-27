@@ -206,33 +206,35 @@ service cloud.firestore {
                           && resource.data.toUID == request.auth.uid;
     }
 
+    //  RETIRED — Group Challenge
+    //
+    //  The feature was removed along with solo challenges; the Challenges
+    //  tab is Versus and nothing else. No client code reads or writes these
+    //  collections any more.
+    //
+    //  The documents are kept rather than deleted — a group somebody ran is
+    //  part of their record, and erasing user data to tidy up a retired
+    //  feature is not a trade this codebase makes. What is withdrawn is the
+    //  write surface: an authenticated user could previously create
+    //  arbitrary `groupInviteCodes` documents, and leaving that open for a
+    //  feature nothing calls any more is an abuse surface with no upside.
+    //  Reads stay as they were, so the data remains exportable.
+
     match /groupChallenges/{groupId} {
       allow read: if request.auth != null;
-      allow create: if request.auth != null
-                    && request.resource.data.creatorUid == request.auth.uid;
-      allow update: if request.auth != null
-                    && (
-                      request.auth.uid == resource.data.creatorUid
-                      || request.auth.uid in resource.data.members
-                      || request.resource.data.members[request.auth.uid] != null
-                    );
-      allow delete: if request.auth != null
-                    && request.auth.uid == resource.data.creatorUid;
+      allow write: if false;
     }
 
     match /groupInviteCodes/{code} {
-      allow read, create: if request.auth != null;
-      allow delete: if request.auth != null;
+      allow read: if request.auth != null;
+      allow write: if false;
     }
 
     match /groupInvitations/{inviteId} {
       allow read: if request.auth != null
                   && (resource.data.inviteeUid == request.auth.uid
                       || resource.data.inviterUid == request.auth.uid);
-      allow create: if request.auth != null
-                    && request.resource.data.inviterUid == request.auth.uid;
-      allow update: if request.auth != null
-                    && resource.data.inviteeUid == request.auth.uid;
+      allow write: if false;
     }
 
     // ══════════════════════════════════════════════════════════════════

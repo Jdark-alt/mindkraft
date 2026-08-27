@@ -1015,8 +1015,6 @@
                     syncPublicProfile().catch(e => {});
                     // Handle deep-link friend add (?add=MK-XXXX in URL)
                     handleFriendDeepLink();
-                    // Handle deep-link group join (?joinGroup=CODE in URL)
-                    handleGroupDeepLink();
                     // Cold start from a gift push (?tab=friends) or a mode
                     // push (?tab=modes).
                     try {
@@ -1343,51 +1341,11 @@
             try { syncUserTimezone(); } catch (e) { console.warn('Timezone sync skipped:', e); }
         }
 
-        // Update Dashboard
-        // Recompute bonusXP for all active challenges from current activity baseXP values.
-        // Called every dashboard refresh so the displayed (and awarded) bonus stays live
-        // without requiring users to manually re-edit the challenge after changing base XP.
-        function refreshChallengeBonusXP() {
-            // Bail before walking the activity tree when there is nothing to
-            // recompute. Most users have no active challenge with per-activity
-            // targets, and this runs on every single dashboard tick.
-            const _challenges = window.userData.challenges || [];
-            const _needsRefresh = _challenges.some(ch =>
-                ch.status === 'active' && ch.activityTargets &&
-                ((ch.activityIds && ch.activityIds.length) || ch.activityId));
-            if (!_needsRefresh) return;
-
-            const baseXPMap = {};
-            (window.userData.dimensions || []).forEach(dim =>
-                (dim.paths || []).forEach(path =>
-                    (path.activities || []).forEach(act => { baseXPMap[act.id] = act.baseXP || 1; })
-                )
-            );
-            _challenges.forEach(ch => {
-                if (ch.status !== 'active') return;
-                const ids = ch.activityIds || (ch.activityId ? [ch.activityId] : []);
-                if (!ids.length || !ch.activityTargets) return;
-                const totalBaseXP = ids.reduce((s, id) =>
-                    s + (baseXPMap[id] || 0) * (ch.activityTargets[id] || 1), 0);
-                if (totalBaseXP > 0) ch.bonusXP = Math.max(1, Math.round(totalBaseXP * 0.2));
-            });
-        }
-
         function updateDashboard() {
             const data = window.userData;
-            refreshChallengeBonusXP(); // keep bonusXP live whenever activity baseXP changes
-
             // Refresh tab lock styling — runs every render so level-up immediately
             // reflects in the nav (lock icons disappear once threshold is met).
             if (typeof applyTabLockStyling === 'function') applyTabLockStyling();
-
-            // Auto-fail challenges with enforceDateRange whose end date has passed
-            const _today = localToday();
-            (data.challenges || []).forEach(ch => {
-                if (ch.status === 'active' && ch.enforceDateRange && _today > ch.endDate) {
-                    ch.status = 'failed';
-                }
-            });
 
             const level = Math.min(data.level || 1, 100); // enforce cap
             data.level = level;
@@ -1530,7 +1488,7 @@
                 var planPanel = document.getElementById('activitiesInlinePlanner');
                 if (planPanel && planPanel.style.display !== 'none' && typeof renderPlanner === 'function') renderPlanner();
             }
-            if (activeTab === 'challenges') renderChallenges();
+            if (activeTab === 'challenges' && typeof vsRenderTab === 'function') vsRenderTab();
             if (activeTab === 'projects' && typeof refreshProjectsView === 'function') { try { refreshProjectsView(); } catch(e) {} }
             if (activeTab === 'analytics') { try { renderDimProgress(); } catch(e) {} }
 
@@ -2051,98 +2009,6 @@
             const icon = groupEl.querySelector('.collapse-icon');
             if (icon) icon.classList.toggle('expanded', next);
         };
-
-        // Update challenges on activity completion
-        function updateChallengeProgress(activityId) {
-            const challenges = window.userData.challenges || [];
-            const today = localToday();
-            
-            challenges.forEach(challenge => {
-                if (challenge.status !== 'active') return;
-                
-                // Check if challenge is within date range — if expired, just leave it as active
-                // (user must manually complete or delete; no auto-fail unless enforceDateRange is set)
-                // Only enforce range when both dates are present; empty endDate means no deadline.
-                if (challenge.startDate && challenge.endDate &&
-                    (today < challenge.startDate || today > challenge.endDate)) return;
-                
-                // Resolve which activity IDs count (support legacy single activityId)
-                const challengeActivityIds = challenge.activityIds && challenge.activityIds.length > 0
-                    ? challenge.activityIds
-                    : (challenge.activityId ? [challenge.activityId] : []);
-
-                const matchesActivity = challengeActivityIds.length === 0 || challengeActivityIds.includes(activityId);
-                if (!matchesActivity) return;
-
-                // Per-activity target tracking
-                if (challengeActivityIds.length > 0 && challenge.activityTargets && challenge.activityTargets[activityId] !== undefined) {
-                    if (!challenge.activityProgress) challenge.activityProgress = {};
-                    challenge.activityProgress[activityId] = (challenge.activityProgress[activityId] || 0) + 1;
-                    // Recompute overall currentCount as sum of capped per-activity progress
-                    challenge.currentCount = challengeActivityIds.reduce((sum, id) => {
-                        const target = challenge.activityTargets[id] || 1;
-                        return sum + Math.min(challenge.activityProgress[id] || 0, target);
-                    }, 0);
-                } else {
-                    challenge.currentCount++;
-                }
-                // Note: challenges only complete via the "Complete" button — never auto-complete here
-            });
-        }
-
-        // Reverse one completion unit for a given activity across all active challenges
-        function undoChallengeProgress(activityId) {
-            const challenges = window.userData.challenges || [];
-            const today = localToday();
-            challenges.forEach(challenge => {
-                if (challenge.status !== 'active') return;
-                if (challenge.startDate && challenge.endDate &&
-                    (today < challenge.startDate || today > challenge.endDate)) return;
-                const challengeActivityIds = challenge.activityIds && challenge.activityIds.length > 0
-                    ? challenge.activityIds
-                    : (challenge.activityId ? [challenge.activityId] : []);
-                const matchesActivity = challengeActivityIds.length === 0 || challengeActivityIds.includes(activityId);
-                if (!matchesActivity) return;
-                if (challengeActivityIds.length > 0 && challenge.activityTargets && challenge.activityTargets[activityId] !== undefined) {
-                    if (challenge.activityProgress && challenge.activityProgress[activityId] > 0) {
-                        challenge.activityProgress[activityId]--;
-                    }
-                    challenge.currentCount = challengeActivityIds.reduce((sum, id) => {
-                        const target = challenge.activityTargets[id] || 1;
-                        return sum + Math.min((challenge.activityProgress || {})[id] || 0, target);
-                    }, 0);
-                } else {
-                    challenge.currentCount = Math.max(0, (challenge.currentCount || 0) - 1);
-                }
-            });
-        }
-
-        function showChallengeCompleteToast(challengeName, bonusXP) {
-            const toast = document.createElement('div');
-            toast.style.cssText = `
-                position: fixed;
-                top: 100px;
-                right: 20px;
-                background: var(--color-accent-olive);
-                color: var(--color-text-primary);
-                padding: 16px 24px;
-                border-radius: 12px;
-                font-weight: 600;
-                font-size: 16px;
-                z-index: 10000;
-                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-                animation: slideIn 0.3s ease;
-            `;
-            
-            toast.textContent = `🏆 Challenge Complete: ${challengeName} • +${bonusXP} XP`;
-            document.body.appendChild(toast);
-            
-            setTimeout(() => {
-                toast.style.animation = 'slideOut 0.3s ease';
-                setTimeout(() => toast.remove(), 300);
-            }, 4000);
-        }
-
         // ── Dimension color maps ──────────────────────────────────────────
         var DIM_COLOR_MAP = {
             blue:   'var(--color-accent-blue)',
@@ -2182,13 +2048,6 @@
         }
 
         function renderActivityCards(activities) {
-            // Build a set of activity IDs that are part of active challenges
-            const challengeActivityIds = new Set();
-            (window.userData.challenges || []).forEach(ch => {
-                if (ch.status !== 'active') return;
-                (ch.activityIds || (ch.activityId ? [ch.activityId] : [])).forEach(id => challengeActivityIds.add(id));
-            });
-
             if (!window._expandedCards) window._expandedCards = {};
 
             // Ring circumference (r=20, viewBox 48×48) — tighter fit around check circle
@@ -2197,7 +2056,6 @@
             return activities.map(activity => {
                 const completedToday = activity._completedToday;
                 const canComplete = activity._canComplete;
-                const inChallenge = challengeActivityIds.has(activity.id);
                 const allowMulti = activity.allowMultiplePerDay && activity.frequency !== 'occasional';
                 const isOccasional = activity.frequency === 'occasional';
                 const isSkipMode = !!activity.isSkipNegative;
@@ -2308,7 +2166,6 @@
                 if (atRisk) detailBadges.push('<span class="activity-badge badge-at-risk">⚠ at risk</span>');
                 if (showPenaltyTag) detailBadges.push(`<span class="activity-badge badge-penalty">⚡ −${penaltyDays}d penalty</span>`);
                 if (counterBadge) detailBadges.push(counterBadge);
-                if (inChallenge) detailBadges.push('<span class="activity-badge" style="background:rgba(122,123,77,0.18);color:var(--color-accent-olive);border:1px solid rgba(122,123,77,0.35);">🏅 Challenge</span>');
                 if (isSkipMode && !completedToday) detailBadges.push('<span class="activity-badge badge-penalty" style="opacity:0.7;">⚡ Skip-penalty</span>');
 
                 // Streak chip — coral (celebratory)
@@ -2666,12 +2523,6 @@
         }
 
         function renderActivityGridCards(activities) {
-            var challengeActivityIds = new Set();
-            (window.userData.challenges || []).forEach(function(ch) {
-                if (ch.status !== 'active') return;
-                (ch.activityIds || (ch.activityId ? [ch.activityId] : [])).forEach(function(id) { challengeActivityIds.add(id); });
-            });
-
             // Group lookup — only built when the active sort is "by-routine".
             // Any other sort renders a flat grid (groups are not their concern).
             // Reset the legacy shim each render so deleted groups don't linger.
@@ -2753,7 +2604,6 @@
                 var dimRgb = _dimRgb(dimHex);
                 var xpText = (activity.isNegative ? '−' : '+') + displayXP;
                 var atRisk = !completedToday && !notScheduledToday && activity.streak > 0 && activity.frequency === 'daily' && new Date().getHours() >= 22;
-                var inChallenge = challengeActivityIds.has(activity.id);
                 var isPinned = !!activity.pinned;
                 var todayIso = localToday();
                 var showPenaltyTag = activity.isSkipNegative && activity.lastPenaltyDate === todayIso && (activity.lastPenaltyDays || 0) > 0;
@@ -2763,7 +2613,6 @@
                 var badges = '';
                 if (currentStreak > 0 && shieldsUsed > 0) badges += '<span class="gc-badge gc-badge-shield">' + shieldsLeft + ' 🛡</span>';
                 if (activity.frequency === 'custom') badges += '<span class="gc-badge gc-badge-counter">' + activity._cycleCompletions + '/' + (activity.timesPerCycle||1) + '</span>';
-                if (inChallenge) badges += '<span class="gc-badge gc-badge-challenge">🏅</span>';
                 if (atRisk) badges += '<span class="gc-badge gc-badge-alert">⚠</span>';
                 if (showPenaltyTag) badges += '<span class="gc-badge gc-badge-skip">⚡' + penaltyDays + 'd</span>';
                 if (isSkipMode && !completedToday) badges += '<span class="gc-badge gc-badge-skip">⚡skip</span>';
@@ -2822,7 +2671,6 @@
                     if (currentStreak > 0) fullBadges += '<span class="gc-badge gc-badge-challenge">🔥 ' + currentStreak + ' streak</span>';
                     if (currentStreak > 0 && shieldsUsed > 0) fullBadges += '<span class="gc-badge gc-badge-shield">' + shieldsLeft + ' 🛡 left</span>';
                     if (activity.frequency === 'custom') fullBadges += '<span class="gc-badge gc-badge-counter">' + activity._cycleCompletions + '/' + (activity.timesPerCycle||1) + ' cycle</span>';
-                    if (inChallenge) fullBadges += '<span class="gc-badge gc-badge-challenge">🏅 Challenge</span>';
                     if (atRisk) fullBadges += '<span class="gc-badge gc-badge-alert">⚠ at risk</span>';
                     if (showPenaltyTag) fullBadges += '<span class="gc-badge gc-badge-skip">⚡ −' + penaltyDays + 'd penalty</span>';
                     if (isSkipMode && !completedToday) fullBadges += '<span class="gc-badge gc-badge-skip">⚡ skip-penalty</span>';
@@ -3008,9 +2856,6 @@
             var notScheduled   = activity.frequency === 'custom' && activity.customSubtype === 'days' && !isScheduledDay(activity);
             var shieldsUsed    = activity.shieldsUsedThisCycle || 0;
             var shieldsLeft    = Math.max(0, getShieldCap(activity) - shieldsUsed);
-            var inChallenge    = (window.userData.challenges || []).some(function(ch) {
-                return ch.status === 'active' && (ch.activityIds || (ch.activityId ? [ch.activityId] : [])).indexOf(activityId) >= 0;
-            });
             var todayIso       = localToday();
             var showPenaltyTag = activity.isSkipNegative && activity.lastPenaltyDate === todayIso && (activity.lastPenaltyDays || 0) > 0;
             var penaltyDays    = activity.lastPenaltyDays || 0;
@@ -3038,7 +2883,6 @@
             if (showPenaltyTag) badgesHtml += '<span class="activity-badge badge-penalty">⚡ −' + penaltyDays + 'd penalty</span>';
             if (activity.frequency === 'custom') badgesHtml += '<span class="activity-badge badge-counter">' + (activity._cycleCompletions||0) + '/' + (activity.timesPerCycle||1) + ' cycle</span>';
             if (allowMulti && todayCount > 0) badgesHtml += '<span class="activity-badge badge-counter">×' + todayCount + ' today</span>';
-            if (inChallenge) badgesHtml += '<span class="activity-badge" style="background:rgba(122,123,77,0.18);color:var(--color-accent-olive);border:1px solid rgba(122,123,77,0.35);">🏅 Challenge</span>';
             if (isSkipMode && !completedToday) badgesHtml += '<span class="activity-badge badge-penalty" style="opacity:0.7;">⚡ Skip-penalty</span>';
             badgesHtml += '<span class="activity-badge" style="background:rgba(255,255,255,0.05);color:var(--color-text-secondary);">' + activity.frequency + '</span>';
 
@@ -3355,852 +3199,6 @@
             bodyEl.removeAttribute('data-lazy');
         }
 
-        // Challenge Modal Functions
-        let editingChallengeIndex = null;
-
-        // ── Toggle proxies — drive the ay-toggle-row switches ─────────────
-        // The underlying hidden checkbox / hidden input is what saveChallenge
-        // reads, so we keep them as the source of truth and just keep the
-        // visible switch in sync.
-        window.setChallengeMetricEnabled = function(checked) {
-            const hiddenInput = document.getElementById('challengeMetricEnabled');
-            const grp = document.getElementById('challengeMetricGroup');
-            if (!hiddenInput || !grp) return;
-            hiddenInput.value = checked ? '1' : '0';
-            grp.style.display = checked ? 'flex' : 'none';
-        };
-        window.setChallengeEnforceActivities = function(checked) {
-            const cb = document.getElementById('challengeEnforceActivities');
-            if (cb) cb.checked = checked;
-        };
-        window.setChallengeEnforceDateRange = function(checked) {
-            const cb = document.getElementById('challengeEnforceDateRange');
-            if (cb) cb.checked = checked;
-        };
-
-        window.onChallengeTypeChange = function() {
-            // Activity selection is always shown — "any activity" mode removed
-            document.getElementById('challengeActivitySelectGroup').style.display = 'block';
-        };
-
-        window.openChallengeModal = function(index = null) {
-            editingChallengeIndex = index;
-            const modal = document.getElementById('challengeModal');
-            const title = document.getElementById('challengeModalTitle');
-            const submitBtn = document.getElementById('challengeSubmitBtn');
-
-            if (index !== null) {
-                const isTakeAgain = !!window._takeAgainMode;
-                title.textContent = isTakeAgain ? '🔁 Take Again' : 'Edit Challenge';
-                if (submitBtn) submitBtn.textContent = isTakeAgain ? 'Start Again' : 'Save Challenge';
-                const challenge = window.userData.challenges[index];
-                const selectedIds = challenge.activityIds || (challenge.activityId ? [challenge.activityId] : []);
-                const activityTargets = challenge.activityTargets || {};
-                populateChallengeActivitySelect(selectedIds, activityTargets);
-                document.getElementById('challengeName').value = challenge.name;
-                document.getElementById('challengeDescription').value = challenge.description || '';
-                document.getElementById('challengeStartDate').value = challenge.startDate;
-                document.getElementById('challengeEndDate').value = challenge.endDate;
-                onChallengeTypeChange();
-                // Restore enforce toggles
-                const enforceEl = document.getElementById('challengeEnforceActivities');
-                const enforceDateEl = document.getElementById('challengeEnforceDateRange');
-                const enforceBtn = document.getElementById('enforceActivitiesBtn');
-                const enforceCheck = document.getElementById('enforceActivitiesCheck');
-                const enforceDateBtn = document.getElementById('enforceDateRangeBtn');
-                const enforceDateCheck = document.getElementById('enforceDateRangeCheck');
-                if (enforceEl) enforceEl.checked = !!(challenge.enforceActivities);
-                if (enforceBtn) enforceBtn.classList.toggle('active', !!(challenge.enforceActivities));
-                if (enforceCheck) enforceCheck.textContent = challenge.enforceActivities ? '✓' : '';
-                if (enforceDateEl) enforceDateEl.checked = !!(challenge.enforceDateRange);
-                if (enforceDateBtn) enforceDateBtn.classList.toggle('active', !!(challenge.enforceDateRange));
-                if (enforceDateCheck) enforceDateCheck.textContent = challenge.enforceDateRange ? '✓' : '';
-                // Metric
-                const metricEnabled = !!(challenge.metricEnabled && challenge.metricQty && challenge.metricUnit);
-                const hiddenMetric = document.getElementById('challengeMetricEnabled');
-                const metricBtn = document.getElementById('metricToggleBtn');
-                const metricCheck = document.getElementById('metricToggleCheck');
-                if (hiddenMetric) hiddenMetric.value = metricEnabled ? '1' : '0';
-                if (metricBtn) metricBtn.classList.toggle('active', metricEnabled);
-                if (metricCheck) metricCheck.textContent = metricEnabled ? '✓' : '';
-                document.getElementById('challengeMetricGroup').style.display = metricEnabled ? 'flex' : 'none';
-                if (metricEnabled) {
-                    document.getElementById('challengeMetricQty').value = challenge.metricQty;
-                    document.getElementById('challengeMetricUnit').value = challenge.metricUnit;
-                }
-                // Sync proxy switches
-                const _pE = document.getElementById('challengeEnforceActivitiesProxy');
-                const _pD = document.getElementById('challengeEnforceDateRangeProxy');
-                const _pM = document.getElementById('challengeMetricEnabledProxy');
-                if (_pE) _pE.checked = !!(challenge.enforceActivities);
-                if (_pD) _pD.checked = !!(challenge.enforceDateRange);
-                if (_pM) _pM.checked = metricEnabled;
-            } else {
-                title.textContent = 'Create Challenge';
-                if (submitBtn) submitBtn.textContent = 'Create Challenge';
-                populateChallengeActivitySelect([], {});
-                document.getElementById('challengeForm').reset();
-                const _hm = document.getElementById('challengeMetricEnabled');
-                const _mb = document.getElementById('metricToggleBtn');
-                const _mc = document.getElementById('metricToggleCheck');
-                const _enf = document.getElementById('challengeEnforceActivities');
-                if (_hm) _hm.value = '0';
-                if (_mb) _mb.classList.remove('active');
-                if (_mc) _mc.textContent = '';
-                if (_enf) _enf.checked = false;
-                const _enfd = document.getElementById('challengeEnforceDateRange');
-                if (_enfd) _enfd.checked = false;
-                document.getElementById('enforceActivitiesBtn')?.classList.remove('active');
-                const _ec = document.getElementById('enforceActivitiesCheck');
-                if (_ec) _ec.textContent = '';
-                document.getElementById('enforceDateRangeBtn')?.classList.remove('active');
-                const _edc = document.getElementById('enforceDateRangeCheck');
-                if (_edc) _edc.textContent = '';
-                document.getElementById('challengeMetricGroup').style.display = 'none';
-                // Sync proxy switches to OFF
-                const _pE2 = document.getElementById('challengeEnforceActivitiesProxy');
-                const _pD2 = document.getElementById('challengeEnforceDateRangeProxy');
-                const _pM2 = document.getElementById('challengeMetricEnabledProxy');
-                if (_pE2) _pE2.checked = false;
-                if (_pD2) _pD2.checked = false;
-                if (_pM2) _pM2.checked = false;
-                onChallengeTypeChange();
-                const today = localToday();
-                const nextMonth = new Date();
-                nextMonth.setMonth(nextMonth.getMonth() + 1);
-                document.getElementById('challengeStartDate').value = today;
-                document.getElementById('challengeEndDate').value = toLocalDateStr(nextMonth);
-            }
-            
-            modal.classList.add('active');
-        };
-
-        window.closeChallengeModal = function() {
-            document.getElementById('challengeModal').classList.remove('active');
-            editingChallengeIndex = null;
-            window._takeAgainMode = false;
-        };
-
-        // Stores all activities for the challenge picker (populated lazily on modal open)
-        let _challengeAllActivities = [];
-        let _challengePickerOpen = false;
-
-        function populateChallengeActivitySelect(selectedIds = [], activityTargets = {}) {
-            _challengeAllActivities = [];
-            (window.userData.dimensions || []).forEach(dim => {
-                (dim.paths || []).forEach(path => {
-                    (path.activities || []).forEach(activity => {
-                        _challengeAllActivities.push({
-                            id: activity.id,
-                            name: activity.name,
-                            baseXP: activity.baseXP || 0,
-                            path: `${dim.name} → ${path.name}`,
-                            checked: selectedIds.includes(activity.id),
-                            target: activityTargets[activity.id] || 1
-                        });
-                    });
-                });
-            });
-            // Reset picker to closed state — no DOM rendering yet
-            _challengePickerOpen = false;
-            const picker = document.getElementById('challengeActivityPicker');
-            const toggleBtn = document.getElementById('challengePickerToggle');
-            if (picker) picker.style.display = 'none';
-            if (toggleBtn) toggleBtn.classList.remove('open');
-            const searchEl = document.getElementById('challengeActivitySearch');
-            if (searchEl) searchEl.value = '';
-            _refreshChallengePickerUI();
-            updateChallengeXPPreview();
-        }
-
-        function _renderChallengeChecklist(filter = '') {
-            const checklist = document.getElementById('challengeActivityChecklist');
-            const emptyMsg = document.getElementById('challengeActivityChecklistEmpty');
-            if (!checklist) return;
-            const q = filter.toLowerCase().trim();
-            const visible = _challengeAllActivities.filter(a =>
-                !q || a.name.toLowerCase().includes(q) || a.path.toLowerCase().includes(q)
-            );
-            checklist.innerHTML = '';
-            if (visible.length === 0) {
-                if (emptyMsg) emptyMsg.style.display = 'block';
-                return;
-            }
-            if (emptyMsg) emptyMsg.style.display = 'none';
-            visible.forEach(activity => {
-                const item = document.createElement('div');
-                item.className = `activity-checklist-item${activity.checked ? ' checked' : ''}`;
-                const checkId = `challenge-activity-${activity.id}`;
-                const targetInputId = `challenge-target-${activity.id}`;
-                item.innerHTML = `
-                    <input type="checkbox" id="${checkId}" value="${activity.id}" data-basexp="${activity.baseXP}" ${activity.checked ? 'checked' : ''}>
-                    <label for="${checkId}">
-                        ${escapeHtml(activity.name)}
-                        <span>${escapeHtml(activity.path)} &nbsp;·&nbsp; ${activity.baseXP} XP base</span>
-                    </label>
-                    <div class="target-input-wrap">
-                        <input type="number" id="${targetInputId}" value="${activity.target}" min="1" placeholder="1" onclick="event.stopPropagation()">
-                        <label style="cursor:default;">times</label>
-                    </div>
-                `;
-                const checkbox = item.querySelector('input[type="checkbox"]');
-                const targetInput = item.querySelector(`#${targetInputId}`);
-                checkbox.addEventListener('change', function() {
-                    const act = _challengeAllActivities.find(a => a.id === activity.id);
-                    if (act) act.checked = this.checked;
-                    item.classList.toggle('checked', this.checked);
-                    _refreshChallengePickerUI();
-                    updateChallengeXPPreview();
-                });
-                targetInput.addEventListener('input', function() {
-                    const act = _challengeAllActivities.find(a => a.id === activity.id);
-                    if (act) act.target = Math.max(1, parseInt(this.value) || 1);
-                    updateChallengeXPPreview();
-                });
-                checklist.appendChild(item);
-            });
-        }
-
-        function _refreshChallengePickerUI() {
-            const selected = _challengeAllActivities.filter(a => a.checked);
-            const pillsContainer = document.getElementById('challengeSelectedPills');
-            const summary = document.getElementById('challengeSelectedSummary');
-            const countBadge = document.getElementById('challengePickerToggleCount');
-            const toggleLabel = document.getElementById('challengePickerToggleLabel');
-            if (pillsContainer) {
-                pillsContainer.innerHTML = selected.map(a =>
-                    `<span class="ch-pill">${escapeHtml(a.name)}<span class="ch-pill-remove" onclick="uncheckChallengeActivity('${a.id}')">×</span></span>`
-                ).join('');
-            }
-            if (summary) summary.style.display = selected.length > 0 ? 'block' : 'none';
-            if (countBadge) {
-                countBadge.textContent = `${selected.length} selected`;
-                countBadge.style.display = selected.length > 0 ? 'inline-block' : 'none';
-            }
-            if (toggleLabel) toggleLabel.textContent = selected.length > 0 ? 'Edit Selection' : '＋ Select Activities';
-        }
-
-        window.uncheckChallengeActivity = function(id) {
-            const act = _challengeAllActivities.find(a => a.id === id);
-            if (act) act.checked = false;
-            const cb = document.getElementById(`challenge-activity-${id}`);
-            if (cb) { cb.checked = false; cb.closest('.activity-checklist-item')?.classList.remove('checked'); }
-            _refreshChallengePickerUI();
-            updateChallengeXPPreview();
-        };
-
-        window.toggleChallengeActivityPicker = function() {
-            _challengePickerOpen = !_challengePickerOpen;
-            const picker = document.getElementById('challengeActivityPicker');
-            const toggleBtn = document.getElementById('challengePickerToggle');
-            if (picker) picker.style.display = _challengePickerOpen ? 'block' : 'none';
-            if (toggleBtn) toggleBtn.classList.toggle('open', _challengePickerOpen);
-            if (_challengePickerOpen) {
-                const searchEl = document.getElementById('challengeActivitySearch');
-                _renderChallengeChecklist(searchEl ? searchEl.value : '');
-                if (searchEl) setTimeout(() => searchEl.focus(), 50);
-            }
-        };
-
-        window.filterChallengeActivities = function(value) {
-            _renderChallengeChecklist(value);
-        };
-
-        // Calculate and display auto-XP for specific-activity challenges
-        function updateChallengeXPPreview() {
-            const preview = document.getElementById('challengeXPPreview');
-            const previewVal = document.getElementById('challengeXPPreviewValue');
-            if (!preview || !previewVal) return;
-            const { totalBaseXP } = calcChallengeAutoXP();
-            if (totalBaseXP > 0) {
-                const bonus = Math.max(1, Math.round(totalBaseXP * 0.2));
-                previewVal.textContent = `+${bonus} XP`;
-                preview.style.display = 'flex';
-            } else {
-                preview.style.display = 'none';
-            }
-        }
-
-        // Read from master list instead of DOM for accuracy
-        function calcChallengeAutoXP() {
-            let totalBaseXP = 0;
-            _challengeAllActivities.filter(a => a.checked).forEach(a => {
-                totalBaseXP += a.baseXP * a.target;
-            });
-            return { totalBaseXP, bonusXP: Math.max(1, Math.round(totalBaseXP * 0.2)) };
-        }
-
-        function getSelectedChallengeActivitiesWithTargets() {
-            const result = { activityIds: [], activityTargets: {} };
-            _challengeAllActivities.filter(a => a.checked).forEach(a => {
-                result.activityIds.push(a.id);
-                result.activityTargets[a.id] = a.target;
-            });
-            return result;
-        }
-
-        window.saveChallenge = async function(event) {
-            event.preventDefault();
-            
-            const name = document.getElementById('challengeName').value;
-            const description = document.getElementById('challengeDescription').value;
-            const startDate = document.getElementById('challengeStartDate').value;
-            const endDate = document.getElementById('challengeEndDate').value;
-
-            // Metric
-            const metricEnabled = document.getElementById('challengeMetricEnabled').value === '1';
-            const metricQty = metricEnabled ? parseFloat(document.getElementById('challengeMetricQty').value) : null;
-            const metricUnit = metricEnabled ? document.getElementById('challengeMetricUnit').value.trim() : null;
-            if (metricEnabled && (!metricQty || !metricUnit)) {
-                alert('Please fill in both Quantity and Unit for the goal metric, or uncheck it.'); return;
-            }
-
-            let activityIds = [];
-            let activityTargets = {};
-            let targetCount;
-            let bonusXP;
-            let enforceActivities = false;
-            const enforceDateRange = document.getElementById('challengeEnforceDateRange')?.checked || false;
-
-            // Always specific-activity mode
-            {
-                const selected = getSelectedChallengeActivitiesWithTargets();
-                activityIds = selected.activityIds;
-                activityTargets = selected.activityTargets;
-                if (activityIds.length === 0) { alert('Please select at least one activity.'); return; }
-                targetCount = Object.values(activityTargets).reduce((a, b) => a + b, 0);
-                bonusXP = calcChallengeAutoXP().bonusXP;
-                enforceActivities = document.getElementById('challengeEnforceActivities')?.checked || false;
-            }
-            
-            if (editingChallengeIndex !== null) {
-                const challenge = window.userData.challenges[editingChallengeIndex];
-                challenge.name = name;
-                challenge.description = description;
-                challenge.targetCount = targetCount;
-                challenge.bonusXP = bonusXP;
-                challenge.startDate = startDate;
-                challenge.endDate = endDate;
-                challenge.activityIds = activityIds;
-                challenge.activityTargets = activityTargets;
-                challenge.activityId = null;
-                challenge.metricQty = metricQty;
-                challenge.metricUnit = metricUnit;
-                challenge.metricEnabled = metricEnabled;
-                challenge.enforceActivities = enforceActivities;
-                challenge.enforceDateRange = enforceDateRange;
-                if (!challenge.activityProgress) challenge.activityProgress = {};
-                // Take Again: wipe all progress and reactivate the challenge
-                if (window._takeAgainMode) {
-                    challenge.status = 'active';
-                    challenge.currentCount = 0;
-                    challenge.metricCurrent = 0;
-                    activityIds.forEach(id => { challenge.activityProgress[id] = 0; });
-                    window._takeAgainMode = false;
-                }
-            } else {
-                if (!window.userData.challenges) window.userData.challenges = [];
-                const activityProgress = {};
-                activityIds.forEach(id => { activityProgress[id] = 0; });
-                window.userData.challenges.push({
-                    id: Date.now().toString(),
-                    name, description, targetCount, bonusXP,
-                    startDate, endDate, activityIds, activityTargets, activityProgress,
-                    activityId: null, currentCount: 0,
-                    metricEnabled, metricQty, metricUnit, metricCurrent: 0,
-                    activityProgressCollapsed: true,
-                    enforceActivities,
-                    enforceDateRange,
-                    status: 'active',
-                    createdAt: new Date().toISOString()
-                });
-            }
-            
-            await saveUserData();
-            closeChallengeModal();
-            updateDashboard();
-        };
-
-        window.completeChallenge = async function(index) {
-            const challenge = window.userData.challenges[index];
-            if (!challenge || challenge.status !== 'active') return;
-            if (!confirm(`Mark "${challenge.name}" as completed? You'll earn the full ${challenge.bonusXP} XP bonus.`)) return;
-
-            challenge.status = 'completed';
-            challenge.currentCount = challenge.targetCount; // show full progress bar
-            window.userData.currentXP += challenge.bonusXP;
-            window.userData.totalXP += challenge.bonusXP;
-
-            // Check for level up
-            let level = window.userData.level || 1;
-            let xpForNext = calculateXPForLevel(level);
-            let didLevelUp = false;
-            while (window.userData.currentXP >= xpForNext && level < 100) {
-                window.userData.currentXP -= xpForNext;
-                window.userData.level++;
-                level = window.userData.level;
-                xpForNext = calculateXPForLevel(level);
-                didLevelUp = true;
-            }
-            if (window.userData.level >= 100) window.userData.level = 100;
-            if (didLevelUp) showLevelUpAnimation();
-
-            showChallengeCompleteToast(challenge.name, challenge.bonusXP);
-            await saveUserData();
-            updateDashboard();
-            gcSyncProgress().catch(() => {}); // push completed status to group challenge immediately
-        };
-
-        window.undoChallenge = async function(index) {
-            const challenge = window.userData.challenges[index];
-            if (!challenge || challenge.status !== 'completed') return;
-            if (!confirm(`Undo completion of "${challenge.name}"? The ${challenge.bonusXP} XP bonus will be returned.`)) return;
-
-            challenge.status = 'active';
-            // Reset currentCount so the "all targets met" banner doesn't immediately reappear.
-            // Count actual completions from activityProgress if available, else set to 0.
-            if (challenge.activityProgress && Object.keys(challenge.activityProgress).length > 0) {
-                challenge.currentCount = Object.values(challenge.activityProgress).reduce((a, b) => a + b, 0);
-            } else {
-                challenge.currentCount = 0;
-            }
-            window.userData.currentXP -= challenge.bonusXP;
-            window.userData.totalXP -= challenge.bonusXP;
-
-            // Handle level-down if XP went negative
-            while (window.userData.currentXP < 0 && window.userData.level > 1) {
-                window.userData.level -= 1;
-                window.userData.currentXP += calculateXPForLevel(window.userData.level);
-            }
-            if (window.userData.currentXP < 0) window.userData.currentXP = 0;
-
-            await saveUserData();
-            updateDashboard();
-            showToast(`↩ Challenge un-completed — ${challenge.bonusXP} XP returned`, 'olive');
-        };
-
-        window.editChallenge = function(index) {
-            openChallengeModal(index);
-        };
-
-        // Take Again: reset all progress and let the user pick a new date range.
-        // The challenge config (activities, targets, name) is preserved; only progress is wiped.
-        window.takeAgainChallenge = function(index) {
-            const challenge = window.userData.challenges[index];
-            if (!challenge || challenge.status !== 'completed') return;
-            // Flag so saveChallenge knows to wipe progress after the modal is confirmed
-            window._takeAgainMode = true;
-            // Pre-clear dates so the modal shows empty date fields ready for new input
-            const origStart = challenge.startDate;
-            const origEnd   = challenge.endDate;
-            challenge.startDate = localToday();
-            const nextMonth = new Date();
-            nextMonth.setMonth(nextMonth.getMonth() + 1);
-            challenge.endDate = toLocalDateStr(nextMonth);
-            // Temporarily set status active so openChallengeModal renders the edit form correctly
-            challenge.status = 'active';
-            openChallengeModal(index);
-            // Restore original dates in memory in case user cancels without saving
-            challenge.startDate = origStart;
-            challenge.endDate   = origEnd;
-            challenge.status    = 'completed';
-        };
-
-        window.deleteChallenge = async function(index) {
-            if (confirm('Delete this challenge?')) {
-                window.userData.challenges.splice(index, 1);
-                await saveUserData();
-                updateDashboard();
-            }
-        };
-
-        // Challenge activity type handled by onChallengeTypeChange()
-
-        // Render Challenges
-        function renderChallenges() {
-            const container = document.getElementById('challengesContainer');
-            const challenges = window.userData.challenges || [];
-
-            if (challenges.length === 0) {
-                container.innerHTML = `
-                    <div class="ch-empty">
-                        <div class="ch-empty-icon">🏆</div>
-                        <div class="ch-empty-text">No challenges yet. Tap <strong>+ Create Challenge</strong> above to set a time-boxed goal and earn bonus XP.</div>
-                    </div>
-                `;
-                return;
-            }
-
-            const activeChallenges    = challenges.filter(c => c.status === 'active');
-            const completedChallenges = challenges.filter(c => c.status === 'completed');
-            const failedChallenges    = challenges.filter(c => c.status === 'failed');
-
-            if (window._completedChallengesExpanded === undefined) window._completedChallengesExpanded = false;
-            if (window._failedChallengesExpanded === undefined) window._failedChallengesExpanded = false;
-            const completedOpen = window._completedChallengesExpanded;
-            const failedOpen    = window._failedChallengesExpanded;
-
-            const chevSvg = (open) => `<svg class="ch-section-chev${open ? ' expanded' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
-
-            let html = '';
-
-            // Active section — always expanded, no chevron
-            if (activeChallenges.length > 0) {
-                html += `
-                <div class="ch-section-head">
-                    <div class="ch-section-head-left">
-                        <h3 class="ch-section-title">Active</h3>
-                        <span class="ch-section-count">${activeChallenges.length}</span>
-                    </div>
-                </div>`;
-                html += activeChallenges.map(c => renderChallengeCard(c, challenges.indexOf(c))).join('');
-            }
-
-            if (completedChallenges.length > 0) {
-                html += `
-                <div class="ch-section-head ch-collapsible" onclick="toggleCompletedChallenges()">
-                    <div class="ch-section-head-left">
-                        <h3 class="ch-section-title">Completed</h3>
-                        <span class="ch-section-count ch-count-green">${completedChallenges.length}</span>
-                    </div>
-                    ${chevSvg(completedOpen)}
-                </div>
-                <div id="completedChallengesSection" style="display:${completedOpen ? 'block' : 'none'};">
-                    ${completedChallenges.map(c => renderChallengeCard(c, challenges.indexOf(c))).join('')}
-                </div>`;
-            }
-
-            if (failedChallenges.length > 0) {
-                html += `
-                <div class="ch-section-head ch-collapsible" onclick="toggleFailedChallenges()">
-                    <div class="ch-section-head-left">
-                        <h3 class="ch-section-title">Failed</h3>
-                        <span class="ch-section-count ch-count-red">${failedChallenges.length}</span>
-                    </div>
-                    ${chevSvg(failedOpen)}
-                </div>
-                <div id="failedChallengesSection" style="display:${failedOpen ? 'block' : 'none'};">
-                    ${failedChallenges.map(c => renderChallengeCard(c, challenges.indexOf(c))).join('')}
-                </div>`;
-            }
-
-            container.innerHTML = html;
-        }
-
-        window.toggleCompletedChallenges = function() {
-            window._completedChallengesExpanded = !window._completedChallengesExpanded;
-            renderChallenges();
-        };
-        window.toggleFailedChallenges = function() {
-            window._failedChallengesExpanded = !window._failedChallengesExpanded;
-            renderChallenges();
-        };
-
-        // Info modal handlers
-        window.openChallengesInfo = function() {
-            const m = document.getElementById('challengesInfoModal');
-            if (m) m.classList.add('active');
-        };
-        window.closeChallengesInfo = function() {
-            const m = document.getElementById('challengesInfoModal');
-            if (m) m.classList.remove('active');
-        };
-
-        window.updateMetricProgress = async function(challengeId) {
-            const challenges = window.userData.challenges || [];
-            const challenge = challenges.find(c => c.id === challengeId);
-            if (!challenge) return;
-            const inputEl = document.getElementById('metric-input-' + challengeId);
-            if (!inputEl) return;
-            const val = parseFloat(inputEl.value);
-            if (isNaN(val) || val < 0) { showToast('Enter a valid number', 'red'); return; }
-            // Cap at the target — cannot exceed the goal
-            const maxVal = challenge.metricQty || Infinity;
-            if (val > maxVal) {
-                showToast(`Max is ${maxVal} ${challenge.metricUnit || ''} — bar will stop at 100%`, 'red');
-                inputEl.value = maxVal;
-                challenge.metricCurrent = maxVal;
-            } else {
-                challenge.metricCurrent = val;
-            }
-            await saveUserData();
-            updateDashboard();
-            showToast('✓ Progress updated', 'olive');
-        };
-
-        window.toggleActivityProgress = function(challengeId) {
-            const body = document.getElementById('ch-breakdown-' + challengeId);
-            const icon = document.getElementById('ch-breakdown-icon-' + challengeId);
-            if (!body) return;
-            const isNowCollapsed = body.classList.toggle('collapsed');
-            // Drive the max-height for smooth animation
-            body.style.maxHeight = isNowCollapsed ? '0' : (body.scrollHeight + 60) + 'px';
-            if (icon) icon.textContent = isNowCollapsed ? '▶' : '▼';
-            const challenges = window.userData.challenges || [];
-            const ch = challenges.find(c => c.id === challengeId);
-            if (ch) { ch.activityProgressCollapsed = isNowCollapsed; saveUserData(); }
-        };
-
-        function renderChallengeCard(challenge, index) {
-            const isActive   = challenge.status === 'active';
-            const isCompleted = challenge.status === 'completed';
-            const isFailed   = challenge.status === 'failed';
-            const daysLeft   = Math.ceil((new Date(challenge.endDate + 'T00:00:00') - new Date()) / 86400000);
-
-            // ── Name map for activity ids → names ──────────────────────────
-            const nameMap = {};
-            (window.userData.dimensions || []).forEach(dim =>
-                (dim.paths || []).forEach(path =>
-                    (path.activities || []).forEach(act => { nameMap[act.id] = act.name; })));
-
-            const challengeActivityIds = challenge.activityIds && challenge.activityIds.length > 0
-                ? challenge.activityIds
-                : (challenge.activityId ? [challenge.activityId] : []);
-
-            const hasPerActivity = challengeActivityIds.length > 0
-                && challenge.activityTargets && Object.keys(challenge.activityTargets).length > 0;
-            const hasMetric = !!(challenge.metricEnabled && challenge.metricQty && challenge.metricUnit);
-
-            // ── Activity progress aggregates (always computed, since this
-            //    drives the breakdown panel and the per-activity bars) ─────
-            let activityPct = 0;
-            let totalCurrent = 0, totalTarget = 0;
-            if (hasPerActivity) {
-                totalTarget  = challengeActivityIds.reduce((s, id) => s + (challenge.activityTargets[id] || 1), 0);
-                totalCurrent = challengeActivityIds.reduce((s, id) =>
-                    s + Math.min((challenge.activityProgress || {})[id] || 0, challenge.activityTargets[id] || 1), 0);
-                activityPct = totalTarget > 0 ? Math.min(100, (totalCurrent / totalTarget) * 100) : 0;
-            }
-            const allTargetsMet = isActive && hasPerActivity && activityPct >= 100;
-
-            // ── Card state ────────────────────────────────────────────────
-            const cardState = isCompleted ? 'completed'
-                : isFailed ? 'failed'
-                : allTargetsMet ? 'targets'
-                : 'active';
-
-            // ── Progress hero band (count + bar + pct) ────────────────────
-            //   Metric mode:           "12 / 30 DAYS" + bar + "%"
-            //   Activity-only mode:    "9 / 20" + bar + "%"
-            //   Any-activity mode:     "N completions" + bar (always 0/100 ish)
-            let countHtml = '';
-            let mainPct = 0;
-            const fmtNum = (v) => Number.isInteger(v) ? String(v) : (Math.round(v * 100) / 100).toString();
-
-            if (hasMetric) {
-                const metricCurrent = +(challenge.metricCurrent || 0);
-                const metricPct = Math.min(100, (metricCurrent / challenge.metricQty) * 100);
-                mainPct = metricPct;
-                countHtml = `
-                    <span class="ch-count">
-                        <span class="ch-count-current">${fmtNum(metricCurrent)}</span>
-                        <span class="ch-count-sep">/</span>
-                        <span class="ch-count-target">${fmtNum(+challenge.metricQty)}</span>
-                    </span>
-                    <span class="ch-count-unit">${escapeHtml(challenge.metricUnit || '')}</span>`;
-            } else if (hasPerActivity) {
-                mainPct = activityPct;
-                countHtml = `
-                    <span class="ch-count">
-                        <span class="ch-count-current">${totalCurrent}</span>
-                        <span class="ch-count-sep">/</span>
-                        <span class="ch-count-target">${totalTarget}</span>
-                    </span>`;
-            } else {
-                // Legacy any-activity mode
-                const anyCount = challenge.currentCount || 0;
-                mainPct = isCompleted ? 100 : 0;
-                countHtml = `
-                    <span class="ch-count">
-                        <span class="ch-count-current">${anyCount}</span>
-                    </span>
-                    <span class="ch-count-unit">${anyCount === 1 ? 'completion' : 'completions'}</span>`;
-            }
-
-            const progressHtml = `
-                <div class="ch-progress">
-                    <div class="ch-progress-top">
-                        <div style="display:inline-flex;align-items:baseline;gap:4px;min-width:0;">
-                            ${countHtml}
-                        </div>
-                        <span class="ch-pct">${Math.floor(mainPct)}%</span>
-                    </div>
-                    <div class="ch-bar"><div class="ch-bar-inner" style="width:${mainPct}%;"></div></div>
-                </div>`;
-
-            // ── Complete / Take-again button ──────────────────────────────
-            const enforced = !!(challenge.enforceActivities) && hasPerActivity;
-            const completeBlocked = enforced && !allTargetsMet;
-            const checkSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
-            const refreshSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/></svg>`;
-
-            let primaryBtn = '';
-            if (isActive) {
-                const readyClass = allTargetsMet ? ' ch-complete-ready' : '';
-                primaryBtn = `
-                    <button class="ch-complete${readyClass}" onclick="completeChallenge(${index})"
-                            ${completeBlocked ? 'disabled title="Complete all activity targets first"' : ''}>
-                        ${checkSvg}<span>${allTargetsMet ? 'Claim bonus' : 'Complete'}</span>
-                    </button>`;
-            } else if (isCompleted) {
-                primaryBtn = `
-                    <button class="ch-take-again" onclick="takeAgainChallenge(${index})">
-                        ${refreshSvg}<span>Take Again</span>
-                    </button>`;
-            } else if (isFailed) {
-                primaryBtn = `
-                    <button class="ch-take-again" onclick="takeAgainChallenge(${index})">
-                        ${refreshSvg}<span>Retry</span>
-                    </button>`;
-            }
-
-            // ── Breakdown chevron (minimal, ghost-button style) ───────────
-            //   Shown when there's something to reveal: per-activity rows,
-            //   OR an active metric challenge (so the input can live inside).
-            const showBreakdown = hasPerActivity || (isActive && hasMetric);
-            const breakdownCollapsed = challenge.activityProgressCollapsed !== false;
-            let breakdownBtnHtml = '';
-            let breakdownBodyHtml = '';
-
-            if (showBreakdown) {
-                breakdownBtnHtml = `
-                    <button class="ch-breakdown-btn" onclick="toggleChallengeBreakdown('${challenge.id}')" type="button">
-                        <span>Details</span>
-                        <svg id="ch-breakdown-icon-${challenge.id}" class="ch-breakdown-chev${breakdownCollapsed ? '' : ' expanded'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-                    </button>`;
-
-                // Metric update row (inside the breakdown now)
-                let metricUpdateHtml = '';
-                if (isActive && hasMetric) {
-                    const cur = challenge.metricCurrent || 0;
-                    metricUpdateHtml = `
-                        <div class="ch-metric-update-wrap">
-                            <div class="ch-metric-update-label">Update progress · ${escapeHtml(challenge.metricUnit || '')}</div>
-                            <div class="ch-metric-update-row">
-                                <input class="ch-metric-input" type="number" inputmode="decimal" id="metric-input-${challenge.id}"
-                                       placeholder="${escapeHtml(challenge.metricUnit || '0')}" step="any" min="0" max="${challenge.metricQty}"
-                                       value="${cur > 0 ? cur : ''}">
-                                <button type="button" class="ch-metric-update-btn" onclick="updateMetricProgress('${challenge.id}')">Update</button>
-                            </div>
-                        </div>`;
-                }
-
-                // Per-activity rows
-                let activityRowsHtml = '';
-                if (hasPerActivity) {
-                    activityRowsHtml = challengeActivityIds.map(id => {
-                        const target  = challenge.activityTargets[id] || 1;
-                        const current = Math.min((challenge.activityProgress || {})[id] || 0, target);
-                        const pct     = Math.min(100, (current / target) * 100);
-                        const done    = current >= target;
-                        return `
-                        <div class="ch-act-row-v2">
-                            <div class="ch-act-row-top">
-                                <span class="ch-act-row-name-v2${done ? ' done' : ''}">${escapeHtml(nameMap[id]||id)}</span>
-                                <span class="ch-act-row-count-v2">${current}/${target}</span>
-                            </div>
-                            <div class="ch-act-bar-v2"><div class="ch-act-bar-v2-fill${done ? ' done' : ''}" style="width:${pct}%;"></div></div>
-                        </div>`;
-                    }).join('');
-                }
-
-                breakdownBodyHtml = `
-                    <div class="ch-breakdown-body${breakdownCollapsed ? '' : ' expanded'}" id="ch-breakdown-${challenge.id}"
-                         style="max-height:${breakdownCollapsed ? '0' : '900px'};">
-                        ${metricUpdateHtml}
-                        ${activityRowsHtml}
-                    </div>`;
-            }
-
-            // ── Subtitle / enforced chip / meta ─────────────────────────────
-            // Enforced moves next to the description (the subtitle row) when
-            // one exists. When there's no description we keep it in the meta
-            // line as a fallback so the badge isn't lost.
-            const hasDescription = !!challenge.description;
-            const enforcedChipHtml = enforced ? `<span class="ch-enforced-chip" title="All targets must be met to claim the bonus">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                Enforced
-            </span>` : '';
-
-            const metaParts = [];
-            metaParts.push(`<span class="ch-meta-xp">+${challenge.bonusXP} XP</span>`);
-            if (isActive) {
-                metaParts.push(`<span class="ch-meta-sep">·</span>`);
-                metaParts.push(`<span>${daysLeft > 0 ? daysLeft + ' days left' : (daysLeft === 0 ? 'Ends today' : 'Ended ' + Math.abs(daysLeft) + 'd ago')}</span>`);
-            }
-            if (challengeActivityIds.length > 0) {
-                metaParts.push(`<span class="ch-meta-sep">·</span>`);
-                metaParts.push(`<span>${challengeActivityIds.length} ${challengeActivityIds.length === 1 ? 'activity' : 'activities'}</span>`);
-            }
-            // Fallback: only show enforced inside the meta line when there's
-            // no description to attach it to (otherwise it sits in the subtitle row).
-            if (enforced && !hasDescription) {
-                metaParts.push(`<span class="ch-meta-sep">·</span>`);
-                metaParts.push(enforcedChipHtml);
-            }
-            const metaHtml = metaParts.join('');
-
-            // ── SVG icons for the top-right action buttons ────────────────
-            const editSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
-            const trashSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>`;
-
-            return `
-                <div class="ch-card" data-state="${cardState}">
-                    <div class="ch-card-head">
-                        <div class="ch-card-titlecol">
-                            <h3 class="ch-card-title">${escapeHtml(challenge.name)}</h3>
-                            ${hasDescription ? `
-                            <div class="ch-subtitle-row">
-                                <p class="ch-card-desc">${escapeHtml(challenge.description)}</p>
-                                ${enforcedChipHtml}
-                            </div>
-                            <div class="ch-divider" aria-hidden="true"></div>
-                            ` : ''}
-                            <div class="ch-meta">${metaHtml}</div>
-                        </div>
-                        <div class="ch-card-actions">
-                            ${isActive ? `<button class="ch-icon-btn" onclick="editChallenge(${index})" title="Edit challenge" aria-label="Edit challenge">${editSvg}</button>` : ''}
-                            <button class="ch-icon-btn ch-icon-danger" onclick="deleteChallenge(${index})" title="Delete challenge" aria-label="Delete challenge">${trashSvg}</button>
-                        </div>
-                    </div>
-
-                    ${progressHtml}
-
-                    <div class="ch-action-row">
-                        ${primaryBtn}
-                        ${breakdownBtnHtml}
-                    </div>
-                    ${breakdownBodyHtml}
-                </div>`;
-        }
-
-        // New toggle handler name — paired with the new markup. The old
-        // toggleActivityProgress is kept as an alias for any in-flight cached
-        // markup, but new cards call toggleChallengeBreakdown.
-        window.toggleChallengeBreakdown = function(challengeId) {
-            const body = document.getElementById('ch-breakdown-' + challengeId);
-            const icon = document.getElementById('ch-breakdown-icon-' + challengeId);
-            if (!body) return;
-            const wasExpanded = body.classList.contains('expanded');
-            if (wasExpanded) {
-                body.classList.remove('expanded');
-                body.style.maxHeight = '0';
-                if (icon) icon.classList.remove('expanded');
-            } else {
-                body.classList.add('expanded');
-                body.style.maxHeight = (body.scrollHeight + 40) + 'px';
-                if (icon) icon.classList.add('expanded');
-            }
-            // Persist collapsed-state so it survives a re-render
-            const challenges = window.userData.challenges || [];
-            const ch = challenges.find(c => c.id === challengeId);
-            if (ch) {
-                ch.activityProgressCollapsed = wasExpanded;  // collapsed if it was expanded before this tap
-                saveUserData();
-            }
-        };
-
-
                 function renderCategoriesActivities(activities, dimIndex, pathIndex, dimHex) {
             if (activities.length === 0) {
                 return '<div class="cat-empty">No activities yet · use <strong>+ Activity</strong> above</div>';
@@ -4444,7 +3442,6 @@
         window.deleteDimension = async function(index) {
             if (confirm('Delete this dimension and all its paths/activities?')) {
                 const dim = window.userData.dimensions[index];
-                getActivityIdsInDimension(dim).forEach(id => cleanupChallengesForActivity(id));
                 window.userData.dimensions.splice(index, 1);
                 await saveUserData();
                 updateDashboard();
@@ -4511,7 +3508,6 @@
         window.deletePath = async function(dimIndex, pathIndex) {
             if (confirm('Delete this path and all its activities?')) {
                 const path = window.userData.dimensions[dimIndex].paths[pathIndex];
-                (path.activities || []).forEach(act => cleanupChallengesForActivity(act.id));
                 window.userData.dimensions[dimIndex].paths.splice(pathIndex, 1);
                 await saveUserData();
                 updateDashboard();
@@ -5328,8 +4324,6 @@
 
                 _logDeletedActivity(activity);
                 window.userData.dimensions[dimIndex].paths[pathIndex].activities.splice(actIndex, 1);
-                // Clean up references in challenges
-                if (actId) cleanupChallengesForActivity(actId);
                 // Clean up references in groups (strip the id from any group's activityIds).
                 if (actId) cleanupGroupsForActivity(actId);
                 await saveUserData();
@@ -5358,28 +4352,6 @@
             });
             if (window.userData.deletedActivityLog.length > 200)
                 window.userData.deletedActivityLog.shift();
-        }
-
-        // Remove a deleted activity ID from all challenges
-        function cleanupChallengesForActivity(actId) {
-            (window.userData.challenges || []).forEach(ch => {
-                // activityIds array
-                if (ch.activityIds) {
-                    ch.activityIds = ch.activityIds.filter(id => id !== actId);
-                }
-                // activityTargets map
-                if (ch.activityTargets) delete ch.activityTargets[actId];
-                // activityProgress map
-                if (ch.activityProgress) delete ch.activityProgress[actId];
-                // Legacy single activityId
-                if (ch.activityId === actId) ch.activityId = null;
-                // Recalculate targetCount and currentCount
-                if (ch.activityIds && ch.activityTargets) {
-                    ch.targetCount = ch.activityIds.reduce((s, id) => s + (ch.activityTargets[id] || 1), 0);
-                    ch.currentCount = ch.activityIds.reduce((s, id) =>
-                        s + Math.min((ch.activityProgress || {})[id] || 0, ch.activityTargets[id] || 1), 0);
-                }
-            });
         }
 
         // Collect all activity IDs in a dimension for bulk cleanup
@@ -5851,8 +4823,6 @@
             const _dimForAct = window.userData.dimensions[dimIndex];
             if (_dimForAct) applyDimXP(_dimForAct, activity.isNegative && !activity.isSkipNegative ? -earnedXP : earnedXP);
 
-            // Update challenge progress
-            updateChallengeProgress(activity.id);
             // Update quest progress — passively marks linked leaves done in any
             // active quest that references this activity. Quest bonus XP is
             // paid separately, as a lump sum on quest completion (see
@@ -5941,17 +4911,6 @@
             updateDashboard();
             showXPToast(xpChange, newStreak, consistencyMultiplier);
             debouncedSaveUserData(); // single write covers XP + optional deletion
-            // Only sync group progress when the activity is part of an active challenge —
-            // avoids unnecessary Firestore writes and prevents the momentum bar from ticking
-            // up when the user completes activities unrelated to their nominated challenges.
-            if (window.userData.activeGroupChallengeId) {
-                const actId = activity.id;
-                const isInActiveChallenge = (window.userData.challenges || []).some(ch =>
-                    ch.status === 'active' &&
-                    ((ch.activityIds || []).includes(actId) || ch.activityId === actId)
-                );
-                if (isInActiveChallenge) gcSyncProgress().catch(() => {});
-            }
         };
 
         // Undo Activity Completion
@@ -6062,8 +5021,6 @@
                 }
             }
             
-            // Reverse challenge progress for this undo
-            undoChallengeProgress(activity.id);
             // Reverse quest progress for this undo (leaf completedCount only —
             // no XP to refund here, quest bonus isn't paid until completion)
             try { if (typeof undoQuestProgress === 'function') undoQuestProgress(activity.id); } catch(e) {}
@@ -6076,20 +5033,6 @@
             showUndoToast(toastXP);
             debouncedSaveUserData(); // fire-and-forget
 
-            // If the undone activity is part of an active
-            // challenge that the user has nominated to the active group, the
-            // group's view of their progress goes stale until the next save.
-            // Mirror the completeActivity path: re-sync whenever the activity
-            // touched something the group cares about.
-            if (window.userData.activeGroupChallengeId) {
-                const isInActiveChallenge = (window.userData.challenges || []).some(ch =>
-                    ch.status === 'active' &&
-                    ((ch.activityIds || []).includes(activity.id) || ch.activityId === activity.id)
-                );
-                if (isInActiveChallenge && typeof gcSyncProgress === 'function') {
-                    gcSyncProgress().catch(() => {});
-                }
-            }
         };
 
         // ── Retroactive Write Functions ──────────────────────────────────
@@ -6100,9 +5043,6 @@
 
             // 2. Streak from history (idempotency-free)
             recomputeStreakFromHistory(activity);
-
-            // 3. Challenge progress
-            recomputeChallengeProgress(activity.id);
 
             // 4. Dimension XP
             const dim = (window.userData.dimensions || [])[dimIndex];
@@ -6121,17 +5061,6 @@
             await saveUserData();
             updateDashboard();
 
-            // If this retroactive change affected a nominated challenge,
-            // push the new progress to the active group so members see it.
-            if (window.userData.activeGroupChallengeId) {
-                const isInActiveChallenge = (window.userData.challenges || []).some(ch =>
-                    ch.status === 'active' &&
-                    ((ch.activityIds || []).includes(activity.id) || ch.activityId === activity.id)
-                );
-                if (isInActiveChallenge && typeof gcSyncProgress === 'function') {
-                    gcSyncProgress().catch(() => {});
-                }
-            }
         }
 
         window.retroactiveComplete = async function(activityId, dateStr) {
@@ -8516,64 +7445,6 @@
             activity.shieldCapUsed = streak > 0 ? walkCapUsed : shieldFloorFor(activity);
         }
 
-        function recomputeChallengeProgress(activityId) {
-            const challenges = window.userData.challenges || [];
-            let activity = null;
-            (window.userData.dimensions || []).forEach(dim =>
-                (dim.paths || []).forEach(path =>
-                    (path.activities || []).forEach(act => {
-                        if (act.id === activityId) activity = act;
-                    })
-                )
-            );
-            if (!activity) return;
-
-            challenges.forEach(challenge => {
-                if (challenge.status !== 'active') return;
-                const challengeActivityIds = challenge.activityIds && challenge.activityIds.length > 0
-                    ? challenge.activityIds
-                    : (challenge.activityId ? [challenge.activityId] : []);
-                if (!challengeActivityIds.includes(activityId)) return;
-
-                const entries = (activity.completionHistory || []).filter(e => {
-                    if (e.isPenalty) return false;
-                    const d = toLocalDateStr(new Date(e.date));
-                    if (challenge.startDate && d < challenge.startDate) return false;
-                    if (challenge.endDate && d > challenge.endDate) return false;
-                    return true;
-                });
-                const count = entries.length;
-
-                if (challenge.activityTargets && challenge.activityTargets[activityId] !== undefined) {
-                    if (!challenge.activityProgress) challenge.activityProgress = {};
-                    challenge.activityProgress[activityId] = count;
-                    challenge.currentCount = challengeActivityIds.reduce((sum, id) => {
-                        const target = challenge.activityTargets[id] || 1;
-                        return sum + Math.min((challenge.activityProgress || {})[id] || 0, target);
-                    }, 0);
-                } else {
-                    let total = 0;
-                    challengeActivityIds.forEach(id => {
-                        let linkedAct = null;
-                        (window.userData.dimensions || []).forEach(dim =>
-                            (dim.paths || []).forEach(path =>
-                                (path.activities || []).forEach(a => { if (a.id === id) linkedAct = a; })
-                            )
-                        );
-                        if (!linkedAct) return;
-                        total += (linkedAct.completionHistory || []).filter(e => {
-                            if (e.isPenalty) return false;
-                            const d = toLocalDateStr(new Date(e.date));
-                            if (challenge.startDate && d < challenge.startDate) return false;
-                            if (challenge.endDate && d > challenge.endDate) return false;
-                            return true;
-                        }).length;
-                    });
-                    challenge.currentCount = total;
-                }
-            });
-        }
-
         // ── End Retroactive Recalculation Engine ──────────────────────────
 
         // ── Write budget management ───────────────────────────────────────────
@@ -8831,7 +7702,7 @@
             if (statsGrid) statsGrid.style.display = (tabName === 'analytics') ? '' : 'none';
 
             // Render the newly-visible tab (skipped during updateDashboard if not active)
-            if (tabName === 'challenges') renderChallenges();
+            if (tabName === 'challenges') { if (typeof vsRenderTab === 'function') vsRenderTab(); }
             else if (tabName === 'projects') { try { renderProjects(); } catch(e) { console.warn('renderProjects failed', e); } }
             else if (tabName === 'friends' || tabName === 'people') renderFriendsTab();
             else if (tabName === 'settings') { loadSettings(); }
@@ -11728,7 +10599,7 @@
         };
 
         window.confirmResetData = function() {
-            const first = confirm('⚠️ This will permanently delete ALL your data — activities, XP, challenges, rewards, everything. This cannot be undone.\n\nAre you absolutely sure?');
+            const first = confirm('⚠️ This will permanently delete ALL your data — activities, XP, quests, rewards, everything. This cannot be undone.\n\nAre you absolutely sure?');
             if (!first) return;
             const second = confirm('Last chance! Type "RESET" in the next dialog to confirm.');
             const word = prompt('Type RESET to confirm:');
@@ -12691,13 +11562,10 @@
                 return;
             }
 
-            // Empty start: no seeded activities, no seeded challenges.
-            // Activities are added via the focus-area picker (obFocusPicker) when
-            // the user chooses Quick Start, or by the user manually when they pick
-            // Build My Own. Challenges are not seeded since the Challenges tab is
-            // locked until Level 5.
+            // Empty start: no seeded activities. They are added via the
+            // focus-area picker (obFocusPicker) when the user chooses Quick
+            // Start, or by hand when they pick Build My Own.
             window.userData.dimensions = [];
-            window.userData.challenges = [];
 
             window.userData.onboardingComplete = true;
             await saveUserData();
@@ -13049,8 +11917,8 @@
         const TAB_UNLOCKS = {
             analytics:  { level: 3, label: 'Analytics',  emoji: '📊',
                           body: 'Track XP over time, see which habits are building streaks, and measure progress across every area of your life.' },
-            challenges: { level: 5, label: 'Challenges', emoji: '🏆',
-                          body: 'Set personal challenges tied to your activities — with a deadline and bonus XP when you complete them.' },
+            challenges: { level: 5, label: 'Challenges', emoji: '⚔️',
+                          body: 'Challenge a friend head-to-head. Both of you stake Grit, first to finish takes the pot — plus bonus XP and bragging rights.' },
             friends:    { level: 7, label: 'Friends',    emoji: '👥',
                           body: 'Add friends, compare XP on the leaderboard, and keep each other accountable. Share your friend code to get started.' },
         };
@@ -13226,7 +12094,8 @@
             // hidden sub-tab, etc.). offsetParent is null when an ancestor
             // has display:none — exactly the case we need to skip when
             // multiple sub-tabs share the same class (.act-tb-add-main
-            // exists in activities, dimensions and challenges sub-tabs).
+            // exists in the activities and dimensions sub-tabs, and in the
+            // Challenges tab's toolbar).
             const els = Array.from(document.querySelectorAll(step.selector))
                 .filter(el => el.offsetParent !== null || el.getClientRects().length > 0);
             return els.length ? els : null;
@@ -14806,910 +13675,6 @@
                     if (input) { input.value = code.toUpperCase(); addFriendByCode(); }
                 }, 600);
             } catch(e) { console.warn('Deep link handling failed:', e); }
-        }
-
-
-        // ════════════════════════════════════════════════════════
-        //  GROUP CHALLENGE MODULE
-        // ════════════════════════════════════════════════════════
-
-
-        // ════════════════════════════════════════════════════════
-        //  GROUP CHALLENGE MODULE  (v2 — multi-nomination)
-        // ════════════════════════════════════════════════════════
-
-        const GC_COL      = 'groupChallenges';
-        const GC_CODES    = 'groupInviteCodes';
-        const GC_INVITES  = 'groupInvitations';
-        const GC_MAX_NOMS = 3;
-
-        // ── Helpers ───────────────────────────────────────────────────────
-
-        function gcGenerateCode() {
-            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-            return Array.from({length: 6}, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-        }
-
-        function gcFmtDate(dateStr) {
-            if (!dateStr) return '';
-            const d = new Date(dateStr + 'T00:00:00');
-            return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-        }
-
-        function gcDaysLeft(endDate) {
-            return Math.max(0, Math.ceil((new Date(endDate + 'T00:00:00') - new Date()) / 86400000));
-        }
-
-        function gcGetActiveGroupId() { return window.userData?.activeGroupChallengeId || null; }
-
-        // Migrate old single-nomination to nominations array for backward compat
-        function gcNormaliseNominations(member) {
-            if (member.nominations && member.nominations.length > 0) return member.nominations;
-            if (member.nominatedChallengeId) {
-                return [{
-                    challengeId:   member.nominatedChallengeId,
-                    challengeName: member.nominatedChallengeName || 'Challenge',
-                    challengeTarget:  member.challengeTarget  || 0,
-                    challengeCurrent: member.challengeCurrent || 0,
-                    challengeStatus:  member.challengeStatus  || 'active',
-                    metricEnabled: false,
-                    metricQty: null, metricUnit: null, metricCurrent: 0,
-                }];
-            }
-            return [];
-        }
-
-        // Compute momentum: % of active members who logged today or yesterday
-        function gcComputeMomentum(activeMembers) {
-            const today = localToday();
-            const yday  = localYesterday();
-            if (!activeMembers.length) return 0;
-            const recent = activeMembers.filter(m => m.lastActiveDate === today || m.lastActiveDate === yday).length;
-            return Math.round((recent / activeMembers.length) * 100);
-        }
-
-        // ── Main tab renderer ─────────────────────────────────────────────
-
-        window.renderGroupChallengeTab = async function() {
-            const container = document.getElementById('groupChallengeContent');
-            if (!container) return;
-            container.innerHTML = '<div style="padding:40px;text-align:center;color:var(--color-text-secondary);font-size:13px;">Loading…</div>';
-
-            const myUID = window.currentUser?.uid;
-            if (!myUID) return;
-
-            // Load pending invitations
-            let pendingInvites = [];
-            try {
-                const q = query(collection(db, GC_INVITES),
-                    where('inviteeUid', '==', myUID),
-                    where('status', '==', 'pending'));
-                const snap = await getDocs(q);
-                snap.forEach(d => pendingInvites.push({ docId: d.id, ...d.data() }));
-            } catch(e) { console.warn('GC invitations fetch failed:', e); }
-
-            // Handle ?joinGroup= deep link
-            try {
-                const params = new URLSearchParams(window.location.search);
-                const code = params.get('joinGroup');
-                if (code) {
-                    window.history.replaceState({}, '', window.location.pathname);
-                    const codeSnap = await getDoc(doc(db, GC_CODES, code.toUpperCase()));
-                    if (codeSnap.exists()) {
-                        const { groupId } = codeSnap.data();
-                        const groupSnap = await getDoc(doc(db, GC_COL, groupId));
-                        if (groupSnap.exists()) {
-                            const group = { id: groupSnap.id, ...groupSnap.data() };
-                            const alreadyInvited = pendingInvites.some(i => i.groupId === groupId);
-                            const alreadyMember  = !!(group.members?.[myUID]?.status === 'active');
-                            if (!alreadyInvited && !alreadyMember) {
-                                pendingInvites.unshift({ docId: null, groupId, groupName: group.name, inviterName: 'via invite link', inviterUid: group.creatorUid });
-                            }
-                        }
-                    }
-                }
-            } catch(e) { console.warn('GC deep link resolve failed:', e); }
-
-            const activeGroupId = gcGetActiveGroupId();
-            if (activeGroupId) {
-                try {
-                    const groupSnap = await getDoc(doc(db, GC_COL, activeGroupId));
-                    if (groupSnap.exists()) {
-                        gcRenderDashboard(container, { id: groupSnap.id, ...groupSnap.data() }, myUID, pendingInvites);
-                    } else {
-                        window.userData.activeGroupChallengeId = null;
-                        await saveUserData();
-                        gcRenderEmpty(container, pendingInvites);
-                    }
-                } catch(e) {
-                    container.innerHTML = '<div style="padding:32px;text-align:center;color:var(--color-text-secondary);">Failed to load. Check your connection.</div>';
-                }
-            } else {
-                gcRenderEmpty(container, pendingInvites);
-            }
-        };
-
-        // ── Empty state ───────────────────────────────────────────────────
-
-        function gcRenderEmpty(container, pendingInvites) {
-            const inviteCards = pendingInvites.map(inv => `
-                <div class="gc-invite-card">
-                    <div class="gc-invite-icon">🏆</div>
-                    <div class="gc-invite-body">
-                        <div class="gc-invite-title">${escapeHtml(inv.groupName || 'Group Challenge')}</div>
-                        <div class="gc-invite-sub">Invited by ${escapeHtml(inv.inviterName || 'someone')}</div>
-                    </div>
-                    <div class="gc-invite-actions">
-                        <button class="btn-accept" onclick="gcAcceptInvite('${inv.groupId}','${inv.docId || ''}')">Accept</button>
-                        <button class="btn-decline" onclick="gcDeclineInvite('${inv.docId || ''}','${inv.groupId}')">Decline</button>
-                    </div>
-                </div>`).join('');
-
-            container.innerHTML = `
-                ${inviteCards}
-                <div class="gc-empty">
-                    <div class="gc-empty-icon">🏆</div>
-                    <div class="gc-empty-title">No Active Group Challenge</div>
-                    <div class="gc-empty-sub">Team up with friends and tackle your goals together. Each person brings their own challenges.</div>
-                    <div class="gc-empty-actions">
-                        <button class="btn-primary-full" onclick="openCreateGroupModal()">＋ Create Group Challenge</button>
-                        <button class="btn-secondary-full" onclick="openGroupJoinModal()">🔗 Join with Invite Code</button>
-                    </div>
-                </div>`;
-        }
-
-        // ── Dashboard ─────────────────────────────────────────────────────
-
-        function gcRenderDashboard(container, group, myUID, pendingInvites = []) {
-            const members       = group.members || {};
-            const activeMembers = Object.values(members).filter(m => m.status === 'active');
-            const today         = localToday();
-            const isCreator     = group.creatorUid === myUID;
-            const myMember      = members[myUID];
-
-            // Aggregate group progress across all nominations from all members
-            let totalPct = 0, nomCount = 0;
-            activeMembers.forEach(m => {
-                gcNormaliseNominations(m).forEach(n => {
-                    const pct = n.metricEnabled && n.metricQty > 0
-                        ? Math.min(100, ((n.metricCurrent || 0) / n.metricQty) * 100)
-                        : (n.challengeTarget > 0 ? Math.min(100, (n.challengeCurrent / n.challengeTarget) * 100) : 0);
-                    totalPct += pct; nomCount++;
-                });
-            });
-            const aggPct = nomCount > 0 ? Math.round(totalPct / nomCount) : 0;
-
-            // Momentum
-            const momentum = gcComputeMomentum(activeMembers);
-
-            // Active today avatars
-            const activeTodayMembers = activeMembers.filter(m => m.lastActiveDate === today);
-
-            // Invite cards
-            const inviteCards = pendingInvites.map(inv => `
-                <div class="gc-invite-card">
-                    <div class="gc-invite-icon">🏆</div>
-                    <div class="gc-invite-body">
-                        <div class="gc-invite-title">${escapeHtml(inv.groupName || 'Group Challenge')}</div>
-                        <div class="gc-invite-sub">Invited by ${escapeHtml(inv.inviterName || 'someone')}</div>
-                    </div>
-                    <div class="gc-invite-actions">
-                        <button class="btn-accept" onclick="gcAcceptInvite('${inv.groupId}','${inv.docId || ''}')">Accept</button>
-                        <button class="btn-decline" onclick="gcDeclineInvite('${inv.docId || ''}','${inv.groupId}')">Decline</button>
-                    </div>
-                </div>`).join('');
-
-            // Member cards (full width, stacked)
-            const memberCards = activeMembers.map(m => gcRenderMemberCard(m, myUID, isCreator, group, today)).join('');
-
-            // Active today avatar strip
-            const activeTodayStrip = activeTodayMembers.length > 0 ? `
-                <div class="gc-active-strip">
-                    <span class="gc-active-strip-label">Active today</span>
-                    <div class="gc-active-avatars">
-                        ${activeTodayMembers.map(m => {
-                            const initial = (m.displayName || '?')[0].toUpperCase();
-                            return m.photoURL
-                                ? `<img class="gc-active-avatar" src="${escapeHtml(m.photoURL)}" title="${escapeHtml(m.displayName || '')}">`
-                                : `<div class="gc-active-avatar gc-active-avatar-initial" title="${escapeHtml(m.displayName || '')}">${initial}</div>`;
-                        }).join('')}
-                        <span class="gc-active-count">${activeTodayMembers.length}/${activeMembers.length}</span>
-                    </div>
-                </div>` : `<div class="gc-active-strip"><span class="gc-active-strip-label" style="opacity:0.5;">No activity logged today yet</span></div>`;
-
-            // Momentum bar colour
-            const momentumColor = momentum >= 70 ? '#4caf82' : momentum >= 40 ? '#e0b450' : '#e07070';
-            const momentumLabel = momentum >= 70 ? 'Strong momentum 🔥' : momentum >= 40 ? 'Building momentum' : 'Needs a push ⚡';
-
-            container.innerHTML = `
-                ${inviteCards}
-                <div class="gc-dashboard">
-
-                    <!-- Header -->
-                    <div class="gc-header">
-                        <div class="gc-header-top">
-                            <div>
-                                <div class="gc-group-name">🏆 ${escapeHtml(group.name)}</div>
-                                <div class="gc-date-range">${gcFmtDate(group.startDate)} → ${gcFmtDate(group.endDate)} · ${gcDaysLeft(group.endDate)}d left</div>
-                            </div>
-                            <div class="gc-header-actions">
-                                ${isCreator ? `<button class="gc-icon-btn" onclick="openEditGroupModal()" title="Edit group">✏️</button>` : ''}
-                                ${isCreator ? `<button class="gc-icon-btn danger" onclick="gcDeleteGroupConfirm('${group.id}')" title="Delete group">🗑️</button>` : ''}
-                                <button class="gc-icon-btn" onclick="openGroupInviteModal('${group.id}')" title="Invite members">👥</button>
-                                <button class="gc-icon-btn danger" onclick="gcConfirmExit('${group.id}')" title="Exit group">🚪</button>
-                            </div>
-                        </div>
-                        ${group.description ? `<div class="gc-description">${escapeHtml(group.description)}</div>` : ''}
-                    </div>
-
-                    <!-- Progress + Momentum -->
-                    <div class="gc-progress-section">
-                        <div class="gc-progress-label">
-                            <span>Group Progress</span>
-                            <span class="gc-progress-pct-large">${aggPct}%</span>
-                        </div>
-                        <div class="gc-agg-progress-bar">
-                            <div class="gc-agg-progress-fill" style="width:${aggPct}%"></div>
-                        </div>
-                        <!-- Momentum -->
-                        <div class="gc-momentum-row">
-                            <div class="gc-momentum-bar-wrap">
-                                <div class="gc-momentum-fill" style="width:${momentum}%;background:${momentumColor};box-shadow:0 0 6px ${momentumColor}55;"></div>
-                            </div>
-                            <span class="gc-momentum-label" style="color:${momentumColor};">${momentumLabel}</span>
-                        </div>
-                        ${activeTodayStrip}
-                    </div>
-
-                    <!-- Invite code -->
-                    <div class="gc-code-row">
-                        <span class="gc-code-label">Invite Code</span>
-                        <span class="gc-code-value">${group.inviteCode || ''}</span>
-                        <button class="gc-code-copy" onclick="gcCopyCode('${group.inviteCode}')">Copy</button>
-                    </div>
-
-                    <!-- Member cards -->
-                    <div class="gc-members-list">${memberCards}</div>
-                </div>`;
-        }
-
-        function gcRenderMemberCard(m, myUID, isCreator, group, today) {
-            const isMe    = m.uid === myUID;
-            const noms    = gcNormaliseNominations(m);
-            const hasNoms = noms.length > 0;
-            const initial = (m.displayName || '?')[0].toUpperCase();
-
-            const daysAgo = m.lastActiveDate
-                ? Math.max(0, Math.floor((new Date(today) - new Date(m.lastActiveDate)) / 86400000)) : null;
-            const activeToday = m.lastActiveDate === today;
-            const isLagging   = daysAgo !== null && daysAgo >= 3 && hasNoms;
-            const allDone     = hasNoms && noms.every(n => n.challengeStatus === 'completed');
-
-            const statusLabel = activeToday ? 'Active today'
-                : daysAgo === 1 ? 'Yesterday'
-                : daysAgo !== null && daysAgo > 1 ? `${daysAgo}d ago`
-                : 'Not started';
-
-            const isLeader = group.creatorUid === m.uid;
-
-            // Nomination rows
-            const nomRows = hasNoms ? noms.map(n => {
-                const isDone = n.challengeStatus === 'completed';
-                let pct, barLabel;
-                if (n.metricEnabled && n.metricQty > 0) {
-                    pct = Math.min(100, Math.round(((n.metricCurrent || 0) / n.metricQty) * 100));
-                    barLabel = `${n.metricCurrent || 0} / ${n.metricQty} ${escapeHtml(n.metricUnit || '')}`;
-                } else {
-                    pct = n.challengeTarget > 0 ? Math.min(100, Math.round((n.challengeCurrent / n.challengeTarget) * 100)) : 0;
-                    barLabel = `${n.challengeCurrent || 0} / ${n.challengeTarget || 0} completed`;
-                }
-                return `
-                    <div class="gc-nom-row">
-                        <div class="gc-nom-name">${escapeHtml(n.challengeName)}</div>
-                        <div class="gc-nom-bar-wrap">
-                            <div class="gc-nom-bar">
-                                <div class="gc-nom-fill ${isDone ? 'done' : ''}" style="width:${pct}%"></div>
-                            </div>
-                            <span class="gc-nom-pct">${pct}%</span>
-                        </div>
-                        <div class="gc-nom-meta">${barLabel}${isDone ? ' · <span style="color:#4caf82;font-weight:700;">✓ Done</span>' : ''}</div>
-                    </div>`;
-            }).join('') : '';
-
-            // Card border/glow state
-            const cardClass = allDone ? 'gc-member-card gc-card-done'
-                : isLagging ? 'gc-member-card gc-card-lagging'
-                : activeToday ? 'gc-member-card gc-card-active'
-                : 'gc-member-card';
-
-            return `
-                <div class="${cardClass}">
-                    <!-- Top row: avatar + identity + status -->
-                    <div class="gc-card-top">
-                        <div class="gc-avatar-wrap">
-                            ${m.photoURL
-                                ? `<img class="gc-avatar" src="${escapeHtml(m.photoURL)}" alt="">`
-                                : `<div class="gc-avatar-initials">${initial}</div>`}
-                            ${activeToday ? '<span class="gc-status-dot active-today"></span>' : ''}
-                            ${isLagging && !activeToday ? '<span class="gc-status-dot lagging"></span>' : ''}
-                        </div>
-                        <div class="gc-card-identity">
-                            <div class="gc-member-name">
-                                ${escapeHtml(m.displayName || 'Unknown')}
-                                ${isMe ? '<span class="gc-you-badge">you</span>' : ''}
-                                ${isLeader ? '<span class="gc-leader-badge">👑</span>' : ''}
-                            </div>
-                            <div class="gc-member-meta">Lv ${m.level || 1} · ${statusLabel}</div>
-                        </div>
-                        <div class="gc-card-status">
-                            ${allDone ? '<span class="gc-done-chip">✓ All done</span>' : ''}
-                            ${isLagging && !allDone ? '<span class="gc-lagging-chip">⚠ Inactive</span>' : ''}
-                        </div>
-                    </div>
-
-                    <!-- Nomination rows -->
-                    ${hasNoms
-                        ? `<div class="gc-noms">${nomRows}</div>`
-                        : `<div class="gc-no-noms">No challenges nominated yet</div>`}
-
-                    <!-- Actions -->
-                    <div class="gc-card-actions">
-                        ${isMe && noms.length < GC_MAX_NOMS ? `<button class="gc-nominate-btn" onclick="openGroupNominateModal()">＋ Add Challenge</button>` : ''}
-                        ${isMe && hasNoms ? `<button class="gc-edit-btn" onclick="openGroupNominateModal()">Manage</button>` : ''}
-                        ${isCreator && !isMe ? `<button class="gc-remove-btn" onclick="gcRemoveMember('${group.id}','${m.uid}')">Remove</button>` : ''}
-                    </div>
-                </div>`;
-        }
-
-        // ── Create / Edit Group ───────────────────────────────────────────
-
-        let _gcEditingGroupId = null;
-
-        window.openCreateGroupModal = function() {
-            _gcEditingGroupId = null;
-            document.getElementById('groupCreateModalTitle').textContent = 'Create Group Challenge';
-            document.getElementById('groupCreateSubmitBtn').textContent  = 'Create Group Challenge';
-            document.getElementById('groupCreateForm').reset();
-            const today = localToday();
-            const end   = new Date(); end.setMonth(end.getMonth() + 3);
-            document.getElementById('groupStartDate').value = today;
-            document.getElementById('groupEndDate').value   = toLocalDateStr(end);
-            document.getElementById('groupCreateModal').classList.add('active');
-        };
-
-        window.openEditGroupModal = async function() {
-            const groupId = gcGetActiveGroupId();
-            if (!groupId) return;
-            try {
-                const snap = await getDoc(doc(db, GC_COL, groupId));
-                if (!snap.exists()) return;
-                const g = snap.data();
-                _gcEditingGroupId = groupId;
-                document.getElementById('groupCreateModalTitle').textContent = 'Edit Group Challenge';
-                document.getElementById('groupCreateSubmitBtn').textContent  = 'Save Changes';
-                document.getElementById('groupName').value        = g.name || '';
-                document.getElementById('groupDescription').value = g.description || '';
-                document.getElementById('groupStartDate').value   = g.startDate || '';
-                document.getElementById('groupEndDate').value     = g.endDate   || '';
-                document.getElementById('groupCreateModal').classList.add('active');
-            } catch(e) { showToast('Failed to load group details.', 'red'); }
-        };
-
-        window.closeGroupCreateModal = function() {
-            document.getElementById('groupCreateModal').classList.remove('active');
-        };
-
-        window.saveGroupChallenge = async function(event) {
-            event.preventDefault();
-            const myUID = window.currentUser?.uid;
-            if (!myUID) return;
-            const name        = document.getElementById('groupName').value.trim();
-            const description = document.getElementById('groupDescription').value.trim();
-            const startDate   = document.getElementById('groupStartDate').value;
-            const endDate     = document.getElementById('groupEndDate').value;
-            if (!name || !startDate || !endDate) return;
-            if (endDate <= startDate) { alert('End date must be after start date.'); return; }
-
-            try {
-                if (_gcEditingGroupId) {
-                    await updateDoc(doc(db, GC_COL, _gcEditingGroupId), { name, description, startDate, endDate });
-                    showToast('Group challenge updated.', 'blue');
-                } else {
-                    if (gcGetActiveGroupId()) { alert('You are already in an active group challenge. Exit it first.'); return; }
-                    const inviteCode = gcGenerateCode();
-                    const user = window.currentUser;
-                    const me = {
-                        uid:         myUID,
-                        displayName: (window.userData.profile?.username) || user.displayName || 'Unknown',
-                        photoURL:    user.photoURL || null,
-                        level:       window.userData.level || 1,
-                        status:      'active',
-                        joinedAt:    new Date().toISOString(),
-                        nominations: [],
-                        lastActiveDate: null,
-                        // legacy fields kept for compat
-                        nominatedChallengeId: null, nominatedChallengeName: null,
-                        challengeTarget: 0, challengeCurrent: 0, challengeStatus: null,
-                    };
-                    const groupDoc = {
-                        name, description, startDate, endDate,
-                        creatorUid: myUID, status: 'active', inviteCode,
-                        createdAt: new Date().toISOString(),
-                        members: { [myUID]: me },
-                    };
-                    const ref = await addDoc(collection(db, GC_COL), groupDoc);
-                    await setDoc(doc(db, GC_CODES, inviteCode), { groupId: ref.id, createdAt: new Date().toISOString() });
-                    window.userData.activeGroupChallengeId = ref.id;
-                    await saveUserData();
-                    showToast('🏆 Group challenge created!', 'blue');
-                }
-                closeGroupCreateModal();
-                renderGroupChallengeTab();
-            } catch(e) {
-                console.error('GC save error:', e);
-                showToast('Failed to save group challenge.', 'red');
-            }
-        };
-
-        // ── Delete Group (creator only) ───────────────────────────────────
-
-        window.gcDeleteGroupConfirm = function(groupId) {
-            if (!confirm('Delete this group challenge permanently? All members will be removed. This cannot be undone.')) return;
-            gcDeleteGroup(groupId);
-        };
-
-        window.gcDeleteGroup = async function(groupId) {
-            const myUID = window.currentUser?.uid;
-            try {
-                // Clear activeGroupChallengeId for all members (best effort)
-                const snap = await getDoc(doc(db, GC_COL, groupId));
-                if (snap.exists()) {
-                    const members = snap.data().members || {};
-                    // We can't batch-write other users' docs from the client, so we just delete the group doc.
-                    // Each user's stale activeGroupChallengeId will be cleaned up when they next load.
-                }
-                await deleteDoc(doc(db, GC_COL, groupId));
-                window.userData.activeGroupChallengeId = null;
-                await saveUserData();
-                showToast('Group challenge deleted.', 'olive');
-                renderGroupChallengeTab();
-            } catch(e) {
-                console.error('GC delete error:', e);
-                showToast('Failed to delete group.', 'red');
-            }
-        };
-
-        // ── Join by Code ──────────────────────────────────────────────────
-
-        window.openGroupJoinModal = function() {
-            document.getElementById('groupJoinCodeInput').value = '';
-            document.getElementById('groupJoinModal').classList.add('active');
-        };
-
-        window.closeGroupJoinModal = function() {
-            document.getElementById('groupJoinModal').classList.remove('active');
-        };
-
-        window.joinGroupByCode = async function() {
-            const code = (document.getElementById('groupJoinCodeInput').value || '').trim().toUpperCase();
-            if (code.length < 6) { alert('Please enter a valid 6-character invite code.'); return; }
-            if (gcGetActiveGroupId()) { alert('You are already in a group challenge. Exit it first.'); return; }
-            try {
-                const codeSnap = await getDoc(doc(db, GC_CODES, code));
-                if (!codeSnap.exists()) { alert('Invite code not found. Double-check and try again.'); return; }
-                await gcJoinGroup(codeSnap.data().groupId);
-                closeGroupJoinModal();
-            } catch(e) {
-                console.error('GC join error:', e);
-                showToast('Failed to join group.', 'red');
-            }
-        };
-
-        async function gcJoinGroup(groupId) {
-            const myUID = window.currentUser?.uid;
-            const user  = window.currentUser;
-            const groupSnap = await getDoc(doc(db, GC_COL, groupId));
-            if (!groupSnap.exists()) { showToast('Group not found.', 'red'); return; }
-            const group = groupSnap.data();
-            if (group.members?.[myUID]?.status === 'active') { showToast('You are already in this group.', 'blue'); return; }
-            const activeMembers = Object.values(group.members || {}).filter(m => m.status === 'active');
-            if (activeMembers.length >= 10) { alert('This group is full (max 10 members).'); return; }
-
-            const me = {
-                uid:         myUID,
-                displayName: (window.userData.profile?.username) || user.displayName || 'Unknown',
-                photoURL:    user.photoURL || null,
-                level:       window.userData.level || 1,
-                status:      'active',
-                joinedAt:    new Date().toISOString(),
-                nominations: [],
-                lastActiveDate: null,
-                nominatedChallengeId: null, nominatedChallengeName: null,
-                challengeTarget: 0, challengeCurrent: 0, challengeStatus: null,
-            };
-            try {
-                await updateDoc(doc(db, GC_COL, groupId), { [`members.${myUID}`]: me });
-            } catch(e) {
-                console.error('gcJoinGroup updateDoc failed:', e.code, e.message);
-                throw e;
-            }
-            window.userData.activeGroupChallengeId = groupId;
-            await saveUserData();
-            showToast('🏆 Joined group challenge!', 'blue');
-            renderGroupChallengeTab();
-        }
-
-        // ── Accept / Decline Invite ───────────────────────────────────────
-
-        window.gcAcceptInvite = async function(groupId, inviteDocId) {
-            if (gcGetActiveGroupId()) { alert('You are already in a group challenge. Exit it first to join this one.'); return; }
-            try {
-                await gcJoinGroup(groupId);
-                if (inviteDocId) {
-                    await updateDoc(doc(db, GC_INVITES, inviteDocId), { status: 'accepted' }).catch(e => console.warn('Could not mark invite accepted:', e.message));
-                }
-            } catch(e) {
-                console.error('gcAcceptInvite failed:', e.code, e.message);
-                showToast('Failed to accept invite.', 'red');
-            }
-        };
-
-        window.gcDeclineInvite = async function(inviteDocId, groupId) {
-            try {
-                if (inviteDocId) await updateDoc(doc(db, GC_INVITES, inviteDocId), { status: 'declined' });
-                showToast('Invite declined.', 'olive');
-                renderGroupChallengeTab();
-            } catch(e) { showToast('Failed to decline invite.', 'red'); }
-        };
-
-        // ── Nominate / Manage Challenges ──────────────────────────────────
-
-        window.openGroupNominateModal = async function() {
-            const myUID   = window.currentUser?.uid;
-            const groupId = gcGetActiveGroupId();
-            if (!groupId) return;
-
-            // Get current nominations from the group doc
-            let currentNoms = [];
-            try {
-                const snap = await getDoc(doc(db, GC_COL, groupId));
-                if (snap.exists()) currentNoms = gcNormaliseNominations(snap.data().members?.[myUID] || {});
-            } catch(e) {}
-
-            const activeChallenges = (window.userData.challenges || []).filter(c => c.status === 'active');
-            const nominatedIds     = currentNoms.map(n => n.challengeId);
-            const remaining        = GC_MAX_NOMS - currentNoms.length;
-
-            const list = document.getElementById('groupNominateList');
-
-            // Current nominations section
-            const currentSection = currentNoms.length > 0 ? `
-                <div class="gc-nom-section-title">Currently Nominated (${currentNoms.length}/${GC_MAX_NOMS})</div>
-                ${currentNoms.map(n => `
-                    <div class="gc-nominate-current">
-                        <div class="gc-nominate-current-name">${escapeHtml(n.challengeName)}</div>
-                        <button class="gc-nom-remove-btn" onclick="gcRemoveNomination('${n.challengeId}')">Remove</button>
-                    </div>`).join('')}
-                ${remaining > 0 ? `<div class="gc-nom-section-title" style="margin-top:14px;">Add Another (${remaining} slot${remaining > 1 ? 's' : ''} left)</div>` : ''}
-            ` : '';
-
-            // Available challenges to nominate
-            const available = activeChallenges.filter(c => !nominatedIds.includes(c.id));
-            const availableSection = remaining > 0 && available.length > 0 ? available.map(ch => {
-                const pct = ch.targetCount > 0 ? Math.min(100, Math.round((ch.currentCount / ch.targetCount) * 100)) : 0;
-                const metricLabel = ch.metricEnabled && ch.metricQty ? ` · 🎯 ${ch.metricQty} ${ch.metricUnit}` : '';
-                return `
-                    <div class="gc-nominate-item" onclick="gcNominateChallenge('${ch.id}')">
-                        <div>
-                            <div class="gc-nominate-item-name">${escapeHtml(ch.name)}</div>
-                            <div class="gc-nominate-item-progress">${pct}% done${metricLabel}</div>
-                        </div>
-                        <button class="gc-nominate-select-btn">＋ Add</button>
-                    </div>`;
-            }).join('') : remaining === 0 ? '<p style="color:var(--color-text-secondary);font-size:12px;margin-top:8px;">Max 3 challenges nominated. Remove one to add another.</p>'
-              : '<p style="color:var(--color-text-secondary);font-size:13px;">No other active challenges to add. Create one first.</p>';
-
-            list.innerHTML = currentSection + availableSection;
-            document.getElementById('groupNominateModal').classList.add('active');
-        };
-
-        window.closeGroupNominateModal = function() {
-            document.getElementById('groupNominateModal').classList.remove('active');
-        };
-
-        window.gcNominateChallenge = async function(challengeId) {
-            const myUID   = window.currentUser?.uid;
-            const groupId = gcGetActiveGroupId();
-            if (!myUID || !groupId) return;
-
-            const challenge = (window.userData.challenges || []).find(c => c.id === challengeId);
-            if (!challenge) return;
-
-            try {
-                const snap = await getDoc(doc(db, GC_COL, groupId));
-                if (!snap.exists()) return;
-                const member = snap.data().members?.[myUID] || {};
-                const currentNoms = gcNormaliseNominations(member);
-                if (currentNoms.length >= GC_MAX_NOMS) { showToast('Max 3 challenges reached.', 'red'); return; }
-                if (currentNoms.some(n => n.challengeId === challengeId)) { showToast('Already nominated.', 'blue'); return; }
-
-                const nom = {
-                    challengeId,
-                    challengeName:    challenge.name,
-                    challengeTarget:  challenge.targetCount || 0,
-                    challengeCurrent: challenge.currentCount || 0,
-                    challengeStatus:  challenge.status,
-                    metricEnabled:    !!(challenge.metricEnabled && challenge.metricQty),
-                    metricQty:        challenge.metricQty || null,
-                    metricUnit:       challenge.metricUnit || null,
-                    metricCurrent:    challenge.metricCurrent || 0,
-                };
-
-                const updatedNoms = [...currentNoms, nom];
-                await updateDoc(doc(db, GC_COL, groupId), {
-                    [`members.${myUID}.nominations`]:     updatedNoms,
-                    [`members.${myUID}.lastActiveDate`]:  null,
-                    // Keep legacy fields pointing to first nomination for compat
-                    [`members.${myUID}.nominatedChallengeId`]:   updatedNoms[0].challengeId,
-                    [`members.${myUID}.nominatedChallengeName`]: updatedNoms[0].challengeName,
-                });
-                showToast(`🎯 "${challenge.name}" added to group!`, 'blue');
-                closeGroupNominateModal();
-                renderGroupChallengeTab();
-            } catch(e) {
-                console.error('GC nominate error:', e);
-                showToast('Failed to nominate challenge.', 'red');
-            }
-        };
-
-        window.gcRemoveNomination = async function(challengeId) {
-            const myUID   = window.currentUser?.uid;
-            const groupId = gcGetActiveGroupId();
-            if (!myUID || !groupId) return;
-            try {
-                const snap = await getDoc(doc(db, GC_COL, groupId));
-                if (!snap.exists()) return;
-                const member  = snap.data().members?.[myUID] || {};
-                const updated = gcNormaliseNominations(member).filter(n => n.challengeId !== challengeId);
-                await updateDoc(doc(db, GC_COL, groupId), {
-                    [`members.${myUID}.nominations`]:          updated,
-                    [`members.${myUID}.nominatedChallengeId`]: updated[0]?.challengeId || null,
-                    [`members.${myUID}.nominatedChallengeName`]: updated[0]?.challengeName || null,
-                });
-                showToast('Challenge removed from group.', 'olive');
-                openGroupNominateModal(); // Refresh modal
-            } catch(e) { showToast('Failed to remove nomination.', 'red'); }
-        };
-
-        // ── Progress Sync ─────────────────────────────────────────────────
-
-        window.gcSyncProgress = async function() {
-            const myUID   = window.currentUser?.uid;
-            const groupId = gcGetActiveGroupId();
-            if (!myUID || !groupId) return;
-
-            try {
-                const groupSnap = await getDoc(doc(db, GC_COL, groupId));
-                if (!groupSnap.exists()) return;
-                const member = groupSnap.data().members?.[myUID];
-                if (!member) return;
-
-                const noms = gcNormaliseNominations(member);
-                if (noms.length === 0) return;
-
-                const today = localToday();
-                // Update each nomination from local challenge data
-                const updatedNoms = noms.map(n => {
-                    const ch = (window.userData.challenges || []).find(c => c.id === n.challengeId);
-                    if (!ch) return n;
-                    return {
-                        ...n,
-                        challengeTarget:  ch.targetCount  || 0,
-                        challengeCurrent: ch.currentCount || 0,
-                        challengeStatus:  ch.status,
-                        metricEnabled:    !!(ch.metricEnabled && ch.metricQty),
-                        metricQty:        ch.metricQty     || null,
-                        metricUnit:       ch.metricUnit    || null,
-                        metricCurrent:    ch.metricCurrent || 0,
-                    };
-                });
-
-                // Only mark active today if a nominated challenge actually progressed
-                const progressMade = updatedNoms.some((n, i) =>
-                    (n.challengeCurrent > (noms[i]?.challengeCurrent || 0)) ||
-                    (n.metricCurrent    > (noms[i]?.metricCurrent    || 0))
-                );
-
-                await updateDoc(doc(db, GC_COL, groupId), {
-                    [`members.${myUID}.nominations`]: updatedNoms,
-                    [`members.${myUID}.level`]:       window.userData.level || 1,
-                    // Only stamp lastActiveDate when challenge-linked work happened
-                    ...(progressMade ? { [`members.${myUID}.lastActiveDate`]: today } : {}),
-                    // Legacy compat
-                    [`members.${myUID}.challengeTarget`]:  updatedNoms[0]?.challengeTarget  || 0,
-                    [`members.${myUID}.challengeCurrent`]: updatedNoms[0]?.challengeCurrent || 0,
-                    [`members.${myUID}.challengeStatus`]:  updatedNoms[0]?.challengeStatus  || null,
-                });
-            } catch(e) { console.warn('GC sync failed (non-critical):', e); }
-        };
-
-        // Hook saveChallenge to re-sync group progress
-        const _gcOrigSaveChallenge = window.saveChallenge;
-        window.saveChallenge = async function(event) {
-            await _gcOrigSaveChallenge(event);
-            gcSyncProgress().catch(() => {});
-        };
-
-        // ── Exit Group (with auto-promote leader) ─────────────────────────
-
-        window.gcConfirmExit = function(groupId) {
-            if (!confirm('Exit this group challenge? Your progress stays visible to the group but you will be removed.')) return;
-            gcExitGroup(groupId);
-        };
-
-        window.gcExitGroup = async function(groupId) {
-            const myUID = window.currentUser?.uid;
-            if (!myUID) return;
-            try {
-                const snap = await getDoc(doc(db, GC_COL, groupId));
-                if (!snap.exists()) return;
-                const group = snap.data();
-                const activeMembers = Object.values(group.members || {}).filter(m => m.status === 'active');
-
-                // If last member — delete the whole group
-                if (activeMembers.length <= 1) {
-                    await deleteDoc(doc(db, GC_COL, groupId));
-                    window.userData.activeGroupChallengeId = null;
-                    await saveUserData();
-                    showToast('Group deleted — you were the last member.', 'olive');
-                    renderGroupChallengeTab();
-                    return;
-                }
-
-                const updates = { [`members.${myUID}.status`]: 'exited' };
-
-                // Auto-promote earliest other member if exiting leader
-                if (group.creatorUid === myUID) {
-                    const others = activeMembers.filter(m => m.uid !== myUID)
-                        .sort((a, b) => new Date(a.joinedAt) - new Date(b.joinedAt));
-                    if (others.length > 0) {
-                        updates.creatorUid = others[0].uid;
-                        showToast(`👑 ${others[0].displayName || 'Next member'} is the new group leader.`, 'blue');
-                    }
-                }
-
-                await updateDoc(doc(db, GC_COL, groupId), updates);
-                window.userData.activeGroupChallengeId = null;
-                await saveUserData();
-                showToast('You have exited the group challenge.', 'olive');
-                renderGroupChallengeTab();
-            } catch(e) {
-                console.error('GC exit error:', e);
-                showToast('Failed to exit group.', 'red');
-            }
-        };
-
-        // ── Remove Member (creator only) ──────────────────────────────────
-
-        window.gcRemoveMember = async function(groupId, uid) {
-            if (!confirm('Remove this member from the group?')) return;
-            try {
-                await updateDoc(doc(db, GC_COL, groupId), { [`members.${uid}.status`]: 'exited' });
-                showToast('Member removed.', 'olive');
-                renderGroupChallengeTab();
-            } catch(e) { showToast('Failed to remove member.', 'red'); }
-        };
-
-        // ── Invite Members Modal ──────────────────────────────────────────
-
-        window.openGroupInviteModal = async function(groupId) {
-            const snap = await getDoc(doc(db, GC_COL, groupId)).catch(() => null);
-            if (!snap?.exists()) return;
-            const group   = snap.data();
-            const myUID   = window.currentUser?.uid;
-            const friends = window.userData.friends || [];
-
-            document.getElementById('inviteModalCode').textContent = group.inviteCode || '———';
-            window._gcInviteModalGroupId   = groupId;
-            window._gcInviteModalGroupName = group.name;
-            window._gcInviteModalCode      = group.inviteCode;
-
-            const friendList = document.getElementById('groupInviteFriendsList');
-            if (friends.length === 0) {
-                friendList.innerHTML = '<p style="color:var(--color-text-secondary);font-size:13px;">No friends yet. Share the invite code instead.</p>';
-            } else {
-                const rows = await Promise.all(friends.map(async uid => {
-                    const alreadyMember = group.members?.[uid]?.status === 'active';
-                    try {
-                        const pSnap = await getDoc(doc(db, 'publicProfiles', uid));
-                        const name  = pSnap.exists() ? (pSnap.data().displayName || uid) : uid;
-                        return { uid, name, alreadyMember };
-                    } catch(e) { return { uid, name: uid, alreadyMember }; }
-                }));
-                friendList.innerHTML = rows.map(r => `
-                    <div class="gc-friend-invite-row">
-                        <span class="gc-friend-invite-name">${escapeHtml(r.name)}</span>
-                        ${r.alreadyMember
-                            ? `<button class="gc-friend-invite-btn sent">In Group</button>`
-                            : `<button class="gc-friend-invite-btn" onclick="gcSendInvite('${r.uid}','${r.name}')">Invite</button>`}
-                    </div>`).join('');
-            }
-            document.getElementById('groupInviteModal').classList.add('active');
-        };
-
-        window.closeGroupInviteModal = function() {
-            document.getElementById('groupInviteModal').classList.remove('active');
-        };
-
-        window.gcSendInvite = async function(inviteeUid, inviteeName) {
-            const myUID     = window.currentUser?.uid;
-            const groupId   = window._gcInviteModalGroupId;
-            const groupName = window._gcInviteModalGroupName;
-            if (!myUID || !groupId) return;
-            const senderName = (window.userData.profile?.username) || window.currentUser.displayName || 'Someone';
-            // Deterministic doc ID: one invite per (group, inviter, invitee) — prevents duplicates
-            const inviteDocId = `${groupId}_${myUID}_${inviteeUid}`;
-            try {
-                await setDoc(doc(db, GC_INVITES, inviteDocId), {
-                    groupId, groupName,
-                    inviterUid: myUID, inviterName: senderName,
-                    inviteeUid, status: 'pending',
-                    createdAt: new Date().toISOString(),
-                }, { merge: true }); // merge:true so re-invite resets status to pending if previously declined
-                showToast(`Invite sent to ${inviteeName}!`, 'blue');
-                openGroupInviteModal(groupId);
-            } catch(e) { showToast('Failed to send invite.', 'red'); }
-        };
-
-        window.copyGroupCodeFromModal = function() { gcCopyCode(window._gcInviteModalCode || ''); };
-        window.shareGroupLinkFromModal = function() { gcShareLink(window._gcInviteModalCode || ''); };
-
-        window.gcCopyCode = function(code) {
-            if (!code) return;
-            navigator.clipboard.writeText(code)
-                .then(() => showToast(`Code ${code} copied!`, 'blue'))
-                .catch(() => showToast(code, 'blue'));
-        };
-
-        window.gcShareLink = function(code) {
-            const url = `${window.location.origin}${window.location.pathname}?joinGroup=${code}`;
-            navigator.clipboard.writeText(url)
-                .then(() => showToast('Invite link copied!', 'blue'))
-                .catch(() => showToast(url, 'blue'));
-        };
-
-        // ── SubTab hook ───────────────────────────────────────────────────
-
-        (function() {
-            const _orig = window.switchSubTab;
-            window.switchSubTab = function(parentTab, subTab) {
-                _orig(parentTab, subTab);
-                if (parentTab === 'challenges' && subTab === 'groupChallenge') renderGroupChallengeTab();
-            };
-        })();
-
-        // ── Hook activity completion → sync group progress ────────────────
-
-        (function() {
-            const _origComplete = window.completeActivity;
-            if (typeof _origComplete === 'function') {
-                window.completeActivity = async function(...args) {
-                    await _origComplete(...args);
-                    gcSyncProgress().catch(() => {});
-                };
-            }
-        })();
-
-        // ── Deep link ─────────────────────────────────────────────────────
-
-        function handleGroupDeepLink() {
-            try {
-                const params = new URLSearchParams(window.location.search);
-                if (params.get('joinGroup')) {
-                    switchTab('challenges');
-                    setTimeout(() => switchSubTab('challenges', 'groupChallenge'), 300);
-                }
-            } catch(e) {}
         }
 
         // ════════════════════════════════════════════════════════════════════
@@ -21780,9 +19745,10 @@
         // ══ VERSUS CHALLENGES ═══════════════════════════════════════════════
         // ════════════════════════════════════════════════════════════════════
         //
-        // A wagered two-player contest built on top of the existing Challenges
-        // surface. Solo challenges (window.userData.challenges) are untouched
-        // and keep their own code path — nothing below reads or writes them.
+        // A wagered two-player contest, and the whole of the Challenges tab.
+        // The solo and group challenge features that used to share this tab
+        // are gone; `window.userData.challenges` survives only as an inert
+        // field on accounts that had them, and nothing reads it.
         //
         // Placement: a TOP-LEVEL `challenges` collection. Two accounts read and
         // write the same document; a document under users/{uid} could not be
@@ -23852,17 +21818,9 @@
             };
         })();
 
-        // Sub-tab render
-        (function () {
-            var _orig = window.switchSubTab;
-            window.switchSubTab = function (parentTab, subTab) {
-                _orig(parentTab, subTab);
-                if (parentTab === 'challenges' && subTab !== 'versus') vsDetachDetail();
-                if (parentTab === 'challenges' && subTab === 'versus') vsRenderTab();
-            };
-        })();
-
-        // Leaving the Challenges tab drops the detail listener (§5).
+        // Versus is now the whole Challenges tab — there are no sub-tabs left
+        // to switch between, so the tab itself is the render trigger. Leaving
+        // it drops the detail listener (§5).
         (function () {
             var _orig = window.switchTab;
             if (typeof _orig !== 'function') return;

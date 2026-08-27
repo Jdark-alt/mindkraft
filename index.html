@@ -362,7 +362,7 @@
                     </div>
                 </div>
                 <h2 class="ob-title">Consistency compounds</h2>
-                <p class="ob-body">Daily wins build streaks. Earn <strong>shields</strong> to protect your off-days. Take on <strong>Challenges</strong> to sharpen your edge. This is how character is built — one tap at a time.</p>
+                <p class="ob-body">Daily wins build streaks. Earn <strong>shields</strong> to protect your off-days. Stake Grit on a <strong>Versus</strong> challenge to sharpen your edge. This is how character is built — one tap at a time.</p>
             </div>
 
         </div>
@@ -696,7 +696,7 @@
                 <div class="mk-ledger-subs">
                     <button type="button" class="mk-ledger-sub" onclick="mkGoSub(0,0)">Friends</button>
                     <button type="button" class="mk-ledger-sub" onclick="mkGoSub(0,1)">Leaderboard</button>
-                    <button type="button" class="mk-ledger-sub" onclick="mkGoSub(0,2)">Challenges</button>
+                    <button type="button" class="mk-ledger-sub" onclick="mkGoSub(0,2)">Versus</button>
                 </div>
             </div>
             <div class="mk-ledger-band" id="mkLedgerBand1">
@@ -743,7 +743,7 @@
                 <span class="mk-spine-divider"></span>
                 <button type="button" class="mk-spine-sub" onclick="mkGoSub(0,0)">Friends</button>
                 <button type="button" class="mk-spine-sub" onclick="mkGoSub(0,1)">Leaderboard</button>
-                <button type="button" class="mk-spine-sub" onclick="mkGoSub(0,2)">Challenges</button>
+                <button type="button" class="mk-spine-sub" onclick="mkGoSub(0,2)">Versus</button>
             </div>
 
             <button type="button" class="mk-spine-tab" id="mkSpineTab1" onclick="mkGo(1)" title="Pursuits">
@@ -855,8 +855,7 @@
             </div>
 
             <!-- ══ Per-page title (v5 nav). The strip above carries the section
-                 you are in; this carries the page's own name. Mobile-only, and
-                 suppressed on Challenges, which keeps its own sub-tab row. ══ -->
+                 you are in; this carries the page's own name. Mobile-only. ══ -->
             <div class="mk-page-heading" id="mkPageHeading">
                 <h1 class="mk-page-heading-title" id="mkPageHeadingTitle">My Activities</h1>
                 <span class="mk-page-actions-lead" id="mkPageActionsLead"></span>
@@ -980,43 +979,11 @@
                 </div>
             </div>
 
-            <!-- Challenges Tab -->
+            <!-- Challenges Tab — Versus, and nothing else. Solo and group
+                 challenges are gone, so the sub-tab row went with them; the
+                 whole tab is rendered by vsRenderTab() in app.js. -->
             <div id="challengesTab" class="tab-content">
-                <!-- Sub-tab pills -->
-                <div class="sub-tabs" id="challengesSubTabs">
-                    <button class="sub-tab active" onclick="switchSubTab('challenges','myChallenges')">My Challenges</button>
-                    <button class="sub-tab" id="vsSubTabBtn" onclick="switchSubTab('challenges','versus')">Versus</button>
-                    <button class="sub-tab" onclick="switchSubTab('challenges','groupChallenge')">Group Challenge</button>
-                </div>
-
-                <!-- My Challenges sub-tab -->
-                <div id="challengesSubMyChallenges" class="sub-tab-content">
-                    <!-- Toolbar: info button + Create. No page header; the
-                         sub-tab nav above already says "My Challenges". -->
-                    <div class="act-toolbar ch-toolbar">
-                        <div class="tool-cluster">
-                            <button class="act-tb-btn" onclick="openChallengesInfo()" aria-label="What are challenges?" title="What are challenges?">
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-                            </button>
-                        </div>
-                        <button class="act-tb-add-main" onclick="openChallengeModal()" title="Create challenge">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                            Create Challenge
-                        </button>
-                    </div>
-
-                    <div id="challengesContainer"></div>
-                </div>
-
-                <!-- Versus sub-tab — rendered by vsRenderTab() in app.js -->
-                <div id="challengesSubVersus" class="sub-tab-content" style="display:none;">
-                    <div id="versusContent"></div>
-                </div>
-
-                <!-- Group Challenge sub-tab -->
-                <div id="challengesSubGroupChallenge" class="sub-tab-content" style="display:none;">
-                    <div id="groupChallengeContent"></div>
-                </div>
+                <div id="versusContent"></div>
             </div>
 
             <!-- Quests (Projects) Tab -->
@@ -1369,7 +1336,7 @@
                     </button>
                     <div class="guide-section-body" id="guideBody">
 
-                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Getting Started</div><div class="guide-inner-body">When you first open Mindkraft, a short tour walks you through the core idea. You then choose: <strong>Quick Start</strong> — creates 3 ready-made activities and 2 challenges — or <strong>Build My Own</strong> to start from scratch. Either way, you can edit or delete everything later. Your progress saves to the cloud every time you complete an activity.</div></div>
+                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Getting Started</div><div class="guide-inner-body">When you first open Mindkraft, a short tour walks you through the core idea. You then choose: <strong>Quick Start</strong> — creates a set of ready-made activities — or <strong>Build My Own</strong> to start from scratch. Either way, you can edit or delete everything later. Your progress saves to the cloud every time you complete an activity.</div></div>
 
                         <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>Dimensions → Paths → Activities</div><div class="guide-inner-body">Everything is organised in three layers. <strong>Dimensions</strong> are big life areas (e.g. Health, Career). Inside each, <strong>Paths</strong> are specific approaches (e.g. Morning Fitness). Inside each Path, <strong>Activities</strong> are the concrete daily actions that earn XP (e.g. Run 5km). Create these in <strong>My Activities</strong> using the + button.</div></div>
 
@@ -1385,7 +1352,7 @@
 
                         <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>Levelling &amp; Dimensions</div><div class="guide-inner-body">You have a <strong>global level</strong> plus a separate level per <strong>Dimension</strong>. Levelling speed uses the formula <strong>round(k × (2L − 1))</strong> — adjust k in Level Scaling. Dimension levels unlock cosmetic rewards. Negative XP can drain within a level but can never de-level you.</div></div>
 
-                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2z"/></svg>Challenges</div><div class="guide-inner-body"><strong>Personal Challenges</strong> are time-boxed goals with bonus XP on completion. <strong>Group Challenges</strong> let a group each nominate a personal challenge to contribute — a shared leaderboard tracks everyone's progress. Completed challenges can be taken again.</div></div>
+                        <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2z"/></svg>Challenges</div><div class="guide-inner-body"><strong>Versus</strong> is a head-to-head wager with a friend. Both of you stake Grit into a pot, agree on which activities count and how many times, and the first to finish takes the whole pot plus bonus XP. Decline or let an invite expire and every stake goes home.</div></div>
 
                         <div class="guide-inner-card"><div class="guide-inner-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Friends &amp; Social</div><div class="guide-inner-body">Add friends in the <strong>Friends</strong> tab using their <strong>MK-XXXX code</strong> (find yours in the Add Friend section). View their level, spider chart, and top activities. Share your progress with a <strong>Share Card</strong> on level up.</div></div>
 
@@ -2049,7 +2016,7 @@
                 </button>
             </div>
             <div class="modal-body pl-modal-body">
-                <p class="pr-info-lead">An <strong>Activity</strong> is one repeatable action. A <strong>Challenge</strong> is a time-boxed bet. A <strong>Quest</strong> is a structured body of work built from <strong>groups</strong> you move through — checklists, sequences, or repeating pipelines — <em>“where is this, and what’s next?”</em></p>
+                <p class="pr-info-lead">An <strong>Activity</strong> is one repeatable action. A <strong>Versus</strong> challenge is a wager against a friend. A <strong>Quest</strong> is a structured body of work built from <strong>groups</strong> you move through — checklists, sequences, or repeating pipelines — <em>“where is this, and what’s next?”</em></p>
                 <div class="pr-info-example">
                     <div class="pr-info-example-title">Example — a YouTube channel</div>
                     <div class="pr-info-pipe">
@@ -2198,75 +2165,6 @@
         </div>
     </div>
 
-    <!-- Challenges Info Modal — explains what challenges are -->
-    <div id="challengesInfoModal" class="modal-overlay">
-        <div class="modal pl-modal">
-            <div class="modal-header pl-modal-header">
-                <div>
-                    <div class="pl-modal-eyebrow">How challenges work</div>
-                    <h3 class="modal-title">Challenges &amp; Bonus XP</h3>
-                </div>
-                <button class="pl-modal-close" type="button" onclick="closeChallengesInfo()" aria-label="Close">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                </button>
-            </div>
-            <div class="modal-body pl-modal-body">
-                <!-- Visual: a mini-challenge card showing the anatomy -->
-                <div class="ch-info-graphic" aria-hidden="true">
-                    <div class="ch-info-mock">
-                        <div class="ch-info-mock-title">30-Day Run Streak</div>
-                        <div class="ch-info-mock-meta">+150 XP · 18 days left · 2 activities</div>
-                        <div class="ch-info-mock-bar-row">
-                            <span class="ch-info-mock-count">12<span class="ch-info-mock-total">/30</span></span>
-                            <span class="ch-info-mock-pct">40%</span>
-                        </div>
-                        <div class="ch-info-mock-bar">
-                            <div class="ch-info-mock-bar-fill" style="width:40%;"></div>
-                        </div>
-                    </div>
-                    <div class="ch-info-arrows">
-                        <span class="ch-info-arrow">↑ name</span>
-                        <span class="ch-info-arrow ch-info-arrow-2">↑ bonus, time left, activities</span>
-                        <span class="ch-info-arrow ch-info-arrow-3">↑ progress · ↑ percent</span>
-                    </div>
-                </div>
-
-                <div class="ay-info-row">
-                    <div class="ay-info-dot ay-info-dot-xp"></div>
-                    <div class="ay-info-text">
-                        <div class="ay-info-name">Time-boxed goal</div>
-                        <div class="ay-info-desc">Pick a window and a target — "Read every day for 30 days", "Run 50 km this month". Hit it, claim bonus XP.</div>
-                    </div>
-                </div>
-                <div class="ay-info-row">
-                    <div class="ay-info-dot ay-info-dot-freq"></div>
-                    <div class="ay-info-text">
-                        <div class="ay-info-name">Two ways to track</div>
-                        <div class="ay-info-desc">Track by <strong>activity completions</strong> (do this 20 times) or by a <strong>real-world metric</strong> (run 50 km). Mix both if you want.</div>
-                    </div>
-                </div>
-                <div class="ay-info-row">
-                    <div class="ay-info-dot ay-info-dot-streak"></div>
-                    <div class="ay-info-text">
-                        <div class="ay-info-name">Bonus XP on completion</div>
-                        <div class="ay-info-desc">Tap <strong>Complete</strong> when you've hit the goal. Completed challenges can be taken again with one tap.</div>
-                    </div>
-                </div>
-                <div class="ay-info-row">
-                    <div class="ay-info-dot ay-info-dot-adv"></div>
-                    <div class="ay-info-text">
-                        <div class="ay-info-name">Group challenges</div>
-                        <div class="ay-info-desc">Switch to the <strong>Group Challenge</strong> tab to team up — everyone nominates their own challenge, all share one leaderboard.</div>
-                    </div>
-                </div>
-                <p class="ay-info-foot">Start small. One challenge at a time builds the habit of finishing.</p>
-            </div>
-            <div class="modal-footer pl-modal-footer">
-                <button type="button" class="btn-primary pl-btn-primary" onclick="closeChallengesInfo()">Got it</button>
-            </div>
-        </div>
-    </div>
-
     <!-- Categories Search Overlay — same shell as activitySearchOverlay but the
          action button is "Go to" (scrolls + highlights) instead of "Do/Undo".
          Lives separately so we don't fight over the same modal element. -->
@@ -2342,141 +2240,6 @@
                     <button type="button" class="btn-secondary pl-btn-secondary" onclick="closeGroupModal()">Cancel</button>
                     <button type="button" id="groupDeleteBtn" class="btn-secondary pl-btn-secondary pl-btn-danger group-delete-btn" onclick="deleteGroupFromModal()" style="display:none;">Delete</button>
                     <button type="submit" class="btn-primary pl-btn-primary">Save</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- Challenge Modal -->
-    <!-- Challenge Modal — pl-modal pattern -->
-    <div id="challengeModal" class="modal-overlay">
-        <div class="modal pl-modal ch-modal">
-            <div class="modal-header pl-modal-header">
-                <div>
-                    <div class="pl-modal-eyebrow">Challenge</div>
-                    <h3 class="modal-title" id="challengeModalTitle">Create Challenge</h3>
-                </div>
-                <button class="pl-modal-close" type="button" onclick="closeChallengeModal()" aria-label="Close">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                </button>
-            </div>
-            <form id="challengeForm" onsubmit="saveChallenge(event)">
-                <div class="modal-body pl-modal-body ay-modal-body">
-
-                    <!-- Name -->
-                    <div class="ay-field">
-                        <label class="pl-field-label" for="challengeName">Challenge Name</label>
-                        <input type="text" id="challengeName" class="pl-input" placeholder="e.g., 30-Day Fitness Challenge" required>
-                    </div>
-
-                    <!-- Description -->
-                    <div class="ay-field">
-                        <label class="pl-field-label" for="challengeDescription">Description</label>
-                        <textarea id="challengeDescription" class="pl-input ay-textarea" rows="2" placeholder="What is this challenge about?"></textarea>
-                    </div>
-
-                    <!-- Dates -->
-                    <div class="ay-field-row">
-                        <div class="ay-field">
-                            <label class="pl-field-label" for="challengeStartDate">Start date</label>
-                            <input type="date" id="challengeStartDate" class="pl-input" required>
-                        </div>
-                        <div class="ay-field">
-                            <label class="pl-field-label" for="challengeEndDate">End date</label>
-                            <input type="date" id="challengeEndDate" class="pl-input" required>
-                        </div>
-                    </div>
-
-                    <!-- Enforce date range — toggle with explanation below -->
-                    <input type="checkbox" id="challengeEnforceDateRange" style="display:none;">
-                    <div class="ay-toggle-row">
-                        <div class="ay-toggle-text">
-                            <span class="ay-toggle-title">Enforce date range</span>
-                            <span class="ay-toggle-sub">Auto-fail if the end date passes without completion</span>
-                        </div>
-                        <label class="toggle-switch ay-toggle-switch">
-                            <input type="checkbox" id="challengeEnforceDateRangeProxy" onchange="setChallengeEnforceDateRange(this.checked)">
-                            <span class="toggle-knob"></span>
-                        </label>
-                    </div>
-
-                    <!-- Activities picker -->
-                    <div class="ay-field" id="challengeActivitySelectGroup">
-                        <label class="pl-field-label">Activities</label>
-
-                        <!-- Selected pills summary -->
-                        <div id="challengeSelectedSummary" style="display:none; margin-bottom:8px;">
-                            <div id="challengeSelectedPills" class="ch-pills"></div>
-                        </div>
-
-                        <!-- Picker toggle button -->
-                        <button type="button" class="ch-picker-toggle" id="challengePickerToggle" onclick="toggleChallengeActivityPicker()">
-                            <span id="challengePickerToggleLabel">＋ Select activities</span>
-                            <span id="challengePickerToggleCount" class="ch-picker-count" style="display:none;"></span>
-                        </button>
-
-                        <!-- Searchable picker panel -->
-                        <div id="challengeActivityPicker" style="display:none;" class="ch-picker-panel">
-                            <input type="text" id="challengeActivitySearch" class="ch-search-input" placeholder="Search activities…" oninput="filterChallengeActivities(this.value)">
-                            <div id="challengeActivityChecklist" class="ch-checklist"></div>
-                            <p id="challengeActivityChecklistEmpty" style="display:none; color:var(--color-text-secondary); font-size:12px; padding:8px 4px;">No activities found. Create activities first.</p>
-                        </div>
-
-                        <!-- XP preview -->
-                        <div id="challengeXPPreview" class="ch-xp-preview" style="display:none;">
-                            <span style="color:var(--color-text-secondary);">Completion bonus:</span>
-                            <strong id="challengeXPPreviewValue" style="color:var(--color-progress);">+0 XP</strong>
-                            <span style="color:var(--color-text-secondary); font-size:11px;">(20% of total activity base XP)</span>
-                        </div>
-                    </div>
-
-                    <!-- Enforce completion -->
-                    <input type="checkbox" id="challengeEnforceActivities" style="display:none;">
-                    <div class="ay-toggle-row">
-                        <div class="ay-toggle-text">
-                            <span class="ay-toggle-title">Enforce completion</span>
-                            <span class="ay-toggle-sub">Bonus XP is locked until every activity target is met</span>
-                        </div>
-                        <label class="toggle-switch ay-toggle-switch">
-                            <input type="checkbox" id="challengeEnforceActivitiesProxy" onchange="setChallengeEnforceActivities(this.checked)">
-                            <span class="toggle-knob"></span>
-                        </label>
-                    </div>
-
-                    <!-- Real-world goal (optional) — toggle + inset panel -->
-                    <input type="hidden" id="challengeMetricEnabled" value="0">
-                    <div class="ay-toggle-row">
-                        <div class="ay-toggle-text">
-                            <span class="ay-toggle-title">Track a real-world goal</span>
-                            <span class="ay-toggle-sub">Add a measurable target — kg, pages, km — in addition to activity counts</span>
-                        </div>
-                        <label class="toggle-switch ay-toggle-switch">
-                            <input type="checkbox" id="challengeMetricEnabledProxy" onchange="setChallengeMetricEnabled(this.checked)">
-                            <span class="toggle-knob"></span>
-                        </label>
-                    </div>
-
-                    <div id="challengeMetricGroup" class="ay-inset ay-inset-tight" style="display:none;">
-                        <div class="ay-inset-header">
-                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
-                            <span>Set your target</span>
-                        </div>
-                        <div class="ay-field-row">
-                            <div class="ay-field">
-                                <label class="pl-field-label" for="challengeMetricQty">Target quantity</label>
-                                <input type="number" id="challengeMetricQty" class="pl-input" placeholder="e.g. 10" min="0.01" step="any">
-                            </div>
-                            <div class="ay-field">
-                                <label class="pl-field-label" for="challengeMetricUnit">Unit</label>
-                                <input type="text" id="challengeMetricUnit" class="pl-input" placeholder="e.g. kg, pages">
-                            </div>
-                        </div>
-                        <p class="ay-hint">Examples: 10 kg (weight loss) · 250 pages (book) · 50 km (running)</p>
-                    </div>
-                </div>
-                <div class="modal-footer pl-modal-footer">
-                    <button type="button" class="btn-secondary pl-btn-secondary" onclick="closeChallengeModal()">Cancel</button>
-                    <button type="submit" class="btn-primary pl-btn-primary" id="challengeSubmitBtn">Create Challenge</button>
                 </div>
             </form>
         </div>
@@ -3066,7 +2829,7 @@
             { key: 'social', name: 'Social', subs: [
                 { label: 'Friends',      kind: 'legacy',    tab: 'people' },
                 { label: 'Leaderboards', kind: 'legacy',    tab: 'friends' },
-                { label: 'Challenges',   kind: 'legacy',    tab: 'challenges', noTitle: true }
+                { label: 'Versus',       kind: 'legacy',    tab: 'challenges' }
             ] },
             { key: 'pursuits', name: 'Pursuits', subs: [
                 { label: 'Quests',     kind: 'legacy', tab: 'projects', action: {
@@ -3683,106 +3446,6 @@
                 </button>
             </div>
             <div id="friendProfileContent" class="pf-sheet-body"></div>
-        </div>
-    </div>
-
-    <!-- ── Group Challenge: Create / Edit Modal ───────────────────────── -->
-    <div id="groupCreateModal" class="modal-overlay">
-        <div class="modal">
-            <div class="modal-header">
-                <h3 class="modal-title" id="groupCreateModalTitle">Create Group Challenge</h3>
-            </div>
-            <form id="groupCreateForm" onsubmit="saveGroupChallenge(event)">
-                <div class="modal-body">
-                    <div class="form-group">
-                        <label>Group Name *</label>
-                        <input type="text" id="groupName" placeholder="e.g., Q2 Growth Squad" required>
-                    </div>
-                    <div class="form-group">
-                        <label>Description</label>
-                        <textarea id="groupDescription" placeholder="What's the mission?"></textarea>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Start Date *</label>
-                            <input type="date" id="groupStartDate" required>
-                        </div>
-                        <div class="form-group">
-                            <label>End Date *</label>
-                            <input type="date" id="groupEndDate" required>
-                        </div>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn-secondary" onclick="closeGroupCreateModal()">Cancel</button>
-                    <button type="submit" class="btn-primary" id="groupCreateSubmitBtn">Create Group Challenge</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- ── Group Challenge: Join by Code Modal ────────────────────────── -->
-    <div id="groupJoinModal" class="modal-overlay">
-        <div class="modal">
-            <div class="modal-header">
-                <h3 class="modal-title">Join Group Challenge</h3>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label>Invite Code</label>
-                    <input type="text" id="groupJoinCodeInput" placeholder="e.g., ABC123" maxlength="8"
-                        style="text-transform:uppercase;letter-spacing:4px;font-size:18px;text-align:center;">
-                </div>
-                <p class="form-hint">Ask your group creator for the 6-character invite code.</p>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn-secondary" onclick="closeGroupJoinModal()">Cancel</button>
-                <button type="button" class="btn-primary" onclick="joinGroupByCode()">Join Group</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- ── Group Challenge: Nominate Challenge Modal ──────────────────── -->
-    <div id="groupNominateModal" class="modal-overlay">
-        <div class="modal">
-            <div class="modal-header">
-                <h3 class="modal-title" id="groupNominateTitle">Nominate a Challenge</h3>
-            </div>
-            <div class="modal-body">
-                <p class="form-hint" style="margin-bottom:14px;">Pick one of your active personal challenges to contribute to the group. Existing progress counts.</p>
-                <div id="groupNominateList"></div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn-secondary" onclick="closeGroupNominateModal()">Cancel</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- ── Group Challenge: Invite Members Modal ──────────────────────── -->
-    <div id="groupInviteModal" class="modal-overlay">
-        <div class="modal">
-            <div class="modal-header">
-                <h3 class="modal-title">Invite to Group</h3>
-            </div>
-            <div class="modal-body">
-                <!-- Invite code share row -->
-                <div class="gc-invite-code-panel">
-                    <div class="gc-invite-code-label">Invite Code</div>
-                    <div class="gc-invite-code-display" id="inviteModalCode">———</div>
-                    <div class="gc-invite-code-actions">
-                        <button class="btn-secondary" onclick="copyGroupCodeFromModal()">📋 Copy Code</button>
-                        <button class="btn-primary" onclick="shareGroupLinkFromModal()">🔗 Share Link</button>
-                    </div>
-                </div>
-                <!-- Friends list -->
-                <div class="form-group" style="margin-top:16px;">
-                    <label>Invite Friends</label>
-                    <div id="groupInviteFriendsList" style="margin-top:8px;"></div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn-secondary" onclick="closeGroupInviteModal()">Done</button>
-            </div>
         </div>
     </div>
 
