@@ -21852,6 +21852,34 @@
 
         function vsIsTerminal(status) { return VS_TERMINAL.indexOf(status) !== -1; }
 
+        // A requirement's display name. Since the authoring step stopped asking
+        // for one, `name` is written as the creator's activity name — but
+        // challenges already in flight when this shipped carry whatever the
+        // sender typed, and the creator's mapping is the better source anyway.
+        // Reading through here is what keeps both generations rendering.
+        function vsReqName(ch, req) {
+            var mine = (ch.mapping && ch.mapping[ch.createdBy]) || {};
+            var m = mine[req.reqId];
+            return (m && m.activityName) || req.name || 'Activity';
+        }
+
+        // The advanced settings that make an activity behave the way its owner
+        // set it up. Snapshotted into the challenge document at authoring time
+        // so the receiver's "Add to my activities" can rebuild it — they have
+        // no read access to the sender's activity list, so if it is not
+        // mirrored here it cannot cross.
+        function vsActivitySeed(act) {
+            if (!act) return null;
+            return {
+                baseXP: act.baseXP || 1,
+                frequency: act.frequency || 'daily',
+                isNegative: !!act.isNegative,
+                isSkipNegative: !!act.isSkipNegative,
+                negativeXpMode: act.negativeXpMode || null,
+                allowMultiplePerDay: !!act.allowMultiplePerDay
+            };
+        }
+
         // Sum of every requirement's target — the score a side needs to win
         // outright, and the denominator for their bar.
         function vsTargetTotal(ch) {
@@ -22022,9 +22050,19 @@
         }
 
         // opponentUid must be a friend; requirements is
-        // [{ reqId, name, targetCount, activityId, activityName }] — the
+        // [{ reqId, name, targetCount, activityId, activityName, seed }] — the
         // activity fields are the CREATOR's own mapping, filled in inline at
         // authoring time because they are mapping activities they already own.
+        //
+        // `name` is no longer authored: a requirement IS its activity, so the
+        // field is backfilled from the activity's own name. It stays on the
+        // document because challenges created before this shipped carry a
+        // hand-typed one, and every reader still resolves through vsReqName().
+        //
+        // `seed` is the sender's advanced settings for that activity, mirrored
+        // into the challenge document because the receiver can never read the
+        // sender's activity list. It is the only way "Add to my activities"
+        // can reproduce a negative or multiple-per-day habit faithfully.
         async function vsCreateChallenge(opts) {
             var uid = vsUid();
             if (!uid) throw new Error('Not signed in.');
@@ -22088,8 +22126,10 @@
                         activityId: r.activityId,
                         activityName: r.activityName   // snapshot at mapping time (§2.2)
                     };
-                    return { reqId: r.reqId, name: String(r.name).slice(0, 60),
-                             targetCount: Math.max(1, Math.round(r.targetCount || 1)) };
+                    var req = { reqId: r.reqId, name: String(r.name).slice(0, 60),
+                                targetCount: Math.max(1, Math.round(r.targetCount || 1)) };
+                    if (r.seed) req.seed = r.seed;
+                    return req;
                 }),
                 mapping:       (function () { var m = {}; m[uid] = mappingMine; m[opponentUid] = {}; return m; })(),
                 progress:      (function () { var m = {}; m[uid] = {}; m[opponentUid] = {}; return m; })(),
@@ -22665,13 +22705,16 @@
             }
             return m;
         }
-
         // ── UI (§8) ───────────────────────────────────────────────────────
-        // The existing Challenges visual language is kept as-is: ch-card,
-        // ch-bar, ch-act-row-v2 and the design tokens they hang off. The
-        // additions are the opponent's bar (visually subordinate to the user's
-        // own), the per-side breakdown, the stake display, and the invite,
-        // accept and resolved states.
+        // The versus board carries forward the design language of the solo
+        // Challenge card that used to live one sub-tab over: a hero number, a
+        // full-width track, an expandable per-activity breakdown. The delta is
+        // the opponent — a second bar, deliberately subordinate, so the card
+        // reads "this is mine, they are on it" rather than as two rivals of
+        // equal weight.
+        //
+        // All of it is self-contained vs-* markup. The ch-* system it learned
+        // from went away with the solo feature, so nothing here leans on it.
 
         function vsFmtLeft(ms) {
             if (ms <= 0) return 'ended';
@@ -22682,52 +22725,128 @@
             return Math.max(1, Math.floor(ms / 60000)) + 'm left';
         }
 
-        function vsBar(label, current, target, tone) {
-            var pct = target > 0 ? Math.min(100, (current / target) * 100) : 0;
-            return '' +
-                '<div class="vs-barblock ' + tone + '">' +
-                    '<div class="vs-barhead">' +
-                        '<span class="vs-barname">' + escapeHtml(label) + '</span>' +
-                        '<span class="vs-barcount">' + current + '/' + target + '</span>' +
-                    '</div>' +
-                    '<div class="ch-bar"><div class="ch-bar-inner" style="width:' + pct + '%;"></div></div>' +
-                '</div>';
+        function vsPct(cur, target) {
+            return target > 0 ? Math.min(100, (cur / target) * 100) : 0;
         }
 
-        function vsBreakdown(ch, uid, heading) {
-            var prog = vsProgressOf(ch, uid), map = vsMappingOf(ch, uid);
-            var rows = (ch.requirements || []).map(function (r) {
-                var target = r.targetCount || 1;
-                var cur    = Math.min(prog[r.reqId] || 0, target);
-                var pct    = Math.min(100, (cur / target) * 100);
-                var done   = cur >= target;
-                var act    = map[r.reqId];
-                var sub    = act ? act.activityName : 'not mapped yet';
-                return '' +
-                    '<div class="ch-act-row-v2">' +
-                        '<div class="ch-act-row-top">' +
-                            '<span class="ch-act-row-name-v2' + (done ? ' done' : '') + '">' +
-                                escapeHtml(r.name) +
-                                '<span class="vs-act-sub"> · ' + escapeHtml(sub) + '</span>' +
-                            '</span>' +
-                            '<span class="ch-act-row-count-v2">' + cur + '/' + target + '</span>' +
-                        '</div>' +
-                        '<div class="ch-act-bar-v2"><div class="ch-act-bar-v2-fill' +
-                            (done ? ' done' : '') + '" style="width:' + pct + '%;"></div></div>' +
-                    '</div>';
-            }).join('');
-            return '<div class="vs-breakdown-group"><div class="vs-breakdown-head">' +
-                   escapeHtml(heading) + '</div>' + rows + '</div>';
+        function vsDurationText(days) {
+            if (days % 7 === 0 && days >= 7) {
+                var w = days / 7;
+                return w + (w === 1 ? ' week' : ' weeks');
+            }
+            return days + (days === 1 ? ' day' : ' days');
+        }
+
+        // Everything the board and its breakdown need, derived once per paint
+        // (§9). Expanding the breakdown re-reads this model rather than
+        // recomputing per-activity progress on every toggle.
+        function vsBoardModel(ch, uid) {
+            var opp    = vsOther(ch, uid);
+            var reqs   = ch.requirements || [];
+            var myProg = vsProgressOf(ch, uid);
+            var opProg = vsProgressOf(ch, opp);
+            var myMap  = vsMappingOf(ch, uid);
+            var opMap  = vsMappingOf(ch, opp);
+
+            var target = 0, mine = 0, theirs = 0;
+            var rows = reqs.map(function (r) {
+                var t  = r.targetCount || 1;
+                var mc = Math.min(myProg[r.reqId] || 0, t);
+                var tc = Math.min(opProg[r.reqId] || 0, t);
+                target += t; mine += mc; theirs += tc;
+                return {
+                    reqId:     r.reqId,
+                    label:     vsReqName(ch, r),
+                    target:    t,
+                    mine:      mc,
+                    theirs:    tc,
+                    myAct:     (myMap[r.reqId] || {}).activityName || null,
+                    theirAct:  (opMap[r.reqId] || {}).activityName || null
+                };
+            });
+
+            var leadKey = mine > theirs ? 'ahead' : (mine < theirs ? 'behind' : 'level');
+            return {
+                opp: opp, oppName: vsName(ch, opp),
+                rows: rows, target: target, mine: mine, theirs: theirs,
+                myPct: vsPct(mine, target), theirPct: vsPct(theirs, target),
+                leadKey: leadKey,
+                leadTxt: leadKey === 'ahead' ? 'you lead' : (leadKey === 'behind' ? 'you trail' : 'level')
+            };
+        }
+
+        // ── Board pieces ──────────────────────────────────────────────────
+
+        // The hero: biggest number on the card, full-width track under it.
+        function vsHero(model, done) {
+            return '' +
+            '<div class="vs-hero">' +
+                '<div class="vs-hero-top">' +
+                    '<span class="vs-count">' +
+                        '<span class="vs-count-cur">' + model.mine + '</span>' +
+                        '<span class="vs-count-sep">/</span>' +
+                        '<span class="vs-count-tgt">' + model.target + '</span>' +
+                    '</span>' +
+                    '<span class="vs-hero-pct">' + Math.floor(model.myPct) + '%</span>' +
+                '</div>' +
+                '<div class="vs-track"><div class="vs-fill' + (done ? ' is-done' : '') +
+                    '" style="width:' + model.myPct + '%;"></div></div>' +
+            '</div>';
+        }
+
+        // The opponent: same shape, narrower and quieter. The hierarchy is the
+        // message — you should not need to read the labels to know whose card
+        // this is.
+        function vsOppBar(model) {
+            return '' +
+            '<div class="vs-opp">' +
+                '<div class="vs-opp-top">' +
+                    '<span class="vs-opp-name">' + escapeHtml(model.oppName) + '</span>' +
+                    '<span class="vs-opp-count">' + model.theirs + '/' + model.target + '</span>' +
+                '</div>' +
+                '<div class="vs-track vs-track-sm"><div class="vs-fill vs-fill-opp" style="width:' +
+                    model.theirPct + '%;"></div></div>' +
+            '</div>';
+        }
+
+        // One activity inside the breakdown.
+        function vsSubBar(label, cur, target, quiet) {
+            var done = cur >= target;
+            return '' +
+            '<div class="vs-sub' + (quiet ? ' vs-sub-quiet' : '') + '">' +
+                '<div class="vs-sub-top">' +
+                    '<span class="vs-sub-name' + (done ? ' is-done' : '') + '">' + escapeHtml(label) + '</span>' +
+                    '<span class="vs-sub-count">' + cur + '/' + target + '</span>' +
+                '</div>' +
+                '<div class="vs-track vs-track-xs"><div class="vs-fill' + (done ? ' is-done' : '') +
+                    (quiet ? ' vs-fill-opp' : '') + '" style="width:' + vsPct(cur, target) + '%;"></div></div>' +
+            '</div>';
+        }
+
+        function vsChevron(open) {
+            return '<svg class="vs-chev' + (open ? ' is-open' : '') + '" viewBox="0 0 24 24" fill="none" ' +
+                   'stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">' +
+                   '<polyline points="6 9 12 15 18 9"/></svg>';
+        }
+
+        // Three numbers, sized like they matter. Gold is money on the line,
+        // green is XP, neutral is what you hold — and red when you are short.
+        function vsStakes(cells) {
+            return '<div class="vs-stakes">' + cells.map(function (c) {
+                return '<div class="vs-stake-cell vs-tone-' + c.tone + '">' +
+                       '<div class="vs-stake-val">' + escapeHtml(String(c.value)) + '</div>' +
+                       '<div class="vs-stake-lbl">' + escapeHtml(c.label) + '</div>' +
+                       '</div>';
+            }).join('') + '</div>';
         }
 
         // ── Cards ─────────────────────────────────────────────────────────
 
         function vsPendingCard(ch, uid) {
-            var mine    = ch.createdBy === uid;
-            var opp     = vsOther(ch, uid);
-            var left    = vsFmtLeft(ch.expiresAt - vsNow());
+            var mine = ch.createdBy === uid;
+            var opp  = vsOther(ch, uid);
             var reqLine = (ch.requirements || []).map(function (r) {
-                return escapeHtml(r.name) + ' ×' + r.targetCount;
+                return escapeHtml(vsReqName(ch, r)) + ' ×' + r.targetCount;
             }).join(' · ');
 
             var actions = mine
@@ -22736,124 +22855,112 @@
                   '<button class="vs-btn vs-btn-ghost" onclick="vsDecline(\'' + ch.id + '\')">Decline</button>';
 
             return '' +
-            '<div class="ch-card vs-card vs-card-pending">' +
-                '<div class="vs-ribbon">' + (mine ? 'Invite sent' : 'Challenge received') + '</div>' +
-                '<div class="ch-card-head">' +
-                    '<div class="ch-card-titlecol">' +
-                        '<h3 class="ch-card-title">' + escapeHtml(ch.name) + '</h3>' +
-                        (ch.description ? '<div class="ch-subtitle-row"><p class="ch-card-desc">' +
-                            escapeHtml(ch.description) + '</p></div>' : '') +
-                        '<div class="ch-meta">' +
-                            '<span>' + (mine ? 'To ' : 'From ') + escapeHtml(vsName(ch, opp)) + '</span>' +
-                            '<span class="ch-meta-sep">·</span>' +
-                            '<span class="vs-stake">' + ch.stake + ' Grit each</span>' +
-                            '<span class="ch-meta-sep">·</span>' +
-                            '<span>' + ch.durationDays + ' days</span>' +
-                            '<span class="ch-meta-sep">·</span>' +
-                            '<span class="vs-expiry">' + left + '</span>' +
-                        '</div>' +
-                    '</div>' +
+            '<div class="vs-board" data-state="pending">' +
+                '<div class="vs-ribbon">' + (mine ? 'Sent' : 'Received') + '</div>' +
+                '<h3 class="vs-board-title">' + escapeHtml(ch.name) + '</h3>' +
+                '<div class="vs-board-meta">' +
+                    '<span>' + (mine ? 'To ' : 'From ') + escapeHtml(vsName(ch, opp)) + '</span>' +
+                    '<span class="vs-dot">·</span>' +
+                    '<span class="vs-gold">' + ch.stake + ' Grit each</span>' +
+                    '<span class="vs-dot">·</span>' +
+                    '<span>' + vsDurationText(ch.durationDays) + '</span>' +
+                    '<span class="vs-dot">·</span>' +
+                    '<span>' + vsFmtLeft(ch.expiresAt - vsNow()) + ' to answer</span>' +
                 '</div>' +
                 '<div class="vs-reqline">' + reqLine + '</div>' +
-                '<div class="vs-liveonly">Only completions logged on the day they happen count toward this challenge.</div>' +
                 '<div class="vs-actions">' + actions + '</div>' +
             '</div>';
         }
 
         function vsActiveCard(ch, uid) {
-            var opp    = vsOther(ch, uid);
-            var target = vsTargetTotal(ch);
-            var mine   = vsCappedTotal(ch, uid);
-            var theirs = vsCappedTotal(ch, opp);
-            var open   = _vsDetailId === ch.id;
-            var left   = vsFmtLeft(ch.endsAt - vsNow());
-            var leadKey = mine > theirs ? 'ahead' : (mine < theirs ? 'behind' : 'level');
-            var leadTxt = leadKey === 'ahead' ? 'you lead'
-                        : (leadKey === 'behind' ? 'you trail' : 'level');
+            var m    = vsBoardModel(ch, uid);
+            var open = _vsDetailId === ch.id;
+            var done = m.target > 0 && m.mine >= m.target;
+
+            var breakdown = '';
+            if (open) {
+                breakdown =
+                    '<div class="vs-breakdown">' +
+                        '<div class="vs-bd-group">' +
+                            '<div class="vs-bd-head">You</div>' +
+                            m.rows.map(function (r) {
+                                return vsSubBar(r.myAct || r.label, r.mine, r.target, false);
+                            }).join('') +
+                        '</div>' +
+                        '<div class="vs-bd-group">' +
+                            '<div class="vs-bd-head">' + escapeHtml(m.oppName) + '</div>' +
+                            '<div class="vs-track vs-track-sm vs-bd-total">' +
+                                '<div class="vs-fill vs-fill-opp" style="width:' + m.theirPct + '%;"></div>' +
+                            '</div>' +
+                            m.rows.map(function (r) {
+                                return vsSubBar(r.theirAct || r.label, r.theirs, r.target, true);
+                            }).join('') +
+                        '</div>' +
+                    '</div>';
+            }
 
             return '' +
-            '<div class="ch-card vs-card" data-state="active">' +
-                '<div class="ch-card-head">' +
-                    '<div class="ch-card-titlecol">' +
-                        '<h3 class="ch-card-title">' + escapeHtml(ch.name) + '</h3>' +
-                        (ch.description ? '<div class="ch-subtitle-row"><p class="ch-card-desc">' +
-                            escapeHtml(ch.description) + '</p></div>' : '') +
-                        '<div class="ch-meta">' +
-                            '<span class="vs-pot">Pot ' + ch.pot + ' Grit</span>' +
-                            '<span class="ch-meta-sep">·</span>' +
-                            '<span>' + ch.stake + ' each</span>' +
-                            '<span class="ch-meta-sep">·</span>' +
-                            '<span class="ch-meta-xp">+' + ch.bonusXP + ' XP</span>' +
-                            '<span class="ch-meta-sep">·</span>' +
-                            '<span>' + left + '</span>' +
-                            '<span class="ch-meta-sep">·</span>' +
-                            '<span class="vs-lead vs-lead-' + leadKey + '">' + leadTxt + '</span>' +
-                        '</div>' +
-                    '</div>' +
+            '<div class="vs-board" data-state="' + (done ? 'won' : 'active') + '">' +
+                '<h3 class="vs-board-title">' + escapeHtml(ch.name) + '</h3>' +
+                '<div class="vs-board-meta">' +
+                    '<span class="vs-gold">' + ch.pot + ' Grit pot</span>' +
+                    '<span class="vs-dot">·</span>' +
+                    '<span class="vs-xp">+' + ch.bonusXP + ' XP</span>' +
+                    '<span class="vs-dot">·</span>' +
+                    '<span>' + vsFmtLeft(ch.endsAt - vsNow()) + '</span>' +
+                    '<span class="vs-dot">·</span>' +
+                    '<span class="vs-lead vs-lead-' + m.leadKey + '">' + m.leadTxt + '</span>' +
                 '</div>' +
-                vsBar('You', mine, target, 'vs-bar-mine') +
-                vsBar(vsName(ch, opp), theirs, target, 'vs-bar-theirs') +
-                '<div class="ch-action-row">' +
-                    '<button class="ch-breakdown-btn" type="button" onclick="vsToggleDetail(\'' + ch.id + '\')">' +
-                        '<span>' + (open ? 'Hide breakdown' : 'Breakdown') + '</span>' +
-                        '<svg class="ch-breakdown-chev' + (open ? ' expanded' : '') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>' +
+                vsHero(m, done) +
+                vsOppBar(m) +
+                '<div class="vs-board-actions">' +
+                    '<button class="vs-expand" type="button" onclick="vsToggleDetail(\'' + ch.id + '\')">' +
+                        '<span>Breakdown</span>' + vsChevron(open) +
                     '</button>' +
                     '<button class="vs-btn vs-btn-quiet" onclick="vsConfirmForfeit(\'' + ch.id + '\')">Forfeit</button>' +
                 '</div>' +
-                (open
-                    ? '<div class="vs-detail" id="vs-detail-' + ch.id + '">' +
-                        vsBreakdown(ch, uid, 'You') +
-                        vsBreakdown(ch, opp, vsName(ch, opp)) +
-                        '<div class="vs-liveonly">Only completions logged on the day they happen count toward this challenge.</div>' +
-                      '</div>'
-                    : '') +
+                breakdown +
             '</div>';
         }
 
         function vsResolvedCard(ch, uid) {
-            var opp    = vsOther(ch, uid);
-            var target = vsTargetTotal(ch);
-            var mine   = vsCappedTotal(ch, uid);
-            var theirs = vsCappedTotal(ch, opp);
-            var won    = ch.winner === uid;
-            var tie    = !ch.winner;
-            var owed   = (ch.payout && ch.payout[uid]) || 0;
+            var m       = vsBoardModel(ch, uid);
+            var won     = ch.winner === uid;
+            var tie     = !ch.winner;
+            var owed    = (ch.payout && ch.payout[uid]) || 0;
             var claimed = !!(ch.payoutClaimed && ch.payoutClaimed[uid]);
+            var oppName = escapeHtml(m.oppName);
 
-            var verdict, tone;
+            var verdict, state;
             if (tie) {
-                verdict = 'Level at the deadline — both stakes returned.'; tone = 'vs-res-tie';
+                verdict = 'Level at the deadline.'; state = 'tie';
             } else if (won) {
-                verdict = ch.outcome === 'forfeit'
-                    ? escapeHtml(vsName(ch, opp)) + ' forfeited. The pot is yours.'
-                    : (ch.outcome === 'completed_first'
-                        ? 'You finished first.' : 'You were ahead at the deadline.');
-                tone = 'vs-res-won';
+                verdict = ch.outcome === 'forfeit' ? oppName + ' forfeited.'
+                        : (ch.outcome === 'completed_first' ? 'You finished first.'
+                                                           : 'You were ahead at the deadline.');
+                state = 'won';
             } else {
-                verdict = ch.outcome === 'forfeit'
-                    ? 'You forfeited. ' + escapeHtml(vsName(ch, opp)) + ' took the pot.'
-                    : (ch.outcome === 'completed_first'
-                        ? escapeHtml(vsName(ch, opp)) + ' finished first.'
-                        : escapeHtml(vsName(ch, opp)) + ' was ahead at the deadline.');
-                tone = 'vs-res-lost';
+                verdict = ch.outcome === 'forfeit' ? 'You forfeited.'
+                        : (ch.outcome === 'completed_first' ? oppName + ' finished first.'
+                                                           : oppName + ' was ahead at the deadline.');
+                state = 'lost';
             }
 
             var gritLine = owed > 0
-                ? '<span class="vs-grit-moved">' + (claimed ? '+' + owed + ' Grit banked' : '+' + owed + ' Grit incoming') + '</span>'
-                : '<span class="vs-grit-lost">−' + ch.stake + ' Grit</span>';
+                ? '<span class="vs-xp">+' + owed + ' Grit' + (claimed ? '' : ' incoming') + '</span>'
+                : '<span class="vs-loss">−' + ch.stake + ' Grit</span>';
 
             return '' +
-            '<div class="ch-card vs-card ' + tone + '" data-state="completed">' +
-                '<div class="vs-ribbon ' + tone + '">' + (tie ? 'Draw' : (won ? 'Won' : 'Lost')) + '</div>' +
-                '<div class="ch-card-head">' +
-                    '<div class="ch-card-titlecol">' +
-                        '<h3 class="ch-card-title">' + escapeHtml(ch.name) + '</h3>' +
-                        '<div class="ch-meta"><span>' + verdict + '</span>' +
-                            '<span class="ch-meta-sep">·</span>' + gritLine + '</div>' +
-                    '</div>' +
+            '<div class="vs-board" data-state="' + state + '">' +
+                '<div class="vs-ribbon vs-ribbon-' + state + '">' +
+                    (tie ? 'Draw' : (won ? 'Won' : 'Lost')) + '</div>' +
+                '<h3 class="vs-board-title">' + escapeHtml(ch.name) + '</h3>' +
+                '<div class="vs-board-meta">' +
+                    '<span>' + verdict + '</span>' +
+                    '<span class="vs-dot">·</span>' + gritLine +
                 '</div>' +
-                vsBar('You', mine, target, 'vs-bar-mine') +
-                vsBar(vsName(ch, opp), theirs, target, 'vs-bar-theirs') +
+                vsHero(m, won) +
+                vsOppBar(m) +
             '</div>';
         }
 
@@ -22892,7 +22999,7 @@
 
             var live = pending.length + active.length;
             var html = '' +
-                '<div class="act-toolbar ch-toolbar">' +
+                '<div class="act-toolbar vs-toolbar">' +
                     '<div class="tool-cluster">' +
                         '<span class="vs-cap">' + live + ' / ' + VS_MAX_CONCURRENT + ' running</span>' +
                     '</div>' +
@@ -22905,19 +23012,18 @@
                 '</div>';
 
             if (!live && !resolved.length) {
-                html += '<div class="ch-empty">' +
-                            '<div class="ch-empty-icon">⚔️</div>' +
-                            '<div class="ch-empty-text">No versus challenges. Stake Grit against a friend — ' +
-                            'first to finish takes the pot, and you can both watch the bars move.</div>' +
+                html += '<div class="vs-empty">' +
+                            '<div class="vs-empty-icon">⚔️</div>' +
+                            '<div class="vs-empty-text">Stake Grit against a friend. ' +
+                            'First to finish takes the pot.</div>' +
                         '</div>';
                 host.innerHTML = html;
                 return;
             }
 
             function section(title, count, body) {
-                return '<div class="ch-section-head"><div class="ch-section-head-left">' +
-                       '<h3 class="ch-section-title">' + title + '</h3>' +
-                       '<span class="ch-section-count">' + count + '</span></div></div>' + body;
+                return '<div class="vs-section"><h3 class="vs-section-title">' + title + '</h3>' +
+                       '<span class="vs-section-count">' + count + '</span></div>' + body;
             }
             if (pending.length) {
                 html += section('Invites', pending.length,
@@ -22936,8 +23042,7 @@
         }
 
         function vsRenderIfVisible() {
-            var panel = document.getElementById('challengesSubVersus');
-            if (panel && panel.style.display !== 'none' && window.currentTab === 'challenges') vsPaint();
+            if (window.currentTab === 'challenges') vsPaint();
             vsUpdateBadges();
         }
 
@@ -22981,15 +23086,6 @@
 
         function vsUpdateBadges() {
             var n = vsPendingForMe();
-            // Sub-tab pill
-            var pill = document.getElementById('vsSubTabBtn');
-            if (pill) {
-                var b = pill.querySelector('.vs-pill-badge');
-                if (n > 0) {
-                    if (!b) { b = document.createElement('span'); b.className = 'vs-pill-badge'; pill.appendChild(b); }
-                    b.textContent = n;
-                } else if (b) { b.remove(); }
-            }
             // Challenges nav tab
             document.querySelectorAll('.nav-tab').forEach(function (tab) {
                 var oc = tab.getAttribute('onclick') || '';
@@ -23003,7 +23099,7 @@
 
         // ── Sheet primitive ───────────────────────────────────────────────
         // One reusable overlay, created on demand, styled with the app's
-        // existing modal tokens. Keeps index.html additions to the sub-tab.
+        // existing modal tokens.
 
         function vsSheet(innerHtml) {
             var el = document.getElementById('vsSheet');
@@ -23033,8 +23129,20 @@
                      '</button></div>';
         }
 
-        // ── Create flow (§8.4) ────────────────────────────────────────────
-        // Friend picker → the authoring form. The creator maps their own
+        // An initial badge in the app's friend-row idiom.
+        function vsAvatar(name, photoURL, size) {
+            var px = size || 40;
+            if (photoURL) {
+                return '<img class="vs-avatar" src="' + escapeHtml(photoURL) + '" alt="" ' +
+                       'style="width:' + px + 'px;height:' + px + 'px;">';
+            }
+            var initial = (String(name || '?').trim()[0] || '?').toUpperCase();
+            return '<div class="vs-avatar vs-avatar-initial" style="width:' + px + 'px;height:' + px +
+                   'px;font-size:' + Math.round(px * 0.38) + 'px;">' + escapeHtml(initial) + '</div>';
+        }
+
+        // ── Create flow (§3, §4, §5) ──────────────────────────────────────
+        // Opponent picker → terms → send. The creator maps their own
         // activities inline, because they already own them.
 
         let _vsDraft = null;
@@ -23047,38 +23155,45 @@
                 return;
             }
             var friends = (window.userData.friends || []);
-            vsSheet(vsSheetHead('Versus', 'Pick an opponent') +
-                    '<div class="modal-body pl-modal-body"><div class="vs-loading">Loading friends…</div></div>');
+            var head = vsSheetHead('Versus', 'Choose an opponent');
 
             if (!friends.length) {
-                vsSheet(vsSheetHead('Versus', 'Pick an opponent') +
-                    '<div class="modal-body pl-modal-body">' +
-                    '<p class="vs-note">You need a friend to challenge. Add one from the Friends tab first.</p>' +
-                    '</div>');
+                vsSheet(head + '<div class="modal-body pl-modal-body">' +
+                    '<p class="vs-note">No friends yet. Add one from the People tab first.</p></div>');
                 return;
             }
+            vsSheet(head + '<div class="modal-body pl-modal-body"><div class="vs-loading">Loading…</div></div>');
 
             var rows = await Promise.all(friends.map(async function (uid) {
                 try {
                     var s = await getDoc(doc(db, 'publicProfiles', uid));
-                    return { uid: uid, name: s.exists() ? (s.data().displayName || uid) : uid,
-                             level: s.exists() ? (s.data().level || 1) : null };
-                } catch (e) { return { uid: uid, name: uid, level: null }; }
+                    var d = s.exists() ? s.data() : {};
+                    return { uid: uid, name: d.displayName || 'Adventurer',
+                             level: d.level || null, photoURL: d.photoURL || null,
+                             title: d.characterTitle || '' };
+                } catch (e) { return { uid: uid, name: 'Adventurer', level: null, photoURL: null, title: '' }; }
             }));
+            rows.sort(function (a, b) { return a.name.localeCompare(b.name); });
             // Held in memory and addressed by index — a display name is never
             // interpolated into an onclick attribute, where an apostrophe
             // would break out of the handler.
             _vsFriendRows = rows;
 
             var body = rows.map(function (r, i) {
-                return '<button class="vs-friend-row" onclick="vsPickOpponent(' + i + ')">' +
-                       '<span class="vs-friend-name">' + escapeHtml(r.name) + '</span>' +
-                       (r.level ? '<span class="vs-friend-lvl">Lv ' + r.level + '</span>' : '') +
+                var meta = [];
+                if (r.level) meta.push('Lv ' + r.level);
+                if (r.title) meta.push(r.title);
+                return '<button class="vs-opprow" onclick="vsPickOpponent(' + i + ')">' +
+                       vsAvatar(r.name, r.photoURL, 40) +
+                       '<span class="vs-opprow-info">' +
+                           '<span class="vs-opprow-name">' + escapeHtml(r.name) + '</span>' +
+                           (meta.length ? '<span class="vs-opprow-meta">' + escapeHtml(meta.join(' · ')) + '</span>' : '') +
+                       '</span>' +
+                       '<svg class="vs-opprow-go" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>' +
                        '</button>';
             }).join('');
 
-            vsSheet(vsSheetHead('Versus', 'Pick an opponent') +
-                    '<div class="modal-body pl-modal-body">' + body + '</div>');
+            vsSheet(head + '<div class="modal-body pl-modal-body vs-opplist">' + body + '</div>');
         };
 
         window.vsPickOpponent = function (i) {
@@ -23089,7 +23204,8 @@
                 opponentName: r.name || 'Opponent',
                 rows: [],
                 durationDays: 14,
-                stake: VS_STAKE_MIN
+                stake: VS_STAKE_MIN,
+                pickerRow: -1
             };
             vsDraftAddRow();
             vsRenderCreateForm();
@@ -23098,31 +23214,28 @@
         function vsDraftAddRow() {
             if (_vsDraft.rows.length >= VS_MAX_REQS) return;
             _vsDraft.rows.push({ reqId: 'r' + Math.random().toString(36).slice(2, 8),
-                                 activityId: '', name: '', targetCount: 5 });
+                                 activityId: '', targetCount: 5 });
         }
 
         window.vsAddRow = function () { vsReadCreateForm(); vsDraftAddRow(); vsRenderCreateForm(); };
         window.vsDelRow = function (i) {
             vsReadCreateForm();
             if (_vsDraft.rows.length > 1) _vsDraft.rows.splice(i, 1);
+            _vsDraft.pickerRow = -1;
             vsRenderCreateForm();
         };
-        window.vsRowChanged = function () { vsReadCreateForm(); vsRenderCreateForm(); };
+        window.vsTermsChanged = function () { vsReadCreateForm(); vsRenderCreateForm(); };
 
         function vsReadCreateForm() {
             if (!_vsDraft) return;
-            var g = function (id) { var e = document.getElementById(id); return e ? e.value : ''; };
-            _vsDraft.name         = g('vsName');
-            _vsDraft.description  = g('vsDesc');
-            _vsDraft.durationDays = Math.max(1, parseInt(g('vsDuration'), 10) || 14);
-            _vsDraft.stake        = parseInt(g('vsStake'), 10) || VS_STAKE_MIN;
+            var g = function (id) { var e = document.getElementById(id); return e ? e.value : null; };
+            var nm = g('vsName');       if (nm !== null) _vsDraft.name = nm;
+            var ds = g('vsDesc');       if (ds !== null) _vsDraft.description = ds;
+            var du = g('vsDuration');   if (du !== null) _vsDraft.durationDays = Math.max(1, parseInt(du, 10) || 14);
+            var st = g('vsStake');      if (st !== null) _vsDraft.stake = parseInt(st, 10) || VS_STAKE_MIN;
             _vsDraft.rows.forEach(function (r, i) {
-                var a = document.getElementById('vsRowAct' + i);
                 var t = document.getElementById('vsRowTarget' + i);
-                var n = document.getElementById('vsRowName' + i);
-                if (a) r.activityId  = a.value;
                 if (t) r.targetCount = Math.max(1, parseInt(t.value, 10) || 1);
-                if (n) r.name        = n.value;
             });
         }
 
@@ -23137,42 +23250,107 @@
             return Math.max(1, Math.round(total * 0.2));
         }
 
-        function vsRenderCreateForm() {
-            var committed = vsCommittedActivityIds(null);
-            var acts = gritAllActivities();
-            var used  = _vsDraft.rows.map(function (r) { return r.activityId; });
+        // ── The activity picker (§4) ──────────────────────────────────────
+        // A native <select> renders differently on every platform and badly on
+        // desktop, so this is an in-sheet searchable list instead: one row per
+        // activity, filtered live. Filtering rewrites only the list container,
+        // so the search field keeps focus between keystrokes.
 
+        function vsPickableActivities(rowIndex) {
+            var committed = vsCommittedActivityIds(null);
+            var usedHere  = _vsDraft.rows.map(function (r, i) {
+                return i === rowIndex ? null : r.activityId;
+            }).filter(Boolean);
+            return gritAllActivities().map(function (a) {
+                var lock = committed.has(a.id) ? 'In another challenge'
+                         : (usedHere.indexOf(a.id) !== -1 ? 'Used above' : null);
+                return { id: a.id, name: a.name, xp: a.baseXP || 0, lock: lock };
+            });
+        }
+
+        function vsActListHtml(rowIndex, query) {
+            var q = String(query || '').trim().toLowerCase();
+            var items = vsPickableActivities(rowIndex).filter(function (a) {
+                return !q || a.name.toLowerCase().indexOf(q) !== -1;
+            });
+            if (!items.length) {
+                return '<div class="vs-pick-none">' +
+                       (q ? 'Nothing matches.' : 'No activities yet.') + '</div>';
+            }
+            var chosen = _vsDraft.rows[rowIndex].activityId;
+            return items.map(function (a) {
+                if (a.lock) {
+                    return '<div class="vs-pickrow is-locked">' +
+                           '<span class="vs-pickrow-name">' + escapeHtml(a.name) + '</span>' +
+                           '<span class="vs-pickrow-why">' + escapeHtml(a.lock) + '</span></div>';
+                }
+                return '<button type="button" class="vs-pickrow' + (chosen === a.id ? ' is-on' : '') +
+                       '" onclick="vsPickAct(' + rowIndex + ',\'' + a.id + '\')">' +
+                       '<span class="vs-pickrow-name">' + escapeHtml(a.name) + '</span>' +
+                       '<span class="vs-pickrow-xp">' + a.xp + ' XP</span></button>';
+            }).join('');
+        }
+
+        window.vsOpenPicker = function (i) {
+            vsReadCreateForm();
+            _vsDraft.pickerRow = (_vsDraft.pickerRow === i) ? -1 : i;
+            _vsDraft.pickerQuery = '';
+            vsRenderCreateForm();
+            if (_vsDraft.pickerRow === i) {
+                var el = document.getElementById('vsActSearch');
+                if (el) setTimeout(function () { el.focus(); }, 40);
+            }
+        };
+
+        window.vsFilterActs = function (value) {
+            var host = document.getElementById('vsActList');
+            if (!host || !_vsDraft || _vsDraft.pickerRow < 0) return;
+            _vsDraft.pickerQuery = value;
+            host.innerHTML = vsActListHtml(_vsDraft.pickerRow, value);
+        };
+
+        window.vsPickAct = function (i, activityId) {
+            vsReadCreateForm();
+            _vsDraft.rows[i].activityId = activityId;
+            _vsDraft.pickerRow = -1;
+            vsRenderCreateForm();
+        };
+
+        function vsRenderCreateForm() {
             var rowsHtml = _vsDraft.rows.map(function (r, i) {
-                var opts = '<option value="">Choose one of your activities…</option>' +
-                    acts.map(function (a) {
-                        var lockedElsewhere = committed.has(a.id);
-                        var usedHere = used.indexOf(a.id) !== -1 && r.activityId !== a.id;
-                        if (lockedElsewhere || usedHere) {
-                            return '<option value="' + a.id + '" disabled>' + escapeHtml(a.name) +
-                                   ' — ' + (lockedElsewhere ? 'in another challenge' : 'already used above') +
-                                   '</option>';
-                        }
-                        return '<option value="' + a.id + '"' + (r.activityId === a.id ? ' selected' : '') +
-                               '>' + escapeHtml(a.name) + '</option>';
-                    }).join('');
-                var act = gritFindActivity(r.activityId);
-                var placeholder = act ? act.name : 'What the requirement is called';
+                var act  = gritFindActivity(r.activityId);
+                var open = _vsDraft.pickerRow === i;
                 return '' +
-                '<div class="vs-reqrow">' +
-                    '<div class="vs-reqrow-top">' +
-                        '<span class="vs-reqrow-idx">' + (i + 1) + '</span>' +
+                '<div class="vs-req' + (open ? ' is-picking' : '') + '">' +
+                    '<div class="vs-req-head">' +
+                        '<span class="vs-req-idx">' + (i + 1) + '</span>' +
                         (_vsDraft.rows.length > 1
-                            ? '<button type="button" class="vs-reqrow-del" onclick="vsDelRow(' + i + ')" aria-label="Remove">×</button>'
+                            ? '<button type="button" class="vs-req-del" onclick="vsDelRow(' + i +
+                              ')" aria-label="Remove">×</button>'
                             : '') +
                     '</div>' +
-                    '<select class="pl-input" id="vsRowAct' + i + '" onchange="vsRowChanged()">' + opts + '</select>' +
-                    '<div class="vs-reqrow-line">' +
-                        '<input class="pl-input" id="vsRowName' + i + '" placeholder="' +
-                            escapeHtml(placeholder) + '" value="' + escapeHtml(r.name || '') + '">' +
-                        '<input class="pl-input vs-target-input" id="vsRowTarget' + i +
-                            '" type="number" min="1" max="999" value="' + r.targetCount + '">' +
+                    '<div class="vs-req-body">' +
+                        '<button type="button" class="vs-actbtn' + (act ? ' has-value' : '') +
+                            '" onclick="vsOpenPicker(' + i + ')">' +
+                            '<span class="vs-actbtn-label">' +
+                                (act ? escapeHtml(act.name) : 'Choose activity') + '</span>' +
+                            vsChevron(open) +
+                        '</button>' +
+                        '<div class="vs-req-target">' +
+                            '<input class="pl-input" id="vsRowTarget' + i + '" type="number" min="1" max="999" ' +
+                                'inputmode="numeric" value="' + r.targetCount + '" aria-label="Times">' +
+                            '<span class="vs-req-times">×</span>' +
+                        '</div>' +
                     '</div>' +
-                    '<div class="vs-reqrow-hint">Your opponent maps their own activity to this name.</div>' +
+                    (open
+                        ? '<div class="vs-picker">' +
+                              '<input class="pl-input vs-picker-search" id="vsActSearch" type="search" ' +
+                                  'placeholder="Search activities" oninput="vsFilterActs(this.value)">' +
+                              '<div class="vs-picker-list" id="vsActList">' +
+                                  vsActListHtml(i, _vsDraft.pickerQuery) +
+                              '</div>' +
+                          '</div>'
+                        : '') +
                 '</div>';
             }).join('');
 
@@ -23181,48 +23359,47 @@
                 stakeOpts += '<option value="' + s + '"' + (_vsDraft.stake === s ? ' selected' : '') +
                              '>' + s + ' Grit</option>';
             }
-            var bal = gritBalance();
+            var bal   = gritBalance();
             var short = bal < _vsDraft.stake;
 
             vsSheet(
                 vsSheetHead('Versus · ' + _vsDraft.opponentName, 'Set the terms') +
                 '<div class="modal-body pl-modal-body ay-modal-body">' +
-                    '<div class="ay-field"><label class="pl-field-label" for="vsName">Challenge name</label>' +
-                        '<input class="pl-input" id="vsName" placeholder="e.g. Two weeks of mornings" value="' +
+                    '<div class="ay-field"><label class="pl-field-label" for="vsName">Name</label>' +
+                        '<input class="pl-input" id="vsName" placeholder="Two weeks of mornings" value="' +
                         escapeHtml(_vsDraft.name || '') + '"></div>' +
                     '<div class="ay-field"><label class="pl-field-label" for="vsDesc">Description</label>' +
-                        '<textarea class="pl-input ay-textarea" rows="2" id="vsDesc" placeholder="What is this about?">' +
+                        '<textarea class="pl-input ay-textarea" rows="2" id="vsDesc" placeholder="Optional">' +
                         escapeHtml(_vsDraft.description || '') + '</textarea></div>' +
 
                     '<div class="ay-field"><label class="pl-field-label">Requirements</label>' +
                         rowsHtml +
                         (_vsDraft.rows.length < VS_MAX_REQS
-                            ? '<button type="button" class="vs-btn vs-btn-ghost vs-addreq" onclick="vsAddRow()">+ Add requirement</button>'
+                            ? '<button type="button" class="vs-addreq" onclick="vsAddRow()">+ Add requirement</button>'
                             : '') +
                     '</div>' +
 
                     '<div class="vs-two">' +
-                        '<div class="ay-field"><label class="pl-field-label" for="vsDuration">Duration (days)</label>' +
-                            '<input class="pl-input" id="vsDuration" type="number" min="1" max="90" value="' +
-                            _vsDraft.durationDays + '"></div>' +
+                        '<div class="ay-field"><label class="pl-field-label" for="vsDuration">Days</label>' +
+                            '<input class="pl-input" id="vsDuration" type="number" min="1" max="90" ' +
+                            'inputmode="numeric" value="' + _vsDraft.durationDays + '"></div>' +
                         '<div class="ay-field"><label class="pl-field-label" for="vsStake">Stake each</label>' +
-                            '<select class="pl-input" id="vsStake" onchange="vsRowChanged()">' + stakeOpts + '</select></div>' +
+                            '<select class="pl-input" id="vsStake" onchange="vsTermsChanged()">' + stakeOpts +
+                            '</select></div>' +
                     '</div>' +
 
-                    '<div class="vs-summary">' +
-                        '<div><span>Pot if accepted</span><strong>' + (_vsDraft.stake * 2) + ' Grit</strong></div>' +
-                        '<div><span>Bonus XP</span><strong>+' + vsDraftBonusXP() + ' XP</strong></div>' +
-                        '<div><span>Your balance</span><strong class="' + (short ? 'vs-short' : '') + '">' +
-                            bal + ' Grit</strong></div>' +
-                    '</div>' +
-                    '<p class="vs-note">Your stake is escrowed the moment you send the invite, so the pot is real ' +
-                    'before they answer. If they decline or it expires, it comes straight back. ' +
-                    '<strong>Only completions logged on the day they happen count.</strong></p>' +
+                    vsStakes([
+                        { label: 'Pot',     value: (_vsDraft.stake * 2) + ' Grit', tone: 'gold' },
+                        { label: 'Bonus',   value: '+' + vsDraftBonusXP() + ' XP', tone: 'xp' },
+                        { label: 'Balance', value: bal + ' Grit', tone: short ? 'short' : 'neutral' }
+                    ]) +
+                    '<p class="vs-note">Your stake is locked in when you send, and returned if they ' +
+                    'decline or it expires. Only same-day completions count.</p>' +
                 '</div>' +
                 '<div class="modal-footer pl-modal-footer">' +
                     '<button class="vs-btn vs-btn-ghost" onclick="vsCloseSheet()">Cancel</button>' +
                     '<button class="vs-btn vs-btn-primary" id="vsSendBtn" onclick="vsSubmitCreate()"' +
-                        (short ? ' disabled title="Not enough Grit"' : '') + '>Send invite</button>' +
+                        (short ? ' disabled title="Not enough Grit"' : '') + '>Send</button>' +
                 '</div>'
             );
         }
@@ -23240,10 +23417,12 @@
                 if (!act) { showToast('That activity no longer exists.', 'red'); return; }
                 reqs.push({
                     reqId: r.reqId,
-                    name: (r.name && r.name.trim()) || act.name,
+                    // No longer authored (§4): a requirement is its activity.
+                    name: act.name,
                     targetCount: r.targetCount,
                     activityId: act.id,
-                    activityName: act.name
+                    activityName: act.name,
+                    seed: vsActivitySeed(act)
                 });
             }
             var btn = document.getElementById('vsSendBtn');
@@ -23266,16 +23445,16 @@
                 vsPaint();
             } catch (e) {
                 showToast(vsErrText(e), 'red');
-                if (btn) { btn.disabled = false; btn.textContent = 'Send invite'; }
+                if (btn) { btn.disabled = false; btn.textContent = 'Send'; }
             }
         };
 
-        // ── Accept walkthrough (§3.3, §8.5) ───────────────────────────────
-        // One requirement per screen with a progress indicator. There is no
-        // reject option on a requirement — rejecting one is declining the
-        // challenge. The accept button only enables once every requirement is
-        // resolved. Mapping work is kept in memory (and in userData, so it
-        // survives a reload) so a shortfall does not throw it away.
+        // ── Accept walkthrough (§6, §7) ───────────────────────────────────
+        // One requirement per screen: the ask in a sentence, then two ways to
+        // answer it. There is no reject option on a requirement — rejecting one
+        // is declining the challenge. Mapping work is kept in memory and in
+        // userData, so it survives a reload and a shortfall does not throw it
+        // away.
 
         let _vsAccept = null;
 
@@ -23291,7 +23470,7 @@
                 var a = gritFindActivity(saved[reqId] && saved[reqId].activityId);
                 if (a) mapping[reqId] = { activityId: a.id, activityName: a.name };
             });
-            _vsAccept = { id: id, step: 0, mapping: mapping };
+            _vsAccept = { id: id, step: 0, mapping: mapping, picking: false };
             vsRenderAcceptStep();
         };
 
@@ -23302,6 +23481,52 @@
             debouncedSaveUserData();
         }
 
+        function vsAcceptStepDots(reqs, i) {
+            return '<div class="vs-stepdots">' + reqs.map(function (r, k) {
+                return '<span class="vs-stepdot' + (k === i ? ' on' : '') +
+                       (_vsAccept.mapping[r.reqId] ? ' done' : '') + '"></span>';
+            }).join('') + '</div>';
+        }
+
+        // §7 — the receiver's mirror of the sender's stakes screen.
+        function vsRenderAcceptReview(ch, reqs, uid) {
+            var allMapped = reqs.every(function (r) { return _vsAccept.mapping[r.reqId]; });
+            var bal   = gritBalance();
+            var short = bal < ch.stake;
+            var rows  = reqs.map(function (r, idx) {
+                var m = _vsAccept.mapping[r.reqId];
+                return '<div class="vs-review-row">' +
+                    '<span class="vs-review-req">' + escapeHtml(vsReqName(ch, r)) + ' ×' + r.targetCount + '</span>' +
+                    '<span class="vs-review-act">' + (m ? escapeHtml(m.activityName) : '—') + '</span>' +
+                    '<button class="vs-review-edit" onclick="vsAcceptGoto(' + idx + ')">change</button>' +
+                    '</div>';
+            }).join('');
+
+            vsSheet(
+                vsSheetHead('Accepting · ' + vsName(ch, vsOther(ch, uid)), ch.name) +
+                '<div class="modal-body pl-modal-body">' +
+                    vsStakes([
+                        { label: 'Your stake', value: ch.stake + ' Grit', tone: 'gold' },
+                        { label: 'Bonus',      value: '+' + (ch.bonusXP || 1) + ' XP', tone: 'xp' },
+                        { label: 'Balance',    value: bal + ' Grit', tone: short ? 'short' : 'neutral' }
+                    ]) +
+                    '<div class="vs-review-head">' + vsDurationText(ch.durationDays) +
+                        ' · winner takes ' + (ch.stake * 2) + ' Grit</div>' +
+                    '<div class="vs-review">' + rows + '</div>' +
+                    (short
+                        ? '<p class="vs-note vs-short">You are ' + (ch.stake - bal) +
+                          ' Grit short. Your choices are saved.</p>'
+                        : '<p class="vs-note">Only same-day completions count.</p>') +
+                '</div>' +
+                '<div class="modal-footer pl-modal-footer">' +
+                    '<button class="vs-btn vs-btn-ghost" onclick="vsAcceptGoto(' + (reqs.length - 1) +
+                        ')">Back</button>' +
+                    '<button class="vs-btn vs-btn-primary" id="vsAcceptBtn" onclick="vsSubmitAccept()"' +
+                        ((!allMapped || short) ? ' disabled' : '') + '>Accept · ' + ch.stake + ' Grit</button>' +
+                '</div>'
+            );
+        }
+
         function vsRenderAcceptStep() {
             var ch = vsCacheGet(_vsAccept.id);
             if (!ch) { vsCloseSheet(); return; }
@@ -23309,114 +23534,108 @@
             var i = Math.min(_vsAccept.step, reqs.length);
             var uid = vsUid();
 
-            // Final screen — review and accept.
-            if (i >= reqs.length) {
-                var allMapped = reqs.every(function (r) { return _vsAccept.mapping[r.reqId]; });
-                var bal = gritBalance();
-                var short = bal < ch.stake;
-                var rows = reqs.map(function (r, idx) {
-                    var m = _vsAccept.mapping[r.reqId];
-                    return '<div class="vs-review-row">' +
-                        '<span class="vs-review-req">' + escapeHtml(r.name) + ' ×' + r.targetCount + '</span>' +
-                        '<span class="vs-review-act">' + (m ? escapeHtml(m.activityName) : '—') + '</span>' +
-                        '<button class="vs-review-edit" onclick="vsAcceptGoto(' + idx + ')">change</button>' +
-                        '</div>';
+            if (i >= reqs.length) { vsRenderAcceptReview(ch, reqs, uid); return; }
+
+            var req      = reqs[i];
+            var reqLabel = vsReqName(ch, req);
+            var chosen   = _vsAccept.mapping[req.reqId];
+            var senderNm = vsName(ch, vsOther(ch, uid));
+
+            var footer =
+                '<div class="modal-footer pl-modal-footer">' +
+                    (i > 0
+                        ? '<button class="vs-btn vs-btn-ghost" onclick="vsAcceptGoto(' + (i - 1) + ')">Back</button>'
+                        : '<button class="vs-btn vs-btn-ghost" onclick="vsCloseSheet()">Cancel</button>') +
+                    '<button class="vs-btn vs-btn-primary" onclick="vsAcceptGoto(' + (i + 1) + ')"' +
+                        (chosen ? '' : ' disabled') + '>' +
+                        (i + 1 >= reqs.length ? 'Review' : 'Next') + '</button>' +
+                '</div>';
+
+            // Second state of the same step: the receiver's own activity list.
+            if (_vsAccept.picking) {
+                var committed = vsCommittedActivityIds(ch.id);
+                var takenHere = Object.keys(_vsAccept.mapping)
+                    .filter(function (k) { return k !== req.reqId; })
+                    .map(function (k) { return _vsAccept.mapping[k].activityId; });
+                var acts = gritAllActivities();
+                var list = acts.map(function (a) {
+                    var lock = committed.has(a.id) ? 'In another challenge'
+                             : (takenHere.indexOf(a.id) !== -1 ? 'Used for another requirement' : null);
+                    if (lock) {
+                        return '<div class="vs-pickrow is-locked">' +
+                               '<span class="vs-pickrow-name">' + escapeHtml(a.name) + '</span>' +
+                               '<span class="vs-pickrow-why">' + escapeHtml(lock) + '</span></div>';
+                    }
+                    return '<button type="button" class="vs-pickrow' +
+                           (chosen && chosen.activityId === a.id ? ' is-on' : '') +
+                           '" onclick="vsMapExisting(\'' + a.id + '\')">' +
+                           '<span class="vs-pickrow-name">' + escapeHtml(a.name) + '</span>' +
+                           '<span class="vs-pickrow-xp">' + (a.baseXP || 0) + ' XP</span></button>';
                 }).join('');
+
                 vsSheet(
-                    vsSheetHead('Accepting · ' + vsName(ch, vsOther(ch, uid)), ch.name) +
+                    vsSheetHead('Requirement ' + (i + 1) + ' of ' + reqs.length, reqLabel) +
                     '<div class="modal-body pl-modal-body">' +
-                        '<div class="vs-review">' + rows + '</div>' +
-                        '<div class="vs-summary">' +
-                            '<div><span>Your stake</span><strong>' + ch.stake + ' Grit</strong></div>' +
-                            '<div><span>Pot</span><strong>' + (ch.stake * 2) + ' Grit</strong></div>' +
-                            '<div><span>Your balance</span><strong class="' + (short ? 'vs-short' : '') + '">' +
-                                bal + ' Grit</strong></div>' +
-                            '<div><span>Runs for</span><strong>' + ch.durationDays + ' days</strong></div>' +
-                        '</div>' +
-                        '<p class="vs-note"><strong>Only completions logged on the day they happen count toward ' +
-                        'this challenge.</strong> Backdating still earns XP and feeds your streaks everywhere ' +
-                        'else — it just does not move this wager.</p>' +
-                        (short ? '<p class="vs-note vs-short">You are ' + (ch.stake - bal) +
-                                 ' Grit short. Your mapping is saved — come back when you have earned it.</p>' : '') +
+                        (acts.length
+                            ? '<div class="vs-picker-list vs-picker-tall">' + list + '</div>'
+                            : '<p class="vs-note">You have no activities yet.</p>') +
                     '</div>' +
                     '<div class="modal-footer pl-modal-footer">' +
-                        '<button class="vs-btn vs-btn-ghost" onclick="vsAcceptGoto(' + (reqs.length - 1) + ')">Back</button>' +
-                        '<button class="vs-btn vs-btn-primary" id="vsAcceptBtn" onclick="vsSubmitAccept()"' +
-                            ((!allMapped || short) ? ' disabled' : '') + '>Accept · stake ' + ch.stake + '</button>' +
+                        '<button class="vs-btn vs-btn-ghost" onclick="vsClosePick()">Back</button>' +
                     '</div>'
                 );
                 return;
             }
 
-            var req = reqs[i];
-            var chosen = _vsAccept.mapping[req.reqId];
-            var committed = vsCommittedActivityIds(ch.id);
-            var takenHere = Object.keys(_vsAccept.mapping)
-                .filter(function (k) { return k !== req.reqId; })
-                .map(function (k) { return _vsAccept.mapping[k].activityId; });
-
-            var acts = gritAllActivities();
-            var pickerRows = acts.map(function (a) {
-                var lockedElsewhere = committed.has(a.id);
-                var usedHere = takenHere.indexOf(a.id) !== -1;
-                if (lockedElsewhere || usedHere) {
-                    return '<div class="vs-pick-row vs-pick-locked">' +
-                        '<span>' + escapeHtml(a.name) + '</span>' +
-                        '<span class="vs-pick-why">' +
-                        (lockedElsewhere ? 'in another challenge' : 'used for another requirement') +
-                        '</span></div>';
-                }
-                return '<button class="vs-pick-row' + (chosen && chosen.activityId === a.id ? ' vs-pick-on' : '') +
-                       '" onclick="vsMapExisting(\'' + a.id + '\')">' +
-                       '<span>' + escapeHtml(a.name) + '</span>' +
-                       '<span class="vs-pick-xp">' + (a.baseXP || 0) + ' XP</span></button>';
-            }).join('');
-
             vsSheet(
-                vsSheetHead('Requirement ' + (i + 1) + ' of ' + reqs.length, req.name) +
+                vsSheetHead('Requirement ' + (i + 1) + ' of ' + reqs.length, reqLabel) +
                 '<div class="modal-body pl-modal-body">' +
-                    '<div class="vs-stepdots">' + reqs.map(function (r, k) {
-                        return '<span class="vs-stepdot' + (k === i ? ' on' : '') +
-                               (_vsAccept.mapping[r.reqId] ? ' done' : '') + '"></span>';
-                    }).join('') + '</div>' +
-                    '<p class="vs-note">They need this done <strong>' + req.targetCount +
-                    '&times;</strong>. Point it at one of your activities, or add it.</p>' +
-                    '<button class="vs-btn vs-btn-primary vs-addact" onclick="vsCreateActivityFor()">' +
-                        '+ Add "' + escapeHtml(req.name) + '" to my activities</button>' +
-                    '<div class="vs-pick-head">I already do this</div>' +
-                    (acts.length ? '<div class="vs-picklist">' + pickerRows + '</div>'
-                                 : '<p class="vs-note">You have no activities yet.</p>') +
+                    vsAcceptStepDots(reqs, i) +
+                    '<p class="vs-ask">' + escapeHtml(senderNm) + ' challenged you to perform <strong>' +
+                        escapeHtml(reqLabel) + '</strong> <strong>' + req.targetCount + ' times</strong> in ' +
+                        vsDurationText(ch.durationDays) + '.</p>' +
+                    (chosen
+                        ? '<div class="vs-chosen">Using <strong>' + escapeHtml(chosen.activityName) +
+                          '</strong></div>'
+                        : '') +
+                    '<button class="vs-choice vs-choice-primary" onclick="vsCreateActivityFor()">' +
+                        'Add to my activities</button>' +
+                    '<button class="vs-choice" onclick="vsOpenPick()">' +
+                        'Use one of my activities</button>' +
                 '</div>' +
-                '<div class="modal-footer pl-modal-footer">' +
-                    (i > 0 ? '<button class="vs-btn vs-btn-ghost" onclick="vsAcceptGoto(' + (i - 1) + ')">Back</button>'
-                           : '<button class="vs-btn vs-btn-ghost" onclick="vsCloseSheet()">Cancel</button>') +
-                    '<button class="vs-btn vs-btn-primary" onclick="vsAcceptGoto(' + (i + 1) + ')"' +
-                        (chosen ? '' : ' disabled') + '>' +
-                        (i + 1 >= reqs.length ? 'Review' : 'Next') + '</button>' +
-                '</div>'
+                footer
             );
         }
 
         window.vsAcceptGoto = function (step) {
             if (!_vsAccept) return;
             _vsAccept.step = Math.max(0, step);
+            _vsAccept.picking = false;
             vsRenderAcceptStep();
         };
+
+        window.vsOpenPick  = function () { if (_vsAccept) { _vsAccept.picking = true;  vsRenderAcceptStep(); } };
+        window.vsClosePick = function () { if (_vsAccept) { _vsAccept.picking = false; vsRenderAcceptStep(); } };
 
         window.vsMapExisting = function (activityId) {
             var ch = vsCacheGet(_vsAccept.id);
             var req = (ch.requirements || [])[_vsAccept.step];
             var act = gritFindActivity(activityId);
             if (!req || !act) return;
+            // An activity the receiver already owns keeps its own settings —
+            // there is nothing to carry forward onto a configured activity.
             _vsAccept.mapping[req.reqId] = { activityId: act.id, activityName: act.name };
             vsPersistAcceptDraft();
+            _vsAccept.picking = false;
             vsAcceptGoto(_vsAccept.step + 1);
         };
 
-        // "Add this to my activities" reuses the existing activity-creation
-        // path exactly — same modal, same defaults, same dimension/path
-        // prompts. Nothing is forked. The new activity is identified by
-        // diffing the id set across the save.
+        // "Add to my activities" reuses the existing activity-creation path
+        // exactly — same modal, same validation, same dimension/path prompts.
+        // Nothing is forked. What is new is the seed (§6): the sender's
+        // advanced settings, mirrored through the challenge document, are
+        // pre-filled so a negative or repeatable habit crosses intact. The
+        // receiver can still change anything before saving.
         window.vsCreateActivityFor = function () {
             var ch = vsCacheGet(_vsAccept.id);
             var req = (ch.requirements || [])[_vsAccept.step];
@@ -23427,12 +23646,49 @@
             };
             vsCloseSheet();
             openActivityModal(null, null);
-            var nameEl = document.getElementById('activityName');
-            if (nameEl) nameEl.value = req.name;
+            vsSeedActivityModal(vsReqName(ch, req), req.seed);
         };
+
+        // Pre-fills the activity modal from the seed the sender mirrored in.
+        // Every write is guarded: an older challenge document has no seed, and
+        // the modal must still open cleanly on its own defaults.
+        function vsSeedActivityModal(name, seed) {
+            var set = function (id, value) {
+                var el = document.getElementById(id);
+                if (el) el.value = value;
+                return el;
+            };
+            set('activityName', name || '');
+            if (!seed) return;
+            try {
+                if (seed.baseXP) { set('activityXP', seed.baseXP); syncActivityXPPreset(); }
+                if (seed.frequency) { set('activityFrequency', seed.frequency); toggleCustomDays(); }
+
+                var negOn = !!(seed.isNegative || seed.isSkipNegative);
+                var negEl = document.getElementById('activityNegativeEnabled');
+                if (negEl) negEl.checked = negOn;
+                var negSec = document.getElementById('negativeXpSection');
+                if (negSec) negSec.style.display = negOn ? 'flex' : 'none';
+                if (negOn) {
+                    var mode = seed.negativeXpMode || (seed.isNegative ? 'perform' : 'skip');
+                    var modeEl = document.querySelector('input[name="negativeXpMode"][value="' + mode + '"]');
+                    if (modeEl) modeEl.checked = true;
+                }
+
+                var multiEl = document.getElementById('activityAllowMultiple');
+                if (multiEl) multiEl.checked = !!seed.allowMultiplePerDay;
+
+                // Anything carried forward is an advanced setting by
+                // definition — open the section so it is not a surprise.
+                if ((negOn || seed.allowMultiplePerDay) && typeof setAdvancedSectionOpen === 'function') {
+                    setAdvancedSectionOpen(true);
+                }
+            } catch (e) { console.warn('Versus: seeding the activity modal failed', e && e.message); }
+        }
 
         window.vsSubmitAccept = async function () {
             var btn = document.getElementById('vsAcceptBtn');
+            var label = btn ? btn.textContent : 'Accept';
             if (btn) { btn.disabled = true; btn.textContent = 'Staking…'; }
             try {
                 await vsAcceptChallenge(_vsAccept.id, _vsAccept.mapping);
@@ -23447,7 +23703,7 @@
                 vsPaint();
             } catch (e) {
                 showToast(vsErrText(e), 'red');
-                if (btn) { btn.disabled = false; btn.textContent = 'Accept'; }
+                if (btn) { btn.disabled = false; btn.textContent = label; }
             }
         };
 
