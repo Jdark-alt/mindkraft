@@ -4662,6 +4662,7 @@
             border-bottom: 1px solid rgba(255,255,255,0.07);
             margin-bottom: 14px;
             gap: 0;
+            align-items: center;
         }
         .fr-lb-tab {
             padding: 10px 14px 9px;
@@ -14875,19 +14876,20 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 
 /* ── Shop: the self / gift pair ── */
 .grit-buy-pair { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+/* Gifting is a first-class purchase, so its button is the buy button in
+   gold rather than a dashed afterthought. Both carry the same height,
+   weight and diamond. */
 .grit-gift-buy {
-    min-width: 58px;
-    padding: 7px 12px;
-    border-radius: 9px;
-    border: 1px dashed var(--color-border);
-    background: transparent;
-    color: var(--color-text-secondary);
-    font: 700 11.5px Inter, sans-serif;
-    font-variant-numeric: tabular-nums;
-    cursor: pointer;
-    transition: color .16s ease, border-color .16s ease;
+    color: #f5c563;
+    border-color: color-mix(in srgb, #f5c563 32%, transparent);
+    background: color-mix(in srgb, #f5c563 9%, transparent);
+    white-space: nowrap;
 }
-.grit-gift-buy:hover:not(:disabled) { color: #f5c563; border-color: #f5c563; }
+.grit-gift-buy::before { content: '◆ '; color: #f5c563; font-size: 10px; }
+.grit-gift-buy:hover:not(:disabled) {
+    background: color-mix(in srgb, #f5c563 16%, transparent);
+    border-color: color-mix(in srgb, #f5c563 55%, transparent);
+}
 .grit-gift-buy:disabled { cursor: not-allowed; opacity: 0.45; }
 .grit-item-gift-note { color: var(--color-text-secondary); opacity: 0.8; font-style: italic; }
 
@@ -14982,13 +14984,33 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 }
 .gift-back-btn:hover { border-color: var(--color-accent-blue); }
 
-/* The profile card is reachable from both social pages, so it carries no
-   board control of its own — it says where the control lives instead. */
-.pf-board-hint {
-    margin: 0 0 6px; padding: 0 2px;
-    font: 500 11px/1.55 Inter, sans-serif;
-    color: var(--color-text-secondary); opacity: .85; text-align: center;
+/* The three things you can do to a friend, on every route into the card —
+   from either social page and from any of the three metric tabs. */
+.pf-card-actions { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 10px; }
+.pf-card-action {
+    width: 100%; display: flex; align-items: center; justify-content: flex-start;
+    gap: 10px; padding: 11px 14px; font-size: 12.5px; font-weight: 600;
 }
+.pf-card-action svg { width: 15px; height: 15px; flex-shrink: 0; opacity: .85; }
+.pf-card-action.is-on { color: var(--color-progress); border-color: color-mix(in srgb, var(--color-progress) 40%, transparent); }
+.pf-card-action-danger:hover {
+    color: var(--color-accent-rose);
+    border-color: color-mix(in srgb, var(--color-accent-rose) 45%, transparent);
+}
+
+/* ── The board editor's trigger, riding the metric tab row ── */
+.fr-lb-edit {
+    flex-shrink: 0; margin-left: auto; align-self: center;
+    width: 32px; height: 32px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid var(--color-border); border-radius: 9px;
+    background: transparent; color: var(--color-text-secondary);
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+    transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+.fr-lb-edit svg { width: 14px; height: 14px; }
+.fr-lb-edit:hover { color: var(--color-text-primary); border-color: var(--color-accent-blue); }
+.lb-board-count-row { margin-bottom: 12px; }
 
 /* ── "Someone added you" — the sheet on app open ── */
 .fr-req-pop-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
@@ -15084,13 +15106,7 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 }
 .lb-optin-rules strong { color: var(--color-text-primary); font-weight: 600; }
 
-/* ── Your board: the only place a roster is edited ── */
-.lb-board { margin-top: 4px; }
-.lb-board-head {
-    display: flex; align-items: baseline; justify-content: space-between;
-    gap: 10px; margin-bottom: 10px;
-}
-.lb-board-head .fr-section-kicker { margin: 0; }
+/* ── Your board: the editor behind the pencil on the metric tab row ── */
 .lb-board-count {
     flex-shrink: 0; font: 600 11px Inter, sans-serif;
     color: var(--color-text-secondary); font-variant-numeric: tabular-nums;

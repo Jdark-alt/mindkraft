@@ -13315,7 +13315,7 @@
                 if (all) all.innerHTML = allHTML;
 
                 // ── 8. Leaderboard board controls + payout panel (§8) ──────────
-                try { lbRenderPayoutSection(entries); } catch (e) { console.warn('Leaderboard payout panel failed', e); }
+                try { lbRenderPayoutSection(); } catch (e) { console.warn('Leaderboard payout panel failed', e); }
 
                 // ── 9. Gifts you have sent (§6 — the sender's own sent list) ───
                 try { giftRenderSentList(); } catch (e) { console.warn('Sent-gift list failed', e); }
@@ -13509,6 +13509,19 @@
             }
         };
 
+        // Everyone you add is on your board from the moment you add them.
+        // `leaderboardHidden` is an exclusion list, so a new friend is on by
+        // default already — but a uid can survive in it from an earlier
+        // friendship, and a re-added friend silently missing from the ranking
+        // is indistinguishable from a bug. Clearing it on every add makes the
+        // rule true rather than usually true.
+        function frJoinBoard(uid) {
+            var hidden = window.userData.leaderboardHidden || [];
+            if (hidden.indexOf(uid) === -1) return false;
+            window.userData.leaderboardHidden = hidden.filter(function (u) { return u !== uid; });
+            return true;
+        }
+
         // ── Add friend by MK code ─────────────────────────────────────────
         window.addFriendByCode = async function() {
             const input  = document.getElementById('friendCodeInput');
@@ -13543,9 +13556,11 @@
                     return;
                 }
 
-                // Add to own friends list
+                // Add to own friends list, and onto the board with it.
                 window.userData.friends = [...friends, friendUID];
+                frJoinBoard(friendUID);
                 await saveUserData();
+                try { lbPublishBoard(true); } catch (e) {}
 
                 // Notify the other user — deterministic doc ID prevents duplicates
                 try {
@@ -13672,19 +13687,20 @@
                 </div>
 
                 ${!isMe ? `
-                <div style="display:flex;gap:8px;margin: 4px 0 8px;">
-                    <button onclick="closeFriendProfileCard();giftOpenPicker('${escapeHtml(uid)}')" class="pf-ghost-btn" style="flex:1;justify-content:center;padding:10px;font-size:12px;">
-                        Send a gift
+                <div class="pf-card-actions">
+                    <button onclick="closeFriendProfileCard();giftOpenPicker('${escapeHtml(uid)}')" class="pf-ghost-btn pf-card-action">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 12 20 22 4 22 4 12"/><rect x="2" y="7" width="20" height="5"/><line x1="12" y1="22" x2="12" y2="7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></svg>
+                        <span>Send a gift</span>
                     </button>
-                </div>
-                <div style="display:flex;gap:8px;margin: 4px 0 8px;">
-                    <button onclick="removeFriend('${escapeHtml(uid)}')" class="pf-ghost-btn" style="flex:1;justify-content:center;padding:10px;font-size:12px;">
-                        Remove Friend
+                    <button onclick="toggleLeaderboardVisibility('${escapeHtml(uid)}')" class="pf-ghost-btn pf-card-action${isHidden ? '' : ' is-on'}">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="12" width="5" height="8" rx="1"/><rect x="9.5" y="6" width="5" height="14" rx="1"/><rect x="16" y="14" width="5" height="6" rx="1"/></svg>
+                        <span>${isHidden ? 'Add to leaderboard' : 'Remove from leaderboard'}</span>
                     </button>
-                </div>
-                <div class="pf-board-hint">${isHidden
-                    ? 'Not on your leaderboard. Add them from Your board on the Leaderboards tab.'
-                    : 'On your leaderboard. Change that from Your board on the Leaderboards tab.'}</div>` : ''}`;
+                    <button onclick="removeFriend('${escapeHtml(uid)}')" class="pf-ghost-btn pf-card-action pf-card-action-danger">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+                        <span>Remove friend</span>
+                    </button>
+                </div>` : ''}`;
 
             overlay.style.display = 'flex';
 
@@ -13753,17 +13769,36 @@
             // settle mutuality (§8.1), so it must not lag a toggle. The change
             // only reaches the SCORED roster next Monday — see lbPublishBoard.
             try { lbPublishBoard(true); } catch (e) {}
-            closeFriendProfileCard();
-            // Repaint the two things this actually changes. Calling the full
-            // async render here is what made the page blink on every tap.
+            // Repaint the three things this actually changes, in place. The
+            // profile card stays open: it is where the button was pressed, and
+            // closing it as feedback loses the thing you were looking at.
             frRepaintBoardViews(uid);
+            frSyncProfileBoardBtn(uid);
+            var name = ((window._friendProfileCache || {})[uid] || {}).displayName || 'They';
+            showToast(isHidden ? name + ' is on your leaderboard.'
+                               : name + ' is off your leaderboard.',
+                      isHidden ? 'green' : 'olive');
         };
+
+        // The profile card's board button labels its own next action, so it
+        // has to be relabelled after a toggle rather than left lying.
+        function frSyncProfileBoardBtn(uid) {
+            var overlay = document.getElementById('friendProfileOverlay');
+            if (!overlay || overlay.style.display === 'none') return;
+            var btn = overlay.querySelector('.pf-card-action[onclick*="toggleLeaderboardVisibility"]');
+            if (!btn) return;
+            var isHidden = (window.userData.leaderboardHidden || []).indexOf(uid) !== -1;
+            btn.classList.toggle('is-on', !isHidden);
+            var label = btn.querySelector('span');
+            if (label) label.textContent = isHidden ? 'Add to leaderboard' : 'Remove from leaderboard';
+        }
 
         // ── Accept a friend request ───────────────────────────────────────
         window.acceptFriendRequest = async function(fromUID, fromCode, docId) {
             const friends = window.userData.friends || [];
             if (!friends.includes(fromUID) && friends.length < 20) {
                 window.userData.friends = [...friends, fromUID];
+                frJoinBoard(fromUID);
                 await saveUserData();
             }
             try {
@@ -19221,8 +19256,14 @@
             var boostsLeft = gritBoostsLeftThisMonth();
             html += '<h4 class="grit-h">Shop</h4><div class="grit-shop">';
 
-            var pool = g.shieldPool || 0;
-            html += '<div class="grit-item' + (g.balance < GRIT_SHIELD_COST ? ' is-poor' : '') + '">' +
+            // A card is dimmed only when you can afford NEITHER action on it.
+            // Gifting is half price, so a balance that covers only the gift
+            // still leaves the card live — greying it out told people they
+            // could do nothing when they could still do something.
+            var pool       = g.shieldPool || 0;
+            var canBuyShield  = g.balance >= GRIT_SHIELD_COST;
+            var canGiftShield = g.balance >= GRIT_GIFT_SHIELD_COST;
+            html += '<div class="grit-item' + (!canBuyShield && !canGiftShield ? ' is-poor' : '') + '">' +
                       '<div class="grit-item-main">' +
                         '<div class="grit-item-name">🛡 Streak shield</div>' +
                         '<div class="grit-item-sub">Absorbs one missed window. Buy into your pool, ' +
@@ -19232,10 +19273,10 @@
                       '</div>' +
                       '<div class="grit-buy-pair">' +
                         '<button type="button" class="grit-buy" id="gritBuyShieldBtn"' +
-                          (g.balance < GRIT_SHIELD_COST ? ' disabled' : '') + '>' +
+                          (canBuyShield ? '' : ' disabled') + '>' +
                           GRIT_SHIELD_COST + '</button>' +
-                        '<button type="button" class="grit-gift-buy" id="gritGiftShieldBtn"' +
-                          (g.balance < GRIT_GIFT_SHIELD_COST ? ' disabled' : '') +
+                        '<button type="button" class="grit-buy grit-gift-buy" id="gritGiftShieldBtn"' +
+                          (canGiftShield ? '' : ' disabled') +
                           ' title="Gift a shield to a friend">Gift ' + GRIT_GIFT_SHIELD_COST + '</button>' +
                       '</div>' +
                     '</div>';
@@ -19257,7 +19298,7 @@
             var boostBlocked = g.balance < GRIT_BOOST_COST || boostsLeft <= 0 || !!g.pendingBoost;
             var giftBoostsLeft   = gritGiftBoostsLeftThisMonth();
             var giftBoostBlocked = g.balance < GRIT_GIFT_BOOST_COST || giftBoostsLeft <= 0;
-            html += '<div class="grit-item' + (boostBlocked ? ' is-poor' : '') + '">' +
+            html += '<div class="grit-item' + (boostBlocked && giftBoostBlocked ? ' is-poor' : '') + '">' +
                       '<div class="grit-item-main">' +
                         '<div class="grit-item-name">⚡ Double XP</div>' +
                         '<div class="grit-item-sub">' +
@@ -19273,7 +19314,7 @@
                         '<button type="button" class="grit-buy" id="gritBuyBoostBtn"' +
                           (boostBlocked ? ' disabled' : '') + '>' +
                           GRIT_BOOST_COST + '</button>' +
-                        '<button type="button" class="grit-gift-buy" id="gritGiftBoostBtn"' +
+                        '<button type="button" class="grit-buy grit-gift-buy" id="gritGiftBoostBtn"' +
                           (giftBoostBlocked ? ' disabled' : '') +
                           ' title="Gift double XP to a friend">Gift ' + GRIT_GIFT_BOOST_COST + '</button>' +
                       '</div>' +
@@ -19360,7 +19401,7 @@
         // deeper read is a bigger query on every visit to the tab.
         const GRIT_LOG_PAGE  = 20;
         const GRIT_LOG_DEPTH = 100;
-        let _gritLogOpen = true;
+        let _gritLogOpen = false;   // collapsed by default — the page opens on what you can do, not on history
         let _gritLogPage = 0;
 
         // Lists every activity a shield can actually protect, with its current
@@ -23356,7 +23397,7 @@
             }
             await saveUserData();
             await lbPublishBoard(true);
-            try { lbRenderPayoutSection(window._frEntries || []); } catch (e) {}
+            try { lbRenderPayoutSection(); } catch (e) {}
         };
 
         // ── The Leaderboards tab panel (§8.6, §8.7) ───────────────────────
@@ -23421,11 +23462,12 @@
             return '<span class="lb-roster-av lb-roster-av-initial">' + giftEsc(initial) + '</span>';
         }
 
-        // Repaint exactly what a board toggle changes: the one row, the count,
-        // and the ranking above. Rebuilding the panel would collapse the
-        // explainer and make the page jump — which is what it used to do.
+        // Repaint exactly what a board toggle changes: the one row in the
+        // editor and its count. The ranking behind the sheet is repainted by
+        // the caller. Rebuilding the sheet would scroll it back to the top.
         window.lbSyncRosterRow = function (uid) {
-            var row = document.querySelector('.lb-roster-row[data-uid="' + (window.CSS && CSS.escape ? CSS.escape(uid) : uid) + '"]');
+            var sel = '.lb-roster-row[data-uid="' + (window.CSS && CSS.escape ? CSS.escape(uid) : uid) + '"]';
+            var row = document.querySelector(sel);
             if (row) {
                 var entry = (window._frEntries || []).filter(function (x) { return x.uid === uid; })[0];
                 row.outerHTML = lbRosterRowHtml(uid, entry);
@@ -23434,7 +23476,61 @@
             if (count) count.textContent = lbBoardCountText();
         };
 
-        function lbRenderPayoutSection(entries) {
+        // ── The board editor (the pencil beside the metric tabs) ──────────
+        // Everyone you add is on your board from the moment you add them, so
+        // this is a correction, not a setup step: it opens on demand and it
+        // does not sit under the ranking as a second list of the same names.
+        window.lbCloseBoardEditor = function () {
+            var el = document.getElementById('lbBoardSheet');
+            if (el) el.remove();
+        };
+
+        window.lbOpenBoardEditor = function () {
+            if (!window.userData) return;
+            var friends = (window.userData.friends || []);
+            var entries = window._frEntries || [];
+            var body;
+            if (!friends.length) {
+                body = '<div class="lb-board-empty">' +
+                         '<p>Your board is built from your friends. Add someone and they join it automatically.</p>' +
+                         '<button type="button" class="lb-board-cta" ' +
+                           'onclick="lbCloseBoardEditor();switchTab(\'people\')">Go to Friends</button>' +
+                       '</div>';
+            } else {
+                body = '<div class="lb-roster" id="lbRoster">' +
+                         friends.map(function (u) {
+                             var e = entries.filter(function (x) { return x.uid === u; })[0];
+                             return lbRosterRowHtml(u, e);
+                         }).join('') +
+                       '</div>' +
+                       '<p class="lb-board-note">Taking someone off hides them from your ranking. ' +
+                         'It reaches the scored roster next Monday.</p>';
+            }
+
+            lbCloseBoardEditor();
+            var el = document.createElement('div');
+            el.id = 'lbBoardSheet';
+            el.className = 'modal-overlay gift-sheet-scrim active';
+            el.addEventListener('click', function (ev) { if (ev.target === el) lbCloseBoardEditor(); });
+            el.innerHTML =
+                '<div class="modal pl-modal gift-sheet">' +
+                  '<div class="modal-header pl-modal-header">' +
+                    '<div><div class="pl-modal-eyebrow">Leaderboard</div>' +
+                    '<h3 class="modal-title">Your board</h3></div>' +
+                    '<button class="pl-modal-close" type="button" onclick="lbCloseBoardEditor()" aria-label="Close">' +
+                    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+                    '</button>' +
+                  '</div>' +
+                  '<div class="modal-body pl-modal-body">' +
+                    '<div class="lb-board-count-row"><span class="lb-board-count" id="lbBoardCount">' +
+                      lbBoardCountText() + '</span></div>' +
+                    body +
+                  '</div>' +
+                '</div>';
+            document.body.appendChild(el);
+        };
+
+        function lbRenderPayoutSection() {
             var host = document.getElementById('lbPayoutSection');
             if (!host) return;
             var st = lbState();
@@ -23492,30 +23588,6 @@
                         '</ul>' +
                       '</div>' +
                     '</div>';
-
-            // ── Your board: the one place a roster is edited ────────────────
-            var friends = (window.userData.friends || []);
-            html += '<div class="lb-board">' +
-                      '<div class="lb-board-head">' +
-                        '<span class="fr-section-kicker">Your board</span>' +
-                        '<span class="lb-board-count" id="lbBoardCount">' + lbBoardCountText() + '</span>' +
-                      '</div>';
-            if (!friends.length) {
-                html += '<div class="lb-board-empty">' +
-                          '<p>Your board is built from your friends. Add someone first and they show up here.</p>' +
-                          '<button type="button" class="lb-board-cta" onclick="switchTab(\'people\')">Go to Friends</button>' +
-                        '</div>';
-            } else {
-                html += '<div class="lb-roster" id="lbRoster">' +
-                        friends.map(function (u) {
-                            var e = (entries || []).filter(function (x) { return x.uid === u; })[0];
-                            return lbRosterRowHtml(u, e);
-                        }).join('') +
-                        '</div>' +
-                        '<p class="lb-board-note">Taking someone off hides them from your ranking. ' +
-                          'It reaches the scored roster next Monday.</p>';
-            }
-            html += '</div>';
 
             host.innerHTML = html;
         }

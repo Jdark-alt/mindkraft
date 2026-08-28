@@ -1019,17 +1019,23 @@
             <div id="friendsTab" class="tab-content">
                 <h1 class="an-page-title" style="margin-bottom:18px;">Leaderboards</h1>
 
-                <!-- Leaderboard sub-tabs -->
+                <!-- Leaderboard sub-tabs, with the board editor on the end of
+                     the same row. Every friend is on the board the day you add
+                     them, so editing is the exception — it belongs behind a
+                     button, not in a permanent list of names below. -->
                 <div class="fr-lb-tabs" id="frLbTabs">
                     <button class="fr-lb-tab active" id="frTabToday" onclick="setLeaderboardMetric('xpToday')">XP Today</button>
                     <button class="fr-lb-tab" id="frTabWeek" onclick="setLeaderboardMetric('weeklyXP')">This Week</button>
                     <button class="fr-lb-tab" id="frTabHour" onclick="setLeaderboardMetric('xpPerHour')">XP / Hour</button>
+                    <button class="fr-lb-edit" id="frLbEdit" onclick="lbOpenBoardEditor()" aria-label="Edit your board" title="Edit your board">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                    </button>
                 </div>
 
                 <!-- Leaderboard rows (no card wrapper) -->
                 <div id="friendsLeaderboard" style="margin-bottom:18px;"></div>
 
-                <!-- Weekly payout: opt-in, last week's result, board roster -->
+                <!-- Weekly payout: opt-in and last week's result -->
                 <div id="lbPayoutSection"></div>
             </div>
 
