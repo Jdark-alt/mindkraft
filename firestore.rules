@@ -81,7 +81,7 @@ service cloud.firestore {
     //  in their own receiving subcollection, so nobody can mint themselves a
     //  shield or a double-XP.
     //
-    //  Same 1000-expression budget as the challenges block below: the denied
+    //  Same 1000-expression budget as the versusChallenges block below: the denied
     //  write is the expensive case, so these use diff().affectedKeys() and
     //  keys().hasOnly() rather than field-by-field comparison.
     // ══════════════════════════════════════════════════════════════════
@@ -206,39 +206,8 @@ service cloud.firestore {
                           && resource.data.toUID == request.auth.uid;
     }
 
-    //  RETIRED — Group Challenge
-    //
-    //  The feature was removed along with solo challenges; the Challenges
-    //  tab is Versus and nothing else. No client code reads or writes these
-    //  collections any more.
-    //
-    //  The documents are kept rather than deleted — a group somebody ran is
-    //  part of their record, and erasing user data to tidy up a retired
-    //  feature is not a trade this codebase makes. What is withdrawn is the
-    //  write surface: an authenticated user could previously create
-    //  arbitrary `groupInviteCodes` documents, and leaving that open for a
-    //  feature nothing calls any more is an abuse surface with no upside.
-    //  Reads stay as they were, so the data remains exportable.
-
-    match /groupChallenges/{groupId} {
-      allow read: if request.auth != null;
-      allow write: if false;
-    }
-
-    match /groupInviteCodes/{code} {
-      allow read: if request.auth != null;
-      allow write: if false;
-    }
-
-    match /groupInvitations/{inviteId} {
-      allow read: if request.auth != null
-                  && (resource.data.inviteeUid == request.auth.uid
-                      || resource.data.inviterUid == request.auth.uid);
-      allow write: if false;
-    }
-
     // ══════════════════════════════════════════════════════════════════
-    //  VERSUS CHALLENGES  —  top-level `challenges`
+    //  VERSUS CHALLENGES  —  top-level `versusChallenges`
     //
     //  Two accounts read and write one document. The document is the whole
     //  cross-account surface: counters, the agreed requirement list, each
@@ -265,7 +234,7 @@ service cloud.firestore {
     //  PACTS  —  pacts/{pactId}
     //
     //  Pact Mode's shared record, and the only cross-account surface any mode
-    //  has. Same placement reasoning as challenges below: two accounts read
+    //  has. Same placement reasoning as versusChallenges below: two accounts read
     //  and write one document, which a users/{uid} subcollection could not
     //  support without widening that user's rules far past what is safe.
     //
@@ -361,7 +330,7 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    match /challenges/{challengeId} {
+    match /versusChallenges/{challengeId} {
 
       // Firestore caps a single rule evaluation at 1000 expressions, and a
       // DENIED write is the expensive case: it evaluates every branch before

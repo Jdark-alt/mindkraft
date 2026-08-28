@@ -14069,10 +14069,9 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 
 /* ══════════════════════════════════════════════════════════════════════
    VERSUS CHALLENGES
-   Self-contained. The board inherits its anatomy from the solo Challenge
-   card this replaced — hero number, full-width track, expandable
-   breakdown — and adds the opponent as a deliberately subordinate second
-   bar so hierarchy alone says whose card this is.
+   Self-contained. The board's anatomy — hero number, full-width track,
+   expandable breakdown — with the opponent added as a deliberately
+   subordinate second bar, so hierarchy alone says whose card this is.
 
    Token discipline: electric blue (--color-accent-blue) stays
    interactive-only; gold (#f5c563) is money on the line and the win

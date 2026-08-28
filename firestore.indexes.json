@@ -15,7 +15,7 @@
       ]
     },
     {
-      "collectionGroup": "challenges",
+      "collectionGroup": "versusChallenges",
       "queryScope": "COLLECTION",
       "fields": [
         {

@@ -27,7 +27,10 @@ const PORT = 8792;
 const dir = build(`
         window.__vs = {
             refetch: function () { return vsFetch(true); },
-            paint:   function () { return vsPaint(); }
+            paint:   function () { return vsPaint(); },
+            load:    function (uid) { return loadUserData(uid); },
+            save:    function ()    { return saveUserData(); },
+            schemaVersion: function () { return USER_SCHEMA_VERSION; }
         };
 `);
 const server = await serve(dir, PORT);
@@ -144,12 +147,17 @@ const out = await page.evaluate(async () => {
   await window.vsSubmitCreate();
   await new Promise(r => setTimeout(r, 500));
 
-  const chDocs = [...window.__store].filter(p => String(p[0]).startsWith('challenges/'));
-  ok('the challenge document was written', chDocs.length === 1);
+  const chDocs = [...window.__store].filter(p => String(p[0]).startsWith('versusChallenges/'));
+  ok('the challenge document was written to the versusChallenges collection', chDocs.length === 1);
+  ok('nothing was written to the retired challenges collection',
+     ![...window.__store].some(p => /^challenges\//.test(String(p[0]))));
   const ch = chDocs[0] && chDocs[0][1];
   const reqs = (ch && ch.requirements) || [];
-  ok('requirement names come from the activity', reqs.map(r => r.name).join('|') === 'Morning Run|No Junk Food',
-     reqs.map(r => r.name));
+  ok('a requirement carries no name field of its own',
+     reqs.every(r => !('name' in r)), reqs.map(r => Object.keys(r)));
+  ok("its label reads off the creator's frozen mapping",
+     reqs.map(r => ch.mapping[ME][r.reqId].activityName).join('|') === 'Morning Run|No Junk Food',
+     reqs.map(r => ch.mapping[ME][r.reqId].activityName));
   ok('the negative-XP settings crossed into the seed',
      !!(reqs[1] && reqs[1].seed && reqs[1].seed.isSkipNegative === true &&
         reqs[1].seed.negativeXpMode === 'skip'), reqs[1] && reqs[1].seed);
@@ -158,7 +166,7 @@ const out = await page.evaluate(async () => {
 
   // ── The live board ───────────────────────────────────────────────
   const id = chDocs[0][0].split('/')[1];
-  const live = window.__store.get('challenges/' + id);
+  const live = window.__store.get('versusChallenges/' + id);
   live.status = 'active';
   live.startedAt = Date.now() - 1000;
   live.endsAt = Date.now() + 6 * 86400000;
@@ -167,7 +175,7 @@ const out = await page.evaluate(async () => {
                         [reqs[1].reqId]: { activityId: 'x2', activityName: 'Clean eating' } };
   live.progress[ME] = { [reqs[0].reqId]: 9, [reqs[1].reqId]: 3 };
   live.progress[PAL] = { [reqs[0].reqId]: 5, [reqs[1].reqId]: 2 };
-  window.__store.set('challenges/' + id, live);
+  window.__store.set('versusChallenges/' + id, live);
   await window.__vs.refetch();
   window.__vs.paint();
   await new Promise(r => setTimeout(r, 200));
@@ -238,10 +246,10 @@ const out2 = await page.evaluate(async () => {
 
   // The sender pass drove that document to `active` to paint the board.
   // Wind it back to the invite the receiver would actually be answering.
-  const inv = window.__store.get('challenges/' + id);
+  const inv = window.__store.get('versusChallenges/' + id);
   Object.assign(inv, { status: 'pending', pot: inv.stake, startedAt: null, endsAt: null });
   inv.progress[SENDER] = {}; inv.progress[ME] = {}; inv.mapping[ME] = {};
-  window.__store.set('challenges/' + id, inv);
+  window.__store.set('versusChallenges/' + id, inv);
   await window.__vs.refetch();
 
   await window.vsOpenAccept(id);
@@ -320,7 +328,7 @@ const out2 = await page.evaluate(async () => {
 
   await window.vsSubmitAccept();
   await new Promise(r => setTimeout(r, 400));
-  const ch = window.__store.get('challenges/' + id);
+  const ch = window.__store.get('versusChallenges/' + id);
   ok('accepting made the challenge active', ch.status === 'active', ch.status);
   ok('the pot is both stakes', ch.pot === 50, ch.pot);
   ok("the receiver's mapping was written", Object.keys(ch.mapping[ME]).length === 2);
@@ -330,7 +338,70 @@ const out2 = await page.evaluate(async () => {
   return log;
 });
 
-const all = out.concat(out2);
+// ══════════════════════════════════════════════════════════════════════════
+// The retirement purge. A document written before the Challenges overhaul
+// still carries the retired fields; loading it must strip them and write the
+// clean version back, and a Restore Backup must not walk them in again.
+// ══════════════════════════════════════════════════════════════════════════
+const out3 = await page.evaluate(async () => {
+  const log = [];
+  const ok = (n, c, x) => log.push((c ? 'PASS ' : 'FAIL ') + n + (x !== undefined ? '  ' + JSON.stringify(x).slice(0, 220) : ''));
+  const OLD = 'uidLegacy';
+
+  try {
+  // Exactly the shape a pre-overhaul account had.
+  const legacy = {
+    level: 9, currentXP: 0, totalXP: 0, dimensions: [], friends: [], rewards: {}, settings: {},
+    challenges: [{ id: 'c-old', name: 'Old solo challenge', status: 'active' }],
+    activeGroupChallengeId: 'grp-old',
+    vsDraftMappings: { 'vs-dead': { r1: { activityId: 'gone', activityName: 'Gone' } } },
+    vsSeenResults: { 'vs-dead': true },
+    autoBackup: {
+      savedAt: new Date().toISOString(), savedDate: '2026-08-01',
+      data: {
+        level: 9, dimensions: [],
+        challenges: [{ id: 'c-old', name: 'Old solo challenge', status: 'active' }],
+        activeGroupChallengeId: 'grp-old',
+        vsDraftMappings: { 'vs-dead': {} }, vsSeenResults: { 'vs-dead': true }
+      }
+    }
+  };
+  window.__store.set('users/' + OLD, JSON.parse(JSON.stringify(legacy)));
+  window.currentUser = { uid: OLD, displayName: 'Legacy' };
+  window.__writes.length = 0;
+  await window.__vs.load(OLD);
+  await new Promise(r => setTimeout(r, 350));
+
+  const RETIRED = ['challenges', 'activeGroupChallengeId', 'vsDraftMappings', 'vsSeenResults'];
+  ok('the retired fields are gone from memory',
+     RETIRED.every(f => !(f in window.userData)),
+     RETIRED.filter(f => f in window.userData));
+  ok('the document is stamped at the current schema version',
+     window.userData.schemaVersion === window.__vs.schemaVersion(),
+     window.userData.schemaVersion);
+  ok('the purge was persisted, not just done in memory',
+     RETIRED.every(f => !(f in (window.__store.get('users/' + OLD) || {}))),
+     RETIRED.filter(f => f in (window.__store.get('users/' + OLD) || {})));
+  ok('the backup snapshot was cleaned too, so a restore cannot resurrect them',
+     RETIRED.every(f => !(f in window.userData.autoBackup.data)),
+     RETIRED.filter(f => f in window.userData.autoBackup.data));
+  ok('data that is not retired is left alone', window.userData.level === 9);
+
+  // A second load must be a no-op — the migration is version-gated, so it
+  // cannot keep wiping live versus drafts every time the app starts.
+  window.userData.vsDraftMappings = { 'vs-live': { r1: { activityId: 'a1', activityName: 'Run' } } };
+  await window.__vs.save();
+  await window.__vs.load(OLD);
+  await new Promise(r => setTimeout(r, 300));
+  ok('a later versus draft survives the next load',
+     !!(window.userData.vsDraftMappings && window.userData.vsDraftMappings['vs-live']),
+     window.userData.vsDraftMappings);
+
+  } catch (e) { log.push('THREW: ' + (e && e.stack || e)); }
+  return log;
+});
+
+const all = out.concat(out2, out3);
 console.log(all.join('\n'));
 if (errs.length) console.log('\n' + errs.join('\n'));
 const fails = all.filter(l => l.startsWith('FAIL') || l.startsWith('THREW')).length;

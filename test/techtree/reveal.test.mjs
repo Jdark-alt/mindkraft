@@ -1,10 +1,34 @@
 import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
+import { build, serve } from '../social/harness.mjs';
+
+// The suite used to assume something else had already built and served the
+// harness on this port, so it died on ERR_CONNECTION_REFUSED before loading a
+// line of app code. It builds and serves its own now, the way the social and
+// modes suites do.
+//
+// The hooks below are the module-private tech-tree functions the §-assertions
+// are actually about. They live only in the built copy of app.js.
+const PORT = 8766;
+const dir = build(`
+        window.__ttEnsure    = function ()          { return ensureTechTree(); };
+        window.__ttRevealable= function (node, tt)  { return ttRevealable(node, tt); };
+        window.__ttBlockers  = function (node, tt)  { return ttRevealBlockers(node, tt); };
+        window.__ttState     = function (node, tt)  { return ttRevealState(node, tt); };
+        window.__ttUnlocked  = function (node, tt)  { return ttNodeUnlocked(node, tt); };
+        window.__ttBranchHtml= function (tt)        { return ttBranchHtml(tt); };
+        window.__ttSkySvg    = function ()          { return ttBuildWebSVG(ttWebLayout()); };
+        window.__ttRegen     = function ()          { return ttRegenStatus(); };
+        window.__ttEval      = function ()          { return evaluateTechTreeMastery(); };
+        window.__grit        = function ()          { return gritState(); };
+        window.__vsPeekLedger= function ()          { return _gritLedgerBuffer.slice(); };
+`);
+const server = await serve(dir, PORT);
 const b = await chromium.launch();
 const p = await b.newPage({ viewport: { width: 400, height: 900 } });
 const errs = [];
 p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message));
 p.on('dialog', d => d.accept());
-await p.goto('http://localhost:8766/index.html', { waitUntil: 'load', timeout: 45000 });
+await p.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'load', timeout: 45000 });
 await p.waitForTimeout(1200);
 
 const out = await p.evaluate(async () => {
@@ -22,7 +46,6 @@ const out = await p.evaluate(async () => {
             week:null,awarded:{},boostPurchases:[],cadence:{}},
       dimensions:[{id:'d1',name:'Body',paths:[{id:'p1',name:'Fit',
         activities:[act('a1','Run',true), act('a2','Read',false)]}]}],
-      challenges:[],
       techTree: Object.assign({
         schemaVersion:3, status:'ready', goals:[{id:'g1',rawText:'Get fit',sharpened:'Get fit',
           shortName:'Fit',color:'#5a9fd4',kind:'rhythm'}],
@@ -214,3 +237,5 @@ const f = out.filter(l=>l.startsWith('FAIL')).length;
 console.log(`\n${out.length - f} passed, ${f} failed`);
 console.log('page errors:', errs.length ? errs : 'none');
 await b.close();
+server.close();
+process.exit(f || errs.length ? 1 : 0);

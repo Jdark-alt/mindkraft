@@ -3128,8 +3128,8 @@
             var head = $('mkPageHeading');
             var title = $('mkPageHeadingTitle');
             if (title) title.textContent = entry.title || entry.label;
-            if (head) head.style.display = entry.noTitle ? 'none' : '';
-            var action = entry.noTitle ? null : entry.action;
+            if (head) head.style.display = '';
+            var action = entry.action;
             if (entry.tab === 'projects' && questDetailOpen()) action = null;
             placeAction(action);
         }

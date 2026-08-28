@@ -1103,8 +1103,9 @@
                         window._dataLoadError = (error && (error.code || error.message)) || 'load error';
                         window._dataOwnerUid = null;
                         window.userData = {
+                            schemaVersion: USER_SCHEMA_VERSION,
                             level: 1, currentXP: 0, totalXP: 0,
-                            dimensions: [], activities: [], challenges: []
+                            dimensions: []
                         };
                     }
                     authContainer.style.display = 'none';
@@ -1231,6 +1232,38 @@
         window.showDataLoadFailure = showDataLoadFailure;
 
         // Load User Data
+        // ── User-document schema migrations ───────────────────────────────
+        // One version on the document, one place that brings an older one
+        // forward. A document already at USER_SCHEMA_VERSION is untouched.
+        const USER_SCHEMA_VERSION = 1;
+
+        // v1 — the Challenges retirement. Solo challenges, group challenges
+        // and every versus challenge written under the old collection are
+        // gone. The fields they left behind are DELETED, not left inert: a
+        // field nothing reads is a trap for whoever greps for it next.
+        const RETIRED_USER_FIELDS = [
+            'challenges',              // the solo challenge list
+            'activeGroupChallengeId',  // group challenge membership
+            'vsDraftMappings',         // half-finished accepts, keyed by challenges that no longer exist
+            'vsSeenResults'            // result toasts already shown, same
+        ];
+
+        function migrateUserData(data) {
+            if (!data || typeof data !== 'object') return false;
+            if ((data.schemaVersion || 0) >= USER_SCHEMA_VERSION) return false;
+
+            RETIRED_USER_FIELDS.forEach(function (f) { delete data[f]; });
+            // The daily snapshot is a full copy of the document as it stood.
+            // Leaving the fields in there means Restore Backup puts them
+            // straight back, and the purge silently undoes itself.
+            if (data.autoBackup && data.autoBackup.data) {
+                RETIRED_USER_FIELDS.forEach(function (f) { delete data.autoBackup.data[f]; });
+            }
+
+            data.schemaVersion = USER_SCHEMA_VERSION;
+            return true;
+        }
+
         async function loadUserData(uid) {
             const userDocRef = doc(db, 'users', uid);
             let userDoc = null;
@@ -1277,6 +1310,12 @@
                 window._dataLoadError = null;
                 window._dataOwnerUid = uid;      // this data is now writable, for this uid only
                 mkTouchActivityIndex();
+                // saveUserData replaces the whole document, so clean memory is
+                // all it takes to drop the retired fields — but write it now
+                // rather than waiting for whatever the user does next.
+                if (migrateUserData(window.userData)) {
+                    saveUserData().catch(function () {});
+                }
                 // Backfill friendCode for existing users who don't have one yet
                 if (!window.userData.friendCode) {
                     window.userData.friendCode = generateFriendCode();
@@ -1314,8 +1353,9 @@
                         'no writes will be sent until a load succeeds.');
                 }
                 window.userData = {
+                    schemaVersion: USER_SCHEMA_VERSION,
                     level: 1, currentXP: 0, totalXP: 0,
-                    dimensions: [], activities: [], challenges: [],
+                    dimensions: [],
                     rewards: {}, friends: [],
                     friendCode: generateFriendCode(),
                     createdAt: new Date().toISOString()
@@ -10529,6 +10569,10 @@
                 const when = backup.savedAt ? new Date(backup.savedAt).toLocaleString() : savedDate;
                 if (!confirm('Restore backup from ' + when + '?\n\nThis replaces ALL current data.\nYour current state will be lost.\n\nContinue?')) return;
                 window.userData = backup.data;
+                // A snapshot taken before the Challenges retirement still
+                // carries its fields; the restore is exactly the path that
+                // would reintroduce them.
+                migrateUserData(window.userData);
                 mkTouchActivityIndex();
                 if (!window.userData.settings) window.userData.settings = {};
                 processStreakPauses();
@@ -10605,8 +10649,9 @@
             const word = prompt('Type RESET to confirm:');
             if (word !== 'RESET') { alert('Reset cancelled.'); return; }
             window.userData = {
+                schemaVersion: USER_SCHEMA_VERSION,
                 level: 1, currentXP: 0, totalXP: 0,
-                dimensions: [], activities: [], challenges: [], rewards: {},
+                dimensions: [], rewards: {},
                 settings: window.userData.settings || {},
                 createdAt: new Date().toISOString()
             };
@@ -19746,11 +19791,8 @@
         // ════════════════════════════════════════════════════════════════════
         //
         // A wagered two-player contest, and the whole of the Challenges tab.
-        // The solo and group challenge features that used to share this tab
-        // are gone; `window.userData.challenges` survives only as an inert
-        // field on accounts that had them, and nothing reads it.
         //
-        // Placement: a TOP-LEVEL `challenges` collection. Two accounts read and
+        // Placement: a TOP-LEVEL `versusChallenges` collection. Two accounts read and
         // write the same document; a document under users/{uid} could not be
         // granted to the other side without widening that user's rules far past
         // what is safe. The challenge document is the ONLY cross-account
@@ -19776,8 +19818,12 @@
         // together or not at all.
         // ════════════════════════════════════════════════════════════════════
 
-        const VS_COL             = 'challenges';
-        const VS_SCHEMA_VERSION  = 2;
+        // A collection of its own. The previous one was written by a schema
+        // that carried a hand-typed name on every requirement; rather than
+        // teach every reader to cope with both shapes forever, the retirement
+        // took the documents with it. Nothing here has ever seen the old one.
+        const VS_COL             = 'versusChallenges';
+        const VS_SCHEMA_VERSION  = 3;
         const VS_STAKE_MIN       = 25;     // §3.1, rate card reserved table
         const VS_STAKE_MAX       = 100;
         const VS_STAKE_STEP      = 25;
@@ -19818,15 +19864,16 @@
 
         function vsIsTerminal(status) { return VS_TERMINAL.indexOf(status) !== -1; }
 
-        // A requirement's display name. Since the authoring step stopped asking
-        // for one, `name` is written as the creator's activity name — but
-        // challenges already in flight when this shipped carry whatever the
-        // sender typed, and the creator's mapping is the better source anyway.
-        // Reading through here is what keeps both generations rendering.
+        // A requirement's display name. There is no `name` field: a
+        // requirement IS an activity, so its label is the creator's activity
+        // name, read from the creator's own mapping. That mapping is written
+        // once at create and frozen by the rules for the rest of the
+        // challenge's life — no branch of the update rule lets either side
+        // rewrite it — so this is a stable read, not a convenient guess.
         function vsReqName(ch, req) {
             var mine = (ch.mapping && ch.mapping[ch.createdBy]) || {};
             var m = mine[req.reqId];
-            return (m && m.activityName) || req.name || 'Activity';
+            return (m && m.activityName) || 'Activity';
         }
 
         // The advanced settings that make an activity behave the way its owner
@@ -20016,14 +20063,13 @@
         }
 
         // opponentUid must be a friend; requirements is
-        // [{ reqId, name, targetCount, activityId, activityName, seed }] — the
+        // [{ reqId, targetCount, activityId, activityName, seed }] — the
         // activity fields are the CREATOR's own mapping, filled in inline at
         // authoring time because they are mapping activities they already own.
         //
-        // `name` is no longer authored: a requirement IS its activity, so the
-        // field is backfilled from the activity's own name. It stays on the
-        // document because challenges created before this shipped carry a
-        // hand-typed one, and every reader still resolves through vsReqName().
+        // A requirement carries no name of its own. It is an activity and a
+        // count, and its label is read back off the creator's mapping
+        // (vsReqName) rather than stored a second time.
         //
         // `seed` is the sender's advanced settings for that activity, mirrored
         // into the challenge document because the receiver can never read the
@@ -20045,7 +20091,7 @@
                 throw new Error('Stake must be between ' + VS_STAKE_MIN + ' and ' + VS_STAKE_MAX + ' Grit.');
             }
             var durationDays = Math.max(1, Math.round(opts.durationDays || 0));
-            var reqs = (opts.requirements || []).filter(function (r) { return r && r.name && r.activityId; });
+            var reqs = (opts.requirements || []).filter(function (r) { return r && r.activityId; });
             if (!reqs.length) throw new Error('Add at least one requirement.');
             if (reqs.length > VS_MAX_REQS) throw new Error('At most ' + VS_MAX_REQS + ' requirements.');
 
@@ -20092,7 +20138,7 @@
                         activityId: r.activityId,
                         activityName: r.activityName   // snapshot at mapping time (§2.2)
                     };
-                    var req = { reqId: r.reqId, name: String(r.name).slice(0, 60),
+                    var req = { reqId: r.reqId,
                                 targetCount: Math.max(1, Math.round(r.targetCount || 1)) };
                     if (r.seed) req.seed = r.seed;
                     return req;
@@ -21383,8 +21429,6 @@
                 if (!act) { showToast('That activity no longer exists.', 'red'); return; }
                 reqs.push({
                     reqId: r.reqId,
-                    // No longer authored (§4): a requirement is its activity.
-                    name: act.name,
                     targetCount: r.targetCount,
                     activityId: act.id,
                     activityName: act.name,
@@ -21690,7 +21734,7 @@
 
         // ── Hooks into existing flows ─────────────────────────────────────
         // Every one of these is a wrapper. No existing function is
-        // restructured, and nothing here touches solo challenges.
+        // restructured.
 
         // Completion → challenge progress. completeActivity is the LIVE path;
         // retroactiveComplete is deliberately not wrapped (§4.1 rule 4).

@@ -3,17 +3,21 @@
 Drives the real `app.js` in headless Chromium against a stubbed Firebase, and
 asserts the §10 invariants directly rather than through the UI.
 
-    node test/techtree/reveal.test.mjs      # needs the harness below
+    node test/techtree/reveal.test.mjs
 
 ## Harness
 
-The suite loads `index.html` from a directory where the Firebase CDN modules
-are remapped, via an import map, to local stubs — one of which is an
-in-memory Firestore supporting dotted-path updates, transactions and
-`array-contains` queries. Build it by copying `index.html` (with the import
-map injected into `<head>`), `app.js`, `style.css` and the stubs, then
-appending the `window.__tt*` test hooks to the copied `app.js`. The hooks
-exist only in that copy — never in the repo's `app.js`.
+Shares `test/social/harness.mjs`: it copies `index.html` (with an import map
+injected into `<head>`), `app.js`, `style.css` and the stubs into a temp
+directory, so the Firebase CDN modules resolve to an in-memory Firestore
+supporting dotted-path updates, transactions and `array-contains` queries.
+The `window.__tt*` hooks are appended to that **copy** of `app.js` — they sit
+in the same module scope as the tech-tree internals the §-assertions are
+about, and never exist in the repo's own `app.js`.
+
+The suite builds and serves that harness itself. It previously assumed
+something else had already done so and died on `ERR_CONNECTION_REFUSED`
+before loading any app code.
 
 ## What it covers
 
