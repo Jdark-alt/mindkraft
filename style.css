@@ -4860,6 +4860,12 @@
             margin-bottom: 10px;
         }
         .fr-empty { padding: 20px 0; text-align: center; color: var(--color-text-secondary); font-size: 13px; }
+        .fr-retry {
+            margin-left: 6px; padding: 5px 11px; border-radius: 8px; cursor: pointer;
+            font: 600 12px Inter, sans-serif; font-family: inherit;
+            border: 1px solid var(--color-accent-blue); background: transparent;
+            color: var(--color-accent-blue);
+        }
         .fr-friend-row {
             display: flex; align-items: center; gap: 12px;
             padding: 12px 14px;
@@ -13473,6 +13479,9 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
    dimension count is already implicit in the list below it. */
 .an-page-header, .cat-page-header { display: none; }
 #projectsListView .pr-toolbar, #activitiesSubCategories .cat-toolbar { display: none; }
+/* Rewards' "i" is lifted onto the title row the same way; its host row stays
+   in the DOM (the node has to have somewhere to go back to) but out of flow. */
+#mkEmptyMoreRewards .grit-toolbar { display: none; }
 .tool-cluster:empty { display: none; }
 
 .mk-page-strip { display: flex; }
@@ -13741,13 +13750,33 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
     color: var(--color-text-secondary);
 }
 
+/* ── One card material for the page ──
+   The page used to mix three surfaces — --color-bg-card on the weekly bar
+   and the shop rows, --color-bg-secondary on the explainer, the log and the
+   pool — none of which matched the card material every other page uses.
+   They are all on the app's card token now, with its hairline and shadow. */
+.grit-week, .grit-item, .grit-pool, .grit-explain, .grit-log {
+    background: var(--surface-card);
+    border: 1px solid var(--card-hairline);
+    box-shadow:
+        0 1px 0 rgba(255,255,255,0.06) inset,
+        0 1px 2px rgba(0,0,0,0.35);
+}
+[data-theme-mode="light"] .grit-week,
+[data-theme-mode="light"] .grit-item,
+[data-theme-mode="light"] .grit-pool,
+[data-theme-mode="light"] .grit-explain,
+[data-theme-mode="light"] .grit-log {
+    background: var(--color-bg-card);
+    border-color: var(--color-border);
+    box-shadow: var(--shadow-card);
+}
+
 /* ── Weekly bar ── */
 .grit-week {
     display: block;
     width: 100%;
     text-align: left;
-    background: var(--color-bg-card);
-    border: 1px solid var(--color-border);
     border-radius: 14px;
     padding: 14px 16px 15px;
     cursor: pointer;
@@ -13755,7 +13784,7 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
     color: inherit;
     transition: border-color .18s ease, background .18s ease;
 }
-.grit-week:hover { background: var(--color-hover-overlay-strong); }
+.grit-week:hover { border-color: var(--color-accent-blue); }
 .grit-week-top {
     display: flex;
     align-items: baseline;
@@ -13863,6 +13892,53 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
     color: var(--color-text-secondary);
     margin: 26px 0 10px;
 }
+/* A section head that is also its own disclosure control. */
+.grit-h-toggle {
+    display: flex; align-items: center; justify-content: space-between;
+    width: 100%; padding: 4px 0; gap: 10px;
+    background: none; border: none; cursor: pointer; text-align: left;
+    font-family: inherit; -webkit-tap-highlight-color: transparent;
+    transition: color .15s ease;
+}
+.grit-h-toggle:hover { color: var(--color-text-primary); }
+.grit-h-chev { width: 14px; height: 14px; flex-shrink: 0; transition: transform .22s ease; }
+.grit-h-chev.is-open { transform: rotate(180deg); }
+.grit-log-wrap[hidden] { display: none; }
+
+/* The explainer flashes once when the title's "i" jumps you to it, so it is
+   obvious which heading you just landed on. */
+@keyframes gritFlag {
+    0%   { color: var(--color-progress); }
+    100% { color: var(--color-text-secondary); }
+}
+#gritHow.is-flagged { animation: gritFlag 1.6s ease; }
+@media (prefers-reduced-motion: reduce) {
+    #gritHow.is-flagged { animation: none; }
+    .grit-h-chev { transition: none; }
+}
+
+/* ── Log pager ── */
+.grit-log-pager {
+    display: flex; align-items: center; justify-content: center; gap: 12px;
+    margin-top: 10px;
+}
+.grit-log-pager:empty { display: none; }
+.grit-page-btn {
+    width: 32px; height: 32px; flex-shrink: 0; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 9px; cursor: pointer;
+    border: 1px solid var(--color-border);
+    background: var(--color-input-bg);
+    color: var(--color-text-secondary);
+    transition: color .15s ease, border-color .15s ease;
+}
+.grit-page-btn svg { width: 14px; height: 14px; }
+.grit-page-btn:hover:not(:disabled) { color: var(--color-text-primary); border-color: var(--color-accent-blue); }
+.grit-page-btn:disabled { opacity: .38; cursor: not-allowed; }
+.grit-page-count {
+    font: 600 11.5px Inter, sans-serif; color: var(--color-text-secondary);
+    font-variant-numeric: tabular-nums; min-width: 96px; text-align: center;
+}
 
 /* ── Shop ── */
 .grit-shop { display: flex; flex-direction: column; gap: 8px; }
@@ -13870,8 +13946,6 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
     display: flex;
     align-items: center;
     gap: 14px;
-    background: var(--color-bg-card);
-    border: 1px solid var(--color-border);
     border-radius: 12px;
     padding: 13px 14px;
 }
@@ -13915,8 +13989,6 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
     margin: 0;
     padding: 0;
     list-style: none;
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border);
     border-radius: 12px;
 }
 .grit-explain li {
@@ -13937,8 +14009,6 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 
 /* ── Recent activity ── */
 .grit-log {
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border);
     border-radius: 12px;
     overflow: hidden;
 }
@@ -13985,8 +14055,6 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 /* ── Grit: the shield pool and its activity picker ── */
 .grit-pool {
     margin-top: 8px;
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border);
     border-radius: 12px;
     padding: 12px 14px;
 }
@@ -14145,7 +14213,7 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 }
 
 .vs-ribbon {
-    display: inline-block; margin-bottom: 8px;
+    display: inline-block; align-self: flex-start; margin-bottom: 0;
     font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
     padding: 3px 8px; border-radius: 4px;
     background: rgba(255,255,255,0.06); color: var(--color-text-secondary);
@@ -14157,6 +14225,47 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 .vs-ribbon-tie  { color: var(--color-accent-olive); border-color: rgba(122,123,77,0.4); }
 
 /* ── Header ───────────────────────────────────────────────────────── */
+/* The header is its own block, closed off by a hairline. Before, the title,
+   the four facts and the big progress number ran together as one column and
+   the card had no point at which it said "that was the label, this is the
+   state". */
+.vs-board-head { display: flex; flex-direction: column; gap: 7px; }
+.vs-rule {
+    height: 1px; margin: 13px 0 0;
+    background: linear-gradient(90deg,
+        var(--card-hairline) 0%,
+        var(--card-hairline) 72%,
+        transparent 100%);
+}
+[data-theme-mode="light"] .vs-rule {
+    background: linear-gradient(90deg, rgba(15,17,21,0.10) 0%, rgba(15,17,21,0.10) 72%, transparent 100%);
+}
+.vs-board-sub {
+    font-size: 12px; font-weight: 500; color: var(--color-text-secondary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vs-board-head .vs-board-title { margin: 0; }
+
+/* Facts as chips: the pot, the bonus, the clock and the standing each get
+   their own edges instead of sharing one dotted line. */
+.vs-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.vs-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 8px; border-radius: 6px;
+    font-size: 11px; font-weight: 600; line-height: 1.45;
+    font-variant-numeric: tabular-nums;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--color-border);
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+}
+[data-theme-mode="light"] .vs-chip { background: rgba(15,17,21,0.035); }
+.vs-chip-gold { color: #f5c563; border-color: rgba(245,197,99,0.28); background: rgba(245,197,99,0.08); }
+.vs-chip-xp   { color: #8db866; border-color: rgba(141,184,102,0.28); background: rgba(141,184,102,0.08); }
+.vs-chip-lead-ahead  { color: #8db866; border-color: rgba(141,184,102,0.30); }
+.vs-chip-lead-behind { color: var(--color-accent-rose); border-color: rgba(194,106,122,0.30); }
+.vs-chip-lead-level  { color: var(--color-text-secondary); }
+
 .vs-board-title {
     font-size: 18px; font-weight: 700; letter-spacing: -0.025em;
     line-height: 1.22; margin: 0 0 5px; color: var(--color-text-primary);
@@ -14210,6 +14319,8 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 
 /* ── The hero: your progress ──────────────────────────────────────── */
 .vs-hero { margin: 16px 0 0; }
+.vs-rule + .vs-hero { margin-top: 14px; }
+.vs-rule + .vs-reqline { margin-top: 12px; }
 .vs-hero-top {
     display: flex; align-items: baseline; justify-content: space-between;
     gap: 12px; margin-bottom: 8px; min-width: 0;
@@ -14240,7 +14351,10 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 /* ── The opponent: subordinate by every available means ───────────── */
 /* Narrower track, smaller numerals, muted fill. At a glance the card
    reads "mine, and they are on it" — no label needed. */
-.vs-opp { width: 70%; margin: 12px 0 0; }
+.vs-opp-row { display: flex; align-items: flex-end; gap: 12px; margin: 14px 0 0; }
+.vs-opp { flex: 1; min-width: 0; }
+/* On its own (a finished card) the bar keeps the old subordinate width. */
+.vs-opp-row > .vs-opp:only-child { max-width: 70%; }
 .vs-opp-top {
     display: flex; align-items: baseline; justify-content: space-between;
     gap: 8px; margin-bottom: 5px; min-width: 0;
@@ -14256,25 +14370,48 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 }
 
 /* ── Action row ───────────────────────────────────────────────────── */
-.vs-board-actions {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 10px; margin-top: 14px;
-}
+/* Forfeit moved up beside the opponent's bar, so this row carries one
+   control — and it is a real button now, edges and all, rather than a
+   borderless label that never looked pressable. */
+.vs-board-actions { display: flex; margin-top: 14px; }
 .vs-expand {
-    display: inline-flex; align-items: center; gap: 5px;
-    height: 38px; padding: 0 10px; border: none; border-radius: 8px;
-    background: transparent; color: var(--color-text-secondary);
-    font-family: inherit; font-size: 12px; font-weight: 600;
-    cursor: pointer; transition: color .15s, background .15s;
+    flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    height: 38px; padding: 0 12px; border-radius: 9px;
+    border: 1px solid var(--color-border);
+    background: var(--color-input-bg); color: var(--color-text-secondary);
+    font-family: inherit; font-size: 12.5px; font-weight: 600;
+    cursor: pointer; transition: color .15s, background .15s, border-color .15s;
     -webkit-tap-highlight-color: transparent;
 }
-.vs-expand:hover { color: var(--color-text-primary); background: var(--recessed-bg-2); }
-.vs-expand:active { transform: scale(.97); }
+.vs-expand:hover {
+    color: var(--color-text-primary);
+    border-color: var(--color-accent-blue);
+    background: var(--color-hover-overlay);
+}
+.vs-expand:active { transform: scale(.99); }
+
+/* Forfeit: sized to the opponent's bar, muted until you go near it. Losing
+   the pot on purpose should not be the loudest thing on the card, but it
+   should look like something you press. */
+.vs-forfeit {
+    flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px;
+    height: 34px; padding: 0 12px; border-radius: 9px;
+    font-size: 12px; font-weight: 600;
+}
+.vs-forfeit svg { width: 13px; height: 13px; opacity: .85; }
+@media (max-width: 380px) {
+    .vs-forfeit span { display: none; }
+    .vs-forfeit { padding: 0 11px; }
+}
 .vs-chev { width: 13px; height: 13px; opacity: .8; transition: transform .22s ease; }
 .vs-chev.is-open { transform: rotate(180deg); }
 
 /* ── Breakdown ────────────────────────────────────────────────────── */
-.vs-breakdown { margin-top: 6px; }
+.vs-breakdown {
+    margin-top: 14px; padding-top: 12px;
+    border-top: 1px solid var(--card-hairline);
+}
+[data-theme-mode="light"] .vs-breakdown { border-top-color: rgba(15,17,21,0.08); }
 .vs-bd-group + .vs-bd-group {
     margin-top: 14px; padding-top: 12px;
     border-top: 1px solid rgba(255,255,255,0.05);
@@ -14331,6 +14468,18 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 .vs-btn-primary { background: var(--color-accent-blue); border-color: var(--color-accent-blue); color: #fff; }
 .vs-btn-ghost   { color: var(--color-text-secondary); }
 .vs-btn-quiet   { color: var(--color-text-secondary); border-color: transparent; font-weight: 500; font-size: 12px; }
+.vs-btn-danger  {
+    color: var(--color-text-secondary);
+    border-color: var(--color-border);
+    background: var(--color-input-bg);
+    transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+.vs-btn-danger:hover:not(:disabled) {
+    filter: none;
+    color: var(--color-accent-rose);
+    border-color: color-mix(in srgb, var(--color-accent-rose) 45%, transparent);
+    background: color-mix(in srgb, var(--color-accent-rose) 10%, transparent);
+}
 
 /* ── Badge ────────────────────────────────────────────────────────── */
 .nav-tab { position: relative; }
@@ -14722,7 +14871,6 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
     transition: color .15s ease, border-color .15s ease, background .15s ease;
 }
 .fr-row-btn:hover { color: var(--color-text-primary); border-color: var(--color-accent-blue); }
-.fr-row-board.is-on { color: var(--color-progress); border-color: color-mix(in srgb, var(--color-progress) 45%, transparent); }
 .fr-row-gift:hover { color: #f5c563; border-color: color-mix(in srgb, #f5c563 55%, transparent); }
 
 /* ── Shop: the self / gift pair ── */
@@ -14834,6 +14982,37 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 }
 .gift-back-btn:hover { border-color: var(--color-accent-blue); }
 
+/* The profile card is reachable from both social pages, so it carries no
+   board control of its own — it says where the control lives instead. */
+.pf-board-hint {
+    margin: 0 0 6px; padding: 0 2px;
+    font: 500 11px/1.55 Inter, sans-serif;
+    color: var(--color-text-secondary); opacity: .85; text-align: center;
+}
+
+/* ── "Someone added you" — the sheet on app open ── */
+.fr-req-pop-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.fr-req-pop-row {
+    display: flex; align-items: center; gap: 12px; padding: 11px 12px;
+    background: var(--color-input-bg); border: 1px solid var(--color-input-border);
+    border-radius: 11px;
+}
+.fr-req-pop-info { flex: 1; min-width: 0; }
+.fr-req-pop-name {
+    font: 600 13.5px Inter, sans-serif; color: var(--color-text-primary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fr-req-pop-sub { font: 500 11.5px Inter, sans-serif; color: var(--color-text-secondary); margin-top: 1px; }
+.fr-req-pop-add {
+    flex-shrink: 0; padding: 9px 14px; border-radius: 9px; cursor: pointer;
+    border: none; background: var(--color-accent-blue); color: #fff;
+    font: 600 12px Inter, sans-serif; font-family: inherit;
+    transition: filter .15s ease, opacity .15s ease;
+}
+.fr-req-pop-add:hover:not(:disabled) { filter: brightness(1.12); }
+.fr-req-pop-add:disabled { opacity: .55; cursor: default; }
+.fr-req-pop-add.is-done { background: var(--color-accent-green); }
+
 /* ── Leaderboard payouts ── */
 .lb-last-card {
     width: 100%; display: flex; flex-direction: column; gap: 3px;
@@ -14849,36 +15028,142 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 .lb-last-line { font: 700 16px Inter, sans-serif; color: var(--color-text-primary); }
 .lb-last-sub { font: 500 11.5px Inter, sans-serif; color: var(--color-text-secondary); }
 
+/* ── The opt-in card: one line and a button, rules behind the chevron ──
+   The card's whole job on a first read is "am I in, and how do I change
+   that". Everything else — mutuality, scaling, the Monday delay — is real
+   but it is reference, so it sits one tap away instead of four lines deep. */
 .lb-optin-card {
-    display: flex; align-items: center; gap: 12px;
-    padding: 13px 14px; margin-bottom: 14px;
+    margin-bottom: 14px;
     background: var(--color-bg-card); border: 1px solid var(--color-border);
-    border-radius: 12px;
+    border-radius: 12px; overflow: hidden;
+    transition: border-color .18s ease;
 }
+.lb-optin-card.is-open { border-color: color-mix(in srgb, var(--color-accent-blue) 40%, var(--color-border)); }
+.lb-optin-head { display: flex; align-items: center; gap: 10px; padding: 13px 12px 13px 14px; }
 .lb-optin-main { flex: 1; min-width: 0; }
-.lb-optin-title { font: 600 13.5px Inter, sans-serif; color: var(--color-text-primary); margin-bottom: 3px; }
-.lb-optin-sub { font: 500 11.5px/1.5 Inter, sans-serif; color: var(--color-text-secondary); }
+.lb-optin-title { font: 600 13.5px Inter, sans-serif; color: var(--color-text-primary); margin-bottom: 2px; }
+/* Deliberately one line: it clips rather than wrapping to a second. */
+.lb-optin-line {
+    font: 500 11.5px Inter, sans-serif; color: var(--color-text-secondary);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .lb-optin-btn {
     flex-shrink: 0; padding: 9px 14px; border-radius: 9px;
     border: 1px solid var(--color-border); background: var(--color-input-bg);
     color: var(--color-text-primary); font: 700 12px Inter, sans-serif;
     cursor: pointer; font-family: inherit;
+    transition: border-color .16s ease, color .16s ease;
 }
 .lb-optin-btn.is-on { border-color: color-mix(in srgb, var(--color-progress) 45%, transparent); color: var(--color-progress); }
 .lb-optin-btn:hover { border-color: var(--color-accent-blue); }
+.lb-optin-chev {
+    flex-shrink: 0; width: 30px; height: 30px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: none; background: transparent; cursor: pointer;
+    color: var(--color-text-secondary); border-radius: 8px;
+    -webkit-tap-highlight-color: transparent;
+    transition: color .15s ease, background .15s ease;
+}
+.lb-optin-chev:hover { color: var(--color-text-primary); background: var(--color-hover-overlay); }
+.lb-optin-chev svg { width: 15px; height: 15px; transition: transform .22s ease; }
+.lb-optin-chev.is-open svg { transform: rotate(180deg); }
+.lb-optin-body { padding: 0 14px 4px; }
+.lb-optin-body[hidden] { display: none; }
+.lb-optin-rules {
+    margin: 0; padding: 0 0 10px; list-style: none;
+    border-top: 1px solid var(--color-border); padding-top: 10px;
+}
+.lb-optin-rules li {
+    position: relative; padding: 0 0 0 16px; margin-bottom: 8px;
+    font: 500 11.5px/1.55 Inter, sans-serif; color: var(--color-text-secondary);
+}
+.lb-optin-rules li:last-child { margin-bottom: 0; }
+.lb-optin-rules li::before {
+    content: '◆'; position: absolute; left: 0; top: 1px;
+    font-size: 8px; color: #f5c563;
+}
+.lb-optin-rules strong { color: var(--color-text-primary); font-weight: 600; }
 
-.lb-roster { display: flex; flex-direction: column; gap: 6px; margin-bottom: 4px; }
+/* ── Your board: the only place a roster is edited ── */
+.lb-board { margin-top: 4px; }
+.lb-board-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 10px; margin-bottom: 10px;
+}
+.lb-board-head .fr-section-kicker { margin: 0; }
+.lb-board-count {
+    flex-shrink: 0; font: 600 11px Inter, sans-serif;
+    color: var(--color-text-secondary); font-variant-numeric: tabular-nums;
+}
+.lb-roster { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
 .lb-roster-row {
-    width: 100%; display: flex; justify-content: space-between; align-items: center;
-    gap: 10px; padding: 10px 14px; cursor: pointer; text-align: left; font-family: inherit;
+    width: 100%; display: flex; align-items: center;
+    gap: 11px; padding: 9px 12px; cursor: pointer; text-align: left; font-family: inherit;
     background: var(--color-input-bg); border: 1px solid var(--color-input-border);
-    border-radius: 9px; color: var(--color-text-secondary);
+    border-radius: 10px; color: var(--color-text-secondary);
+    transition: border-color .16s ease, background .16s ease;
 }
 .lb-roster-row.is-on { color: var(--color-text-primary); }
 .lb-roster-row:hover { border-color: var(--color-accent-blue); }
-.lb-roster-name { font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lb-roster-state { font-size: 11px; flex-shrink: 0; }
-.lb-roster-row.is-on .lb-roster-state { color: var(--color-progress); }
+.lb-roster-av {
+    flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%;
+    object-fit: cover; display: inline-flex; align-items: center; justify-content: center;
+}
+.lb-roster-av-initial {
+    background: linear-gradient(135deg, var(--color-accent-blue), var(--color-progress));
+    color: #fff; font: 700 13px Inter, sans-serif;
+}
+.lb-roster-row:not(.is-on) .lb-roster-av { opacity: .5; filter: grayscale(1); }
+.lb-roster-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.lb-roster-name {
+    font-size: 13px; font-weight: 600; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lb-roster-meta {
+    font: 500 11px Inter, sans-serif; color: var(--color-text-secondary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* A switch, not a word. "On board / Off board" was the same width in both
+   states and read as a label rather than a control — which is why the row
+   looked like it did nothing when you tapped it. */
+.lb-roster-switch {
+    flex-shrink: 0; position: relative; width: 38px; height: 22px;
+    border-radius: 999px; background: var(--color-progress-track);
+    border: 1px solid var(--color-input-border);
+    transition: background .18s ease, border-color .18s ease;
+}
+.lb-roster-knob {
+    position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+    border-radius: 50%; background: var(--color-text-secondary);
+    transition: transform .18s cubic-bezier(.4, 0, .2, 1), background .18s ease;
+}
+.lb-roster-row.is-on .lb-roster-switch {
+    background: color-mix(in srgb, var(--color-progress) 35%, transparent);
+    border-color: color-mix(in srgb, var(--color-progress) 55%, transparent);
+}
+.lb-roster-row.is-on .lb-roster-knob { transform: translateX(16px); background: var(--color-progress); }
+@media (prefers-reduced-motion: reduce) {
+    .lb-roster-knob, .lb-optin-chev svg { transition: none; }
+}
+.lb-board-note {
+    margin: 0; font: 500 11px/1.55 Inter, sans-serif;
+    color: var(--color-text-secondary); opacity: .85;
+}
+.lb-board-empty {
+    padding: 22px 16px; text-align: center;
+    background: var(--color-input-bg); border: 1px dashed var(--color-input-border);
+    border-radius: 12px;
+}
+.lb-board-empty p {
+    margin: 0 0 12px; font: 500 12.5px/1.6 Inter, sans-serif;
+    color: var(--color-text-secondary); max-width: 34ch; margin-inline: auto;
+}
+.lb-board-cta {
+    padding: 9px 16px; border-radius: 9px; cursor: pointer; font-family: inherit;
+    border: 1px solid var(--color-accent-blue); background: transparent;
+    color: var(--color-accent-blue); font: 600 12px Inter, sans-serif;
+}
+.lb-board-cta:hover { background: color-mix(in srgb, var(--color-accent-blue) 12%, transparent); }
 
 .lb-standing-row {
     display: flex; align-items: center; gap: 10px;

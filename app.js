@@ -1038,6 +1038,9 @@
                     // Gifts: drain the shield inbox, prime the silent XP-boost
                     // queue, and catch up any mirror the last session missed.
                     try { giftOnLogin(); } catch (e) { console.warn('Gift login hook failed', e); }
+                    // Friend requests: someone adding you is worth a sheet on
+                    // open, not a row on a tab you might not visit for days.
+                    try { frRequestsOnLogin(); } catch (e) { console.warn('Friend request hook failed', e); }
                     // Leaderboard: publish this board and pay out the closed
                     // week if the Monday rollover has not been settled yet.
                     try { lbOnLogin(); } catch (e) { console.warn('Leaderboard login hook failed', e); }
@@ -13154,12 +13157,30 @@
         // Cache of fetched public profiles for this session {uid: publicProfileData}
         window._friendProfileCache = {};
 
-        // ── Render the full Friends tab ───────────────────────────────────
-        // ── Render the full Friends tab ───────────────────────────────────
-        // Renders BOTH social pages from one pass. The Friends tab and the
-        // Leaderboards tab hold different hosts but need the same data — one
-        // set of profile reads, not two — so the split is in the markup, not
-        // here. Every host is optional: whichever exists gets filled.
+        // ── Render the Friends and Leaderboards pages ─────────────────────
+        // Both social pages are filled from one pass: they hold different
+        // hosts but need the same data — one set of profile reads, not two —
+        // so the split is in the markup, not here. Every host is optional:
+        // whichever exists gets filled.
+        //
+        // Two rules keep this from flashing or half-painting, which is what it
+        // used to do:
+        //
+        //   NOTHING IS CLEARED UP FRONT. The old version blanked every host,
+        //   then awaited Firestore. Any throw after that point (a null
+        //   currentUser mid-auth, a profile read that rejected) left the tab
+        //   empty apart from the one host it never cleared — the gift list —
+        //   which is exactly the "only gift history remains" report. Now the
+        //   markup is built into strings first and assigned in one go at the
+        //   end, so a failed pass leaves the last good render on screen.
+        //
+        //   ONLY THE NEWEST PASS MAY WRITE. Switching tabs, toggling the board
+        //   and the visibility handler can all land within a few hundred ms of
+        //   each other; without a sequence number an older pass finishes last
+        //   and paints stale rows over fresh ones.
+        let _frSeq = 0;
+        window._frEntries = [];
+
         window.renderFriendsTab = async function() {
             const lb  = document.getElementById('friendsLeaderboard');
             const req = document.getElementById('friendsRequests');
@@ -13167,100 +13188,172 @@
             const all = document.getElementById('friendsAllList');
             if (!lb && !add && !all) return;
 
-            if (lb)  lb.innerHTML  = '<div style="padding:8px 0 4px;color:var(--color-text-secondary);font-size:13px;">Loading\u2026</div>';
-            if (req) req.innerHTML = '';
-            if (add) add.innerHTML = '';
-            if (all) all.innerHTML = '';
+            // Mid-auth, or before the account has loaded, there is nothing to
+            // render from. Returning here leaves whatever is already on screen
+            // rather than wiping the tab.
+            if (!window.currentUser || !window.currentUser.uid || !window.userData) return;
 
-            const friends     = window.userData.friends || [];
-            const myUID       = window.currentUser.uid;
-            const currentWeek = getISOWeekLabel();
+            const seq = ++_frSeq;
+            const stale = () => seq !== _frSeq;
 
-            // ── 1. Check for pending friend requests (1 query, lazy) ───────
-            let pendingRequests = [];
-            try {
-                const reqQ    = query(collection(db, 'friendRequests'), where('toUID', '==', myUID));
-                const reqSnap = await getDocs(reqQ);
-                reqSnap.forEach(d => pendingRequests.push({ docId: d.id, ...d.data() }));
-            } catch(e) { console.warn('Friend requests fetch failed:', e); }
-
-            // ── 2. Build my own entry from live in-memory data ─────────────
-            const catXP = getProfileCategoryXP();
-            const myAllActs = [];
-            (window.userData.dimensions || []).forEach(d =>
-                (d.paths || []).forEach(p => (p.activities || []).forEach(a => myAllActs.push(a))));
-            const myDaySet = new Set();
-            myAllActs.forEach(a => (a.completionHistory || []).forEach(e => {
-                if (!e.isPenalty && e.date) myDaySet.add(e.date.slice(0, 10));
-            }));
-            const todayStr = localToday();
-            const yesterdayStr = localYesterday();
-            const myXpToday = myAllActs.reduce((s, a) =>
-                s + (a.completionHistory || [])
-                    .filter(e => !e.isPenalty && e.date && toLocalDateStr(new Date(e.date)) === todayStr)
-                    .reduce((xs, e) => xs + (e.xp || 0), 0)
-            , 0) + ((window.userData.xpTodayGhost || {})[todayStr] || 0);
-            const myEntry = {
-                uid:            myUID,
-                displayName:    (window.userData.profile && window.userData.profile.username)
-                                || window.currentUser.displayName || 'You',
-                photoURL:       window.currentUser.photoURL || null,
-                level:          window.userData.level || 1,
-                characterTitle: getCharacterTitle(window.userData.level || 1, catXP),
-                weeklyXP:       computeWeeklyXP(),
-                weeklyXPWeek:   currentWeek,
-                xpPerHour:      computeXPPerHour(myAllActs),
-                xpPerHourDate:  yesterdayStr,
-                xpToday:        myXpToday,
-                xpTodayDate:    todayStr,
-                totalXP:        (window.userData.totalXP || 0) + (window.userData.xpDeletedGhost || 0),
-                currentXP:      window.userData.currentXP || 0,
-                categoryXP:     catXP,
-                bestStreak:     myAllActs.reduce((m, x) => Math.max(m, x.bestStreak || x.streak || 0), 0),
-                activeDays:     myDaySet.size,
-                isMe:           true
-            };
-            window._friendProfileCache[myUID] = myEntry;
-
-            // ── 3. Fetch friend public profiles in parallel (max 20 reads) ──
-            let entries = [myEntry];
-            if (friends.length > 0) {
-                const fetches = friends.map(async uid => {
-                    try {
-                        const ref  = doc(db, 'publicProfiles', uid);
-                        const snap = await getDoc(ref);
-                        if (!snap.exists()) return null;
-                        const d    = snap.data();
-                        const wXP  = (d.weeklyXPWeek === currentWeek) ? (d.weeklyXP || 0) : 0;
-                        const xpt  = (d.xpTodayDate  === todayStr)    ? (d.xpToday  || 0) : 0;
-                        const xph  = (d.xpPerHourDate === yesterdayStr) ? (d.xpPerHour || 0) : 0;
-                        const entry = { uid, ...d, weeklyXP: wXP, xpToday: xpt, xpPerHour: xph, isMe: false };
-                        window._friendProfileCache[uid] = entry;
-                        return entry;
-                    } catch(e) { return null; }
-                });
-                const results = await Promise.all(fetches);
-                results.forEach(r => { if (r) entries.push(r); });
+            // A first paint has nothing to keep, so it gets a placeholder; a
+            // re-render keeps the rows that are already up until the new ones
+            // are ready.
+            if (lb && !lb.innerHTML.trim()) {
+                lb.innerHTML = '<div style="padding:8px 0 4px;color:var(--color-text-secondary);font-size:13px;">Loading…</div>';
             }
 
-            // ── 4. Pending requests banner ─────────────────────────────────
-            // Lives on the Friends tab now (§1.1) — the accept/decline
-            // framework itself is untouched.
-            let requestsHTML = '';
-            if (pendingRequests.length > 0) {
-                requestsHTML = `
+            try {
+                const friends     = window.userData.friends || [];
+                const myUID       = window.currentUser.uid;
+                const currentWeek = getISOWeekLabel();
+
+                // ── 1. Check for pending friend requests (1 query, lazy) ───────
+                let pendingRequests = [];
+                try {
+                    const reqQ    = query(collection(db, 'friendRequests'), where('toUID', '==', myUID));
+                    const reqSnap = await getDocs(reqQ);
+                    reqSnap.forEach(d => pendingRequests.push({ docId: d.id, ...d.data() }));
+                } catch(e) { console.warn('Friend requests fetch failed:', e); }
+                if (stale()) return;
+
+                // ── 2. Build my own entry from live in-memory data ─────────────
+                const catXP = getProfileCategoryXP();
+                const myAllActs = [];
+                (window.userData.dimensions || []).forEach(d =>
+                    (d.paths || []).forEach(p => (p.activities || []).forEach(a => myAllActs.push(a))));
+                const myDaySet = new Set();
+                myAllActs.forEach(a => (a.completionHistory || []).forEach(e => {
+                    if (!e.isPenalty && e.date) myDaySet.add(e.date.slice(0, 10));
+                }));
+                const todayStr = localToday();
+                const yesterdayStr = localYesterday();
+                const myXpToday = myAllActs.reduce((s, a) =>
+                    s + (a.completionHistory || [])
+                        .filter(e => !e.isPenalty && e.date && toLocalDateStr(new Date(e.date)) === todayStr)
+                        .reduce((xs, e) => xs + (e.xp || 0), 0)
+                , 0) + ((window.userData.xpTodayGhost || {})[todayStr] || 0);
+                const myEntry = {
+                    uid:            myUID,
+                    displayName:    (window.userData.profile && window.userData.profile.username)
+                                    || window.currentUser.displayName || 'You',
+                    photoURL:       window.currentUser.photoURL || null,
+                    level:          window.userData.level || 1,
+                    characterTitle: getCharacterTitle(window.userData.level || 1, catXP),
+                    weeklyXP:       computeWeeklyXP(),
+                    weeklyXPWeek:   currentWeek,
+                    xpPerHour:      computeXPPerHour(myAllActs),
+                    xpPerHourDate:  yesterdayStr,
+                    xpToday:        myXpToday,
+                    xpTodayDate:    todayStr,
+                    totalXP:        (window.userData.totalXP || 0) + (window.userData.xpDeletedGhost || 0),
+                    currentXP:      window.userData.currentXP || 0,
+                    categoryXP:     catXP,
+                    bestStreak:     myAllActs.reduce((m, x) => Math.max(m, x.bestStreak || x.streak || 0), 0),
+                    activeDays:     myDaySet.size,
+                    isMe:           true
+                };
+                window._friendProfileCache[myUID] = myEntry;
+
+                // ── 3. Fetch friend public profiles in parallel (max 20 reads) ──
+                // A read that fails falls back to whatever the session cache
+                // holds, and to a bare stub if it holds nothing. A friend must
+                // never drop out of the list because one document was briefly
+                // unreadable — that is a "my friends vanished" bug, not a
+                // missing-data one.
+                let entries = [myEntry];
+                if (friends.length > 0) {
+                    const fetches = friends.map(async uid => {
+                        try {
+                            const ref  = doc(db, 'publicProfiles', uid);
+                            const snap = await getDoc(ref);
+                            if (!snap.exists()) throw new Error('no profile');
+                            const d    = snap.data();
+                            const wXP  = (d.weeklyXPWeek === currentWeek) ? (d.weeklyXP || 0) : 0;
+                            const xpt  = (d.xpTodayDate  === todayStr)    ? (d.xpToday  || 0) : 0;
+                            const xph  = (d.xpPerHourDate === yesterdayStr) ? (d.xpPerHour || 0) : 0;
+                            const entry = { uid, ...d, weeklyXP: wXP, xpToday: xpt, xpPerHour: xph, isMe: false };
+                            window._friendProfileCache[uid] = entry;
+                            return entry;
+                        } catch(e) {
+                            const cached = window._friendProfileCache[uid];
+                            if (cached && !cached.isMe) return cached;
+                            return { uid, displayName: 'Adventurer', level: 1, characterTitle: '',
+                                     weeklyXP: 0, xpToday: 0, xpPerHour: 0, isMe: false, unread: true };
+                        }
+                    });
+                    const results = await Promise.all(fetches);
+                    results.forEach(r => { if (r) entries.push(r); });
+                }
+                if (stale()) return;
+                window._frEntries = entries;
+
+                // ── 4. Pending requests banner ─────────────────────────────────
+                // Lives on the Friends tab (§1.1) — the accept/decline
+                // framework itself is untouched. The popup on app open
+                // (frRequestPopup) is the same two actions; this is the durable
+                // route for anyone who closed it.
+                const requestsHTML = frRequestsHtml(pendingRequests);
+
+                // ── 5. Leaderboard rows + the sub-tab state ────────────────────
+                const lbHTML = frLeaderboardHtml(entries);
+                frSyncMetricTabs();
+
+                // ── 6. Add Friend ──────────────────────────────────────────────
+                const addHTML = frAddCardHtml(friends.length);
+
+                // ── 7. All Friends list ────────────────────────────────────────
+                // No board control on these rows any more: the Friends tab is
+                // for looking at people and sending them things, and every
+                // leaderboard edit happens on the Leaderboards tab.
+                const allHTML = frFriendListHtml(entries.filter(e => !e.isMe));
+
+                if (stale()) return;
+                if (req) req.innerHTML = requestsHTML;
+                if (lb)  lb.innerHTML  = lbHTML;
+                if (add) add.innerHTML = addHTML;
+                if (all) all.innerHTML = allHTML;
+
+                // ── 8. Leaderboard board controls + payout panel (§8) ──────────
+                try { lbRenderPayoutSection(entries); } catch (e) { console.warn('Leaderboard payout panel failed', e); }
+
+                // ── 9. Gifts you have sent (§6 — the sender's own sent list) ───
+                try { giftRenderSentList(); } catch (e) { console.warn('Sent-gift list failed', e); }
+            } catch (e) {
+                // Whatever was on screen before this pass is still there, which
+                // is a better answer than an empty tab.
+                console.warn('renderFriendsTab failed:', e && e.message);
+                if (lb && lb.textContent.trim() === 'Loading…') {
+                    lb.innerHTML = '<div style="padding:20px 0;text-align:center;color:var(--color-text-secondary);font-size:13px;">' +
+                                   'Could not load the leaderboard. ' +
+                                   '<button type="button" class="fr-retry" onclick="renderFriendsTab()">Retry</button></div>';
+                }
+            }
+        };
+
+        // ── Friends-tab markup, split out so each piece can be repainted on
+        //    its own instead of re-running the whole async pass ─────────────
+
+        function frAvatar(name, photoURL, px) {
+            const size = px || 40;
+            if (photoURL) {
+                return `<img src="${escapeHtml(photoURL)}" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;flex-shrink:0;">`;
+            }
+            return `<div style="width:${size}px;height:${size}px;border-radius:50%;background:linear-gradient(135deg,var(--color-accent-blue),var(--color-progress));display:flex;align-items:center;justify-content:center;font-size:${Math.round(size * 0.38)}px;font-weight:700;color:#fff;flex-shrink:0;">${escapeHtml(String(name || '?')[0].toUpperCase())}</div>`;
+        }
+
+        function frRequestsHtml(pendingRequests) {
+            if (!pendingRequests || !pendingRequests.length) return '';
+            return `
                 <div style="margin-bottom:4px;">
                     <div style="font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--color-accent-blue);margin-bottom:12px;padding-top:4px;">
                         Friend Requests (${pendingRequests.length})
                     </div>
                     ${pendingRequests.map(r => {
                         const alreadyFriend = (window.userData.friends || []).includes(r.fromUID);
-                        const av = r.fromPhotoURL
-                            ? `<img src="${escapeHtml(r.fromPhotoURL)}" style="width:36px;height:36px;border-radius:50%;object-fit:cover;flex-shrink:0;">`
-                            : `<div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--color-accent-blue),var(--color-progress));display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff;flex-shrink:0;">${escapeHtml((r.fromName||'?')[0].toUpperCase())}</div>`;
                         return `
                         <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:rgba(93,156,236,0.06);border:1px solid rgba(93,156,236,0.25);border-radius:12px;margin-bottom:8px;">
-                            ${av}
+                            ${frAvatar(r.fromName, r.fromPhotoURL, 36)}
                             <div style="flex:1;min-width:0;">
                                 <div style="font-size:13px;font-weight:700;color:var(--color-text-primary);">${escapeHtml(r.fromName||'Someone')}</div>
                                 <div style="font-size:11px;color:var(--color-text-secondary);">added you as a friend</div>
@@ -13275,71 +13368,70 @@
                         </div>`;
                     }).join('')}
                 </div>`;
-            }
+        }
 
-            // ── 5. Leaderboard — with metric selector + custom hidden list ──
-            const metric        = (window.userData.settings || {}).leaderboardMetric || 'weeklyXP';
-            const hiddenUIDs    = new Set(window.userData.leaderboardHidden || []);
-            const lbEntries     = entries.filter(e => e.isMe || !hiddenUIDs.has(e.uid));
-            const metricVal     = e => {
-                if (metric === 'xpPerHour') return e.xpPerHour || 0;
-                if (metric === 'xpToday')   return e.xpToday   || 0;
-                return e.weeklyXP || 0;
-            };
-            const metricUnit = metric === 'xpPerHour' ? 'XP/hr' : 'XP';
-            const sorted     = [...lbEntries].sort((a, b) => metricVal(b) - metricVal(a));
-            const topEntries = sorted.slice(0, 10);
-
-            // Sync sub-tab active state
+        // The metric the leaderboard is sorted by, and the value it reads.
+        function frMetric() {
+            return (window.userData.settings || {}).leaderboardMetric || 'weeklyXP';
+        }
+        function frMetricVal(e, metric) {
+            if (metric === 'xpPerHour') return e.xpPerHour || 0;
+            if (metric === 'xpToday')   return e.xpToday   || 0;
+            return e.weeklyXP || 0;
+        }
+        function frSyncMetricTabs() {
+            const metric = frMetric();
             ['frTabToday','frTabWeek','frTabHour'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.classList.remove('active');
             });
-            const activeTabId = metric === 'xpToday' ? 'frTabToday' : metric === 'weeklyXP' ? 'frTabWeek' : 'frTabHour';
+            const activeTabId = metric === 'xpToday' ? 'frTabToday'
+                              : metric === 'weeklyXP' ? 'frTabWeek' : 'frTabHour';
             const activeTab = document.getElementById(activeTabId);
             if (activeTab) activeTab.classList.add('active');
+        }
 
-            if (req) req.innerHTML = requestsHTML;
-            if (lb) lb.innerHTML = (topEntries.length === 0
-                ? '<div style="padding:28px 0;text-align:center;color:var(--color-text-secondary);font-size:13px;">No one on the leaderboard yet.</div>'
-                : topEntries.map((e, i) => {
-                    const rank   = i + 1;
-                    const isMe   = e.isMe;
-                    const val    = metricVal(e);
-                    const rankEl = rank === 1
-                        ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f5c563" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>`
-                        : rank === 2
-                        ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#b0b8c8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>`
-                        : rank === 3
-                        ? `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#b08060" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>`
-                        : `<span style="font-size:11px;font-weight:700;color:var(--color-text-secondary);">${rank}</span>`;
-                    const avatar = e.photoURL
-                        ? `<img src="${escapeHtml(e.photoURL)}" style="width:38px;height:38px;border-radius:50%;object-fit:cover;flex-shrink:0;">`
-                        : `<div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,var(--color-accent-blue),var(--color-progress));display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:#fff;flex-shrink:0;">${escapeHtml((e.displayName||'?')[0].toUpperCase())}</div>`;
-                    return `<div onclick="openFriendProfileCard('${escapeHtml(e.uid)}')" class="fr-lb-row${isMe ? ' fr-lb-row-me' : ''}">
-                        <div class="fr-lb-rank">${rankEl}</div>
-                        ${avatar}
-                        <div class="fr-lb-info">
-                            <div class="fr-lb-name">${escapeHtml(e.displayName || 'Adventurer')}${isMe ? ' <span class="fr-you-badge">YOU</span>' : ''}</div>
-                            <div class="fr-lb-meta">Lv ${e.level || 1} · ${escapeHtml(e.characterTitle || '')}</div>
-                        </div>
-                        <div class="fr-lb-val">
-                            <span class="fr-lb-num">${val.toLocaleString()}</span>
-                            <span class="fr-lb-unit">${metricUnit}</span>
-                        </div>
-                    </div>`;
-                }).join(''));
+        function frLeaderboardHtml(entries) {
+            const metric     = frMetric();
+            const hiddenUIDs = new Set(window.userData.leaderboardHidden || []);
+            const lbEntries  = (entries || []).filter(e => e.isMe || !hiddenUIDs.has(e.uid));
+            const metricUnit = metric === 'xpPerHour' ? 'XP/hr' : 'XP';
+            const sorted     = [...lbEntries].sort((a, b) => frMetricVal(b, metric) - frMetricVal(a, metric));
+            const topEntries = sorted.slice(0, 10);
 
-            // ── 5b. Leaderboard board controls + payout panel (§8) ─────────
-            // Add/remove from the board is reachable from BOTH tabs (§1.1):
-            // here as an explicit roster, and on every friend row over on the
-            // Friends tab.
-            try { lbRenderPayoutSection(entries); } catch (e) { console.warn('Leaderboard payout panel failed', e); }
+            if (!topEntries.length) {
+                return '<div style="padding:28px 0;text-align:center;color:var(--color-text-secondary);font-size:13px;">No one on the leaderboard yet.</div>';
+            }
+            return topEntries.map((e, i) => {
+                const rank   = i + 1;
+                const isMe   = e.isMe;
+                const val    = frMetricVal(e, metric);
+                const rankEl = rank === 1
+                    ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f5c563" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>`
+                    : rank === 2
+                    ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#b0b8c8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>`
+                    : rank === 3
+                    ? `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#b08060" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>`
+                    : `<span style="font-size:11px;font-weight:700;color:var(--color-text-secondary);">${rank}</span>`;
+                return `<div onclick="openFriendProfileCard('${escapeHtml(e.uid)}')" class="fr-lb-row${isMe ? ' fr-lb-row-me' : ''}">
+                    <div class="fr-lb-rank">${rankEl}</div>
+                    ${frAvatar(e.displayName, e.photoURL, 38)}
+                    <div class="fr-lb-info">
+                        <div class="fr-lb-name">${escapeHtml(e.displayName || 'Adventurer')}${isMe ? ' <span class="fr-you-badge">YOU</span>' : ''}</div>
+                        <div class="fr-lb-meta">Lv ${e.level || 1} · ${escapeHtml(e.characterTitle || '')}</div>
+                    </div>
+                    <div class="fr-lb-val">
+                        <span class="fr-lb-num">${val.toLocaleString()}</span>
+                        <span class="fr-lb-unit">${metricUnit}</span>
+                    </div>
+                </div>`;
+            }).join('');
+        }
 
-            // ── 6. Add Friend ──────────────────────────────────────────────
+        function frAddCardHtml(friendCount) {
             const myCode = window.userData.friendCode || '—';
-            const atCap  = friends.length >= 20;
-            if (add) add.innerHTML = `
+            const atCap  = friendCount >= 20;
+            return `
                 <div class="fr-add-card analytics-card">
                     <div class="fr-add-header">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--color-progress);flex-shrink:0;"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
@@ -13377,44 +13469,44 @@
                         <div class="fr-mycode-hint">Share this code with friends so they can add you</div>
                     </div>
                 </div>`;
+        }
 
-            // ── 7. All Friends list ────────────────────────────────────────
-            const friendEntries = entries.filter(e => !e.isMe);
-            if (all && friendEntries.length === 0) {
-                all.innerHTML = `
+        function frFriendListHtml(friendEntries) {
+            if (!friendEntries.length) {
+                return `
                     <div class="fr-section-kicker">Friends (0)</div>
-                    <div class="fr-empty">Add a friend using their MK code above</div>`;
-            } else if (all) {
-                all.innerHTML = `
-                    <div class="fr-section-kicker">Friends (${friendEntries.length}/20)</div>
-                    ${friendEntries.sort((a, b) => (a.displayName || '').localeCompare(b.displayName || '')).map(e => {
-                        const avatar = e.photoURL
-                            ? `<img src="${escapeHtml(e.photoURL)}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0;">`
-                            : `<div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--color-accent-blue),var(--color-progress));display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:#fff;flex-shrink:0;">${escapeHtml((e.displayName || '?')[0].toUpperCase())}</div>`;
-                        const onBoard = (window.userData.leaderboardHidden || []).indexOf(e.uid) === -1;
-                        return `<div onclick="openFriendProfileCard('${escapeHtml(e.uid)}')" class="fr-friend-row">
-                            ${avatar}
-                            <div class="fr-friend-info">
-                                <div class="fr-friend-name">${escapeHtml(e.displayName || 'Adventurer')}</div>
-                                <div class="fr-friend-meta">Lv ${e.level || 1} · ${escapeHtml(e.characterTitle || '')}</div>
-                            </div>
-                            <button type="button" class="fr-row-btn fr-row-board${onBoard ? ' is-on' : ''}"
-                                title="${onBoard ? 'On your leaderboard' : 'Not on your leaderboard'}"
-                                aria-label="${onBoard ? 'Remove from leaderboard' : 'Add to leaderboard'}"
-                                onclick="event.stopPropagation();toggleLeaderboardVisibility('${escapeHtml(e.uid)}')">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="12" width="5" height="8" rx="1"/><rect x="9.5" y="6" width="5" height="14" rx="1"/><rect x="16" y="14" width="5" height="6" rx="1"/></svg>
-                            </button>
-                            <button type="button" class="fr-row-btn fr-row-gift"
-                                title="Send a gift" aria-label="Send a gift"
-                                onclick="event.stopPropagation();giftOpenPicker('${escapeHtml(e.uid)}')">
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 12 20 22 4 22 4 12"/><rect x="2" y="7" width="20" height="5"/><line x1="12" y1="22" x2="12" y2="7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></svg>
-                            </button>
-                        </div>`;
-                    }).join('')}`;
+                    <div class="fr-empty">Add a friend using their MK code below</div>`;
             }
+            return `
+                <div class="fr-section-kicker">Friends (${friendEntries.length}/20)</div>
+                ${friendEntries.slice().sort((a, b) => (a.displayName || '').localeCompare(b.displayName || '')).map(e => {
+                    return `<div onclick="openFriendProfileCard('${escapeHtml(e.uid)}')" class="fr-friend-row">
+                        ${frAvatar(e.displayName, e.photoURL, 40)}
+                        <div class="fr-friend-info">
+                            <div class="fr-friend-name">${escapeHtml(e.displayName || 'Adventurer')}</div>
+                            <div class="fr-friend-meta">Lv ${e.level || 1} · ${escapeHtml(e.characterTitle || '')}</div>
+                        </div>
+                        <button type="button" class="fr-row-btn fr-row-gift"
+                            title="Send a gift" aria-label="Send a gift"
+                            onclick="event.stopPropagation();giftOpenPicker('${escapeHtml(e.uid)}')">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 12 20 22 4 22 4 12"/><rect x="2" y="7" width="20" height="5"/><line x1="12" y1="22" x2="12" y2="7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></svg>
+                        </button>
+                    </div>`;
+                }).join('')}`;
+        }
 
-            // ── 8. Gifts you have sent (§6 — the sender's own sent list) ───
-            try { giftRenderSentList(); } catch (e) { console.warn('Sent-gift list failed', e); }
+        // Repaint the two lists that a board toggle actually changes, straight
+        // from the entries the last pass fetched. No reads, no blanking, no
+        // await — which is the whole point: the old code called the full async
+        // renderFriendsTab() for this and the page visibly emptied and refilled.
+        window.frRepaintBoardViews = function (uid) {
+            const lb = document.getElementById('friendsLeaderboard');
+            if (lb) lb.innerHTML = frLeaderboardHtml(window._frEntries || []);
+            // A board toggle rewrites one roster row and the count; rebuilding
+            // the whole panel would collapse the payout explainer under it.
+            if (uid && typeof window.lbSyncRosterRow === 'function') {
+                try { window.lbSyncRosterRow(uid); } catch (e) {}
+            }
         };
 
         // ── Add friend by MK code ─────────────────────────────────────────
@@ -13586,13 +13678,13 @@
                     </button>
                 </div>
                 <div style="display:flex;gap:8px;margin: 4px 0 8px;">
-                    <button onclick="toggleLeaderboardVisibility('${escapeHtml(uid)}')" class="pf-ghost-btn" style="flex:1;justify-content:center;padding:10px;font-size:12px;">
-                        ${isHidden ? '+ Add to Leaderboard' : 'Remove from Leaderboard'}
-                    </button>
                     <button onclick="removeFriend('${escapeHtml(uid)}')" class="pf-ghost-btn" style="flex:1;justify-content:center;padding:10px;font-size:12px;">
                         Remove Friend
                     </button>
-                </div>` : ''}`;
+                </div>
+                <div class="pf-board-hint">${isHidden
+                    ? 'Not on your leaderboard. Add them from Your board on the Leaderboards tab.'
+                    : 'On your leaderboard. Change that from Your board on the Leaderboards tab.'}</div>` : ''}`;
 
             overlay.style.display = 'flex';
 
@@ -13635,15 +13727,21 @@
         };
 
         // ── Leaderboard metric selector ───────────────────────────────────
+        // Sorting is a pure function of data already in hand, so this repaints
+        // from the cached entries instead of re-reading twenty profiles.
         window.setLeaderboardMetric = function(metric) {
             if (!window.userData.settings) window.userData.settings = {};
             window.userData.settings.leaderboardMetric = metric;
             debouncedSaveUserData(); // persist preference non-blocking
-            renderFriendsTab();     // re-render with new sort
+            frSyncMetricTabs();
+            frRepaintBoardViews();
         };
 
         // ── Remove / Add to leaderboard (custom leaderboard) ─────────────
-        // Excluded friends stay in the Friends list but are skipped in rankings.
+        // Excluded friends stay in the Friends list but are skipped in
+        // rankings. Reachable from the Leaderboards tab only — the Friends tab
+        // is for viewing and gifting, so a tap there never silently reshapes
+        // who you are being ranked against.
         window.toggleLeaderboardVisibility = function(uid) {
             const hidden = window.userData.leaderboardHidden || [];
             const isHidden = hidden.includes(uid);
@@ -13656,7 +13754,9 @@
             // only reaches the SCORED roster next Monday — see lbPublishBoard.
             try { lbPublishBoard(true); } catch (e) {}
             closeFriendProfileCard();
-            renderFriendsTab();
+            // Repaint the two things this actually changes. Calling the full
+            // async render here is what made the page blink on every tap.
+            frRepaintBoardViews(uid);
         };
 
         // ── Accept a friend request ───────────────────────────────────────
@@ -13670,7 +13770,8 @@
                 const { deleteDoc } = await import('https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js');
                 await deleteDoc(doc(db, 'friendRequests', docId));
             } catch(e) { console.warn('Could not delete friend request:', e); }
-            renderFriendsTab();
+            try { lbPublishBoard(true); } catch (e) {}
+            frRenderIfVisible();
         };
 
         // ── Dismiss a friend request ──────────────────────────────────────
@@ -13679,8 +13780,142 @@
                 const { deleteDoc } = await import('https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js');
                 await deleteDoc(doc(db, 'friendRequests', docId));
             } catch(e) { console.warn('Could not dismiss friend request:', e); }
-            renderFriendsTab();
+            frRenderIfVisible();
         };
+
+        // A social render costs up to twenty profile reads. Anything that can
+        // fire while the user is somewhere else entirely — accepting from the
+        // popup below, a request dismissed on login — repaints only when one
+        // of the two social pages is actually on screen. Switching to either
+        // renders it anyway.
+        function frRenderIfVisible() {
+            if (window.currentTab === 'people' || window.currentTab === 'friends') {
+                renderFriendsTab();
+            }
+        }
+        window.frRenderIfVisible = frRenderIfVisible;
+
+        // ══════════════════════════════════════════════════════════════════
+        //  "SOMEONE ADDED YOU" — the popup on app open
+        // ══════════════════════════════════════════════════════════════════
+        // Being added is the one social event worth interrupting for: it is
+        // mutual only if you act on it, and a row on a tab the user may not
+        // open for days is not an interruption. So it arrives as a sheet on
+        // the next app open, once, with the add-back button on it.
+        //
+        // Crossing it costs nothing — the same request keeps its row on the
+        // Friends tab until it is accepted or dismissed, which stays the
+        // durable route. "Shown" is per device (localStorage) rather than in
+        // userData: it is a display fact, not account state, and it must not
+        // cost a write on every login.
+
+        const FR_SEEN_KEY = 'mk_seen_friend_requests';
+
+        function frSeenIds() {
+            try {
+                var raw = JSON.parse(localStorage.getItem(FR_SEEN_KEY) || '[]');
+                return Array.isArray(raw) ? raw : [];
+            } catch (e) { return []; }
+        }
+        function frMarkShown(ids) {
+            try {
+                var merged = frSeenIds().concat(ids);
+                // Ids are request documents, which are deleted when answered;
+                // the tail is only here so the key cannot grow without bound.
+                localStorage.setItem(FR_SEEN_KEY, JSON.stringify(merged.slice(-60)));
+            } catch (e) { /* private mode — the popup simply shows again */ }
+        }
+
+        window.frCloseRequestPopup = function () {
+            var el = document.getElementById('frReqSheet');
+            if (el) el.remove();
+        };
+
+        function frRequestPopupRow(r) {
+            return '<div class="fr-req-pop-row" data-doc="' + escapeHtml(r.docId) + '">' +
+                     frAvatar(r.fromName, r.fromPhotoURL, 44) +
+                     '<div class="fr-req-pop-info">' +
+                       '<div class="fr-req-pop-name">' + escapeHtml(r.fromName || 'Someone') + '</div>' +
+                       '<div class="fr-req-pop-sub">added you on Mindkraft</div>' +
+                     '</div>' +
+                     '<button type="button" class="fr-req-pop-add" ' +
+                       'onclick="frPopupAddBack(\'' + escapeHtml(r.fromUID) + '\',\'' +
+                       escapeHtml(r.fromCode || '') + '\',\'' + escapeHtml(r.docId) + '\',this)">Add back</button>' +
+                   '</div>';
+        }
+
+        function frShowRequestPopup(rows) {
+            frCloseRequestPopup();
+            var many = rows.length > 1;
+            var el = document.createElement('div');
+            el.id = 'frReqSheet';
+            el.className = 'modal-overlay gift-sheet-scrim active';
+            el.addEventListener('click', function (e) { if (e.target === el) frCloseRequestPopup(); });
+            el.innerHTML =
+                '<div class="modal pl-modal gift-sheet">' +
+                  '<div class="modal-header pl-modal-header">' +
+                    '<div><div class="pl-modal-eyebrow">Friends</div>' +
+                    '<h3 class="modal-title">' +
+                      (many ? rows.length + ' people added you' : escapeHtml(rows[0].fromName || 'Someone') + ' added you') +
+                    '</h3></div>' +
+                    '<button class="pl-modal-close" type="button" onclick="frCloseRequestPopup()" aria-label="Close">' +
+                    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+                    '</button>' +
+                  '</div>' +
+                  '<div class="modal-body pl-modal-body">' +
+                    '<div class="fr-req-pop-list" id="frReqPopList">' +
+                      rows.map(frRequestPopupRow).join('') +
+                    '</div>' +
+                    '<p class="gift-note">Adding back puts you on each other’s leaderboards and lets you send gifts. ' +
+                      'Close this and the request keeps its row on the Friends tab.</p>' +
+                  '</div>' +
+                  '<div class="modal-footer pl-modal-footer">' +
+                    '<button class="vs-btn vs-btn-ghost" onclick="frCloseRequestPopup()">Later</button>' +
+                  '</div>' +
+                '</div>';
+            document.body.appendChild(el);
+            frMarkShown(rows.map(function (r) { return r.docId; }));
+        }
+
+        window.frPopupAddBack = async function (fromUID, fromCode, docId, btn) {
+            if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
+            try {
+                await acceptFriendRequest(fromUID, fromCode, docId);
+                if (btn) { btn.textContent = 'Added'; btn.classList.add('is-done'); }
+                showToast('Friend added.', 'green');
+            } catch (e) {
+                if (btn) { btn.disabled = false; btn.textContent = 'Add back'; }
+                showToast('Could not add them. Try from the Friends tab.', 'red');
+                return;
+            }
+            var row  = document.querySelector('.fr-req-pop-row[data-doc="' +
+                       (window.CSS && CSS.escape ? CSS.escape(docId) : docId) + '"]');
+            if (row) row.remove();
+            var list = document.getElementById('frReqPopList');
+            if (list && !list.children.length) frCloseRequestPopup();
+        };
+
+        // Login pass. Silent when there is nothing new: no request, none this
+        // device has not already shown, or the sender is already a friend
+        // (they added you back first, so there is nothing to decide).
+        async function frRequestsOnLogin() {
+            if (!window.currentUser || !window.currentUser.uid || !window.userData) return;
+            var me = window.currentUser.uid;
+            var rows = [];
+            try {
+                var snap = await getDocs(query(collection(db, 'friendRequests'), where('toUID', '==', me)));
+                snap.forEach(function (d) { rows.push(Object.assign({ docId: d.id }, d.data())); });
+            } catch (e) { return; }
+            var friends = window.userData.friends || [];
+            var seen    = frSeenIds();
+            var fresh   = rows.filter(function (r) {
+                return r.fromUID && seen.indexOf(r.docId) === -1 && friends.indexOf(r.fromUID) === -1;
+            });
+            if (!fresh.length) return;
+            fresh.sort(function (a, b) { return String(a.createdAt || '').localeCompare(String(b.createdAt || '')); });
+            frShowRequestPopup(fresh.slice(0, 5));
+        }
+        window.frRequestsOnLogin = frRequestsOnLogin;
 
         // ── Copy friend code ──────────────────────────────────────────────
         window.copyFriendCode = function() {
@@ -18939,9 +19174,8 @@
                           '<span class="grit-week-amt">No bonus</span>' +
                         '</div>' +
                         '<div class="grit-week-track"><span class="grit-week-fill" style="width:0%"></span></div>' +
-                        '<div class="grit-week-note">None of your activities have a frequency set, ' +
-                          'so there is no weekly target to measure against — and no weekly bonus. ' +
-                          'Give an activity a frequency and it starts counting next Monday.</div>';
+                        '<div class="grit-week-note">No activity has a frequency, so there is no ' +
+                          'weekly target. Set one and it counts from Monday.</div>';
             } else {
                 html += '<div class="grit-week-top">' +
                           '<span class="grit-week-title">This week</span>' +
@@ -18953,7 +19187,7 @@
                           '<span class="grit-week-target" style="left:' + (100 / GRIT_RATIO_CAP).toFixed(1) + '%"></span>' +
                         '</div>' +
                         '<div class="grit-week-note">' +
-                          w.completions + ' of ' + (Math.round(w.quota * 10) / 10) + ' — ' +
+                          w.completions + ' of ' + (Math.round(w.quota * 10) / 10) + ' · ' +
                           Math.round(ratio * 100) + '% of target. Tap for the breakdown.' +
                         '</div>';
             }
@@ -18962,8 +19196,8 @@
             // ── Weekly breakdown (frozen contributors) ────────────────────
             html += '<div class="grit-breakdown" id="gritBreakdown" hidden>';
             if (!w.contributors || !w.contributors.length) {
-                html += '<div class="grit-empty">Nothing is in this week\'s target. ' +
-                        'Activities join the denominator on the Monday after you start doing them.</div>';
+                html += '<div class="grit-empty">Nothing in this week\'s target yet. ' +
+                        'Activities join on the Monday after you start them.</div>';
             } else {
                 html += '<div class="grit-bd-head"><span>Activity</span><span>Done</span><span>Target</span></div>';
                 w.contributors.forEach(function (c) {
@@ -18977,9 +19211,8 @@
                 });
                 html += '<div class="grit-bd-foot">' +
                           (ratio === null
-                            ? 'No target set, so no bonus this week.'
-                            : 'At ' + Math.round(ratio * 100) + '% of target you are on track for ' +
-                              '<strong>+' + projected + ' Grit</strong> when the week closes on Sunday.') +
+                            ? 'No target, so no bonus this week.'
+                            : 'On track for <strong>+' + projected + ' Grit</strong> when the week closes.') +
                         '</div>';
             }
             html += '</div>';
@@ -18992,11 +19225,10 @@
             html += '<div class="grit-item' + (g.balance < GRIT_SHIELD_COST ? ' is-poor' : '') + '">' +
                       '<div class="grit-item-main">' +
                         '<div class="grit-item-name">🛡 Streak shield</div>' +
-                        '<div class="grit-item-sub">Absorbs one missed window before your ' +
-                          'streak breaks. Bought into your pool, then placed on whichever ' +
-                          'activity you want protected.' +
-                          '<br><span class="grit-item-gift-note">Gift one to a friend for ' +
-                            GRIT_GIFT_SHIELD_COST + ' — it drops straight into their pool.</span></div>' +
+                        '<div class="grit-item-sub">Absorbs one missed window. Buy into your pool, ' +
+                          'then place it on an activity.' +
+                          '<br><span class="grit-item-gift-note">Gift one for ' +
+                            GRIT_GIFT_SHIELD_COST + '.</span></div>' +
                       '</div>' +
                       '<div class="grit-buy-pair">' +
                         '<button type="button" class="grit-buy" id="gritBuyShieldBtn"' +
@@ -19031,11 +19263,10 @@
                         '<div class="grit-item-sub">' +
                           (g.pendingBoost
                             ? 'Armed — your next completion counts twice.'
-                            : 'Arms a ×2 on the next completion you choose. ' +
+                            : '×2 on your next completion. ' +
                               boostsLeft + ' of ' + GRIT_BOOST_PER_MONTH + ' left this month.') +
-                          '<br><span class="grit-item-gift-note">Gifted: ' + giftBoostsLeft + ' of ' +
-                            GRIT_GIFT_BOOST_PER_MONTH + ' left this month — it lands as a surprise ' +
-                            'on their next completion.</span>' +
+                          '<br><span class="grit-item-gift-note">Gift: ' + giftBoostsLeft + ' of ' +
+                            GRIT_GIFT_BOOST_PER_MONTH + ' left this month.</span>' +
                         '</div>' +
                       '</div>' +
                       '<div class="grit-buy-pair">' +
@@ -19050,18 +19281,41 @@
             html += '</div>';
 
             // ── How Grit works ───────────────────────────────────────────
-            html += '<h4 class="grit-h">How Grit works</h4>' +
+            // The anchor the title's "i" button scrolls to.
+            html += '<h4 class="grit-h" id="gritHow">How Grit works</h4>' +
                     '<ul class="grit-explain">' +
-                      '<li>You earn 1 Grit every time you complete an activity.</li>' +
-                      '<li>Each week, you earn a bonus based on what fraction of your frequency targets you hit.</li>' +
-                      '<li>Streaks and mastery pay out separately as you reach them.</li>' +
+                      '<li>1 Grit per completion.</li>' +
+                      '<li>A weekly bonus, scaled by how much of your frequency target you hit.</li>' +
+                      '<li>Streaks and mastery pay out as you reach them.</li>' +
                     '</ul>';
 
             // ── Recent activity ──────────────────────────────────────────
-            html += '<h4 class="grit-h">Recent activity</h4>' +
-                    '<div class="grit-log" id="gritLog"><div class="grit-empty">Loading…</div></div>';
+            // Collapsible, and paged rather than a wall: twenty rows is as far
+            // as anyone reads in one go, and the rest is one tap away.
+            html += '<button type="button" class="grit-h grit-h-toggle" id="gritLogToggle" ' +
+                        'aria-expanded="' + _gritLogOpen + '" aria-controls="gritLogWrap">' +
+                      '<span>Recent activity</span>' +
+                      '<svg class="grit-h-chev' + (_gritLogOpen ? ' is-open' : '') + '" viewBox="0 0 24 24" ' +
+                        'fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" ' +
+                        'stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>' +
+                    '</button>' +
+                    '<div class="grit-log-wrap" id="gritLogWrap"' + (_gritLogOpen ? '' : ' hidden') + '>' +
+                      '<div class="grit-log" id="gritLog"><div class="grit-empty">Loading…</div></div>' +
+                      '<div class="grit-log-pager" id="gritLogPager"></div>' +
+                    '</div>';
 
             host.innerHTML = html;
+
+            var logToggle = document.getElementById('gritLogToggle');
+            if (logToggle) logToggle.addEventListener('click', function () {
+                _gritLogOpen = !_gritLogOpen;
+                var wrap = document.getElementById('gritLogWrap');
+                var chev = logToggle.querySelector('.grit-h-chev');
+                if (wrap) wrap.hidden = !_gritLogOpen;
+                if (chev) chev.classList.toggle('is-open', _gritLogOpen);
+                logToggle.setAttribute('aria-expanded', String(_gritLogOpen));
+                if (_gritLogOpen) gritRenderLog();
+            });
 
             var bar = document.getElementById('gritWeekBar');
             var bd  = document.getElementById('gritBreakdown');
@@ -19094,12 +19348,20 @@
             var gb = document.getElementById('gritGiftBoostBtn');
             if (gb) gb.addEventListener('click', function () { giftOpenPicker(null, 'xp_boost'); });
 
-            gritRenderLog();
+            if (_gritLogOpen) gritRenderLog();
         }
 
         let _gritLogCache = null;
         let _gritLogCacheAt = 0;
         const GRIT_LOG_CACHE_MS = 30000;
+
+        // Recent activity: twenty rows a page, five pages deep. Reading more
+        // than a hundred entries back is not what this list is for, and a
+        // deeper read is a bigger query on every visit to the tab.
+        const GRIT_LOG_PAGE  = 20;
+        const GRIT_LOG_DEPTH = 100;
+        let _gritLogOpen = true;
+        let _gritLogPage = 0;
 
         // Lists every activity a shield can actually protect, with its current
         // shield count, and refuses the ones already at the cap in place
@@ -19107,8 +19369,8 @@
         function gritRenderShieldPicker(host) {
             var eligible = gritAllActivities().filter(gritShieldEligible);
             if (!eligible.length) {
-                host.innerHTML = '<div class="grit-empty">No activity here keeps a streak yet. ' +
-                    'Shields protect daily, weekly and custom-frequency activities.</div>';
+                host.innerHTML = '<div class="grit-empty">Nothing keeps a streak yet. ' +
+                    'Shields protect activities with a frequency.</div>';
                 return;
             }
             eligible.sort(function (a, b) { return (b.streak || 0) - (a.streak || 0); });
@@ -19141,47 +19403,98 @@
             });
         }
 
+        // Page changes read from the rows already in hand — the fetch is one
+        // query per cache window, not one per page.
+        window.gritLogGoPage = function (n) {
+            _gritLogPage = Math.max(0, n);
+            gritPaintLog();
+        };
+
+        function gritLogRows() {
+            // Entries still sitting in the write buffer are real and already
+            // reflected in the balance — show them rather than a gap.
+            var pending = _gritLedgerBuffer.map(function (b) { return b.data; }).reverse();
+            return pending.concat(_gritLogCache || []).slice(0, GRIT_LOG_DEPTH);
+        }
+
+        function gritPaintLog() {
+            var live  = document.getElementById('gritLog');
+            var pager = document.getElementById('gritLogPager');
+            if (!live) return;
+
+            var rows  = gritLogRows();
+            if (!rows.length) {
+                live.innerHTML = '<div class="grit-empty">Nothing yet. Complete an activity to start earning.</div>';
+                if (pager) pager.innerHTML = '';
+                return;
+            }
+
+            var pages = Math.ceil(rows.length / GRIT_LOG_PAGE);
+            if (_gritLogPage >= pages) _gritLogPage = pages - 1;
+            var from = _gritLogPage * GRIT_LOG_PAGE;
+            var page = rows.slice(from, from + GRIT_LOG_PAGE);
+
+            live.innerHTML = page.map(function (e) {
+                var sign = e.delta > 0 ? '+' : '';
+                return '<div class="grit-log-row">' +
+                         '<span class="grit-log-what">' + gritEsc(gritLedgerPhrase(e)) + '</span>' +
+                         '<span class="grit-log-when">' + gritEsc(gritRelTime(e.at)) + '</span>' +
+                         '<span class="grit-log-amt ' + (e.delta > 0 ? 'is-up' : 'is-down') + '">' +
+                           sign + e.delta + '</span>' +
+                       '</div>';
+            }).join('');
+
+            if (!pager) return;
+            if (pages <= 1) { pager.innerHTML = ''; return; }
+            pager.innerHTML =
+                '<button type="button" class="grit-page-btn" ' +
+                  (_gritLogPage === 0 ? 'disabled ' : '') +
+                  'onclick="gritLogGoPage(' + (_gritLogPage - 1) + ')" aria-label="Newer entries">' +
+                  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" ' +
+                  'stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>' +
+                '</button>' +
+                '<span class="grit-page-count">' + (from + 1) + '–' + (from + page.length) +
+                  ' of ' + rows.length + '</span>' +
+                '<button type="button" class="grit-page-btn" ' +
+                  (_gritLogPage >= pages - 1 ? 'disabled ' : '') +
+                  'onclick="gritLogGoPage(' + (_gritLogPage + 1) + ')" aria-label="Older entries">' +
+                  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" ' +
+                  'stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>' +
+                '</button>';
+        }
+
         async function gritRenderLog() {
             var el = document.getElementById('gritLog');
             if (!el || _gritRewardsBusy) return;
             _gritRewardsBusy = true;
             try {
-                var stored;
-                if (_gritLogCache && (Date.now() - _gritLogCacheAt) < GRIT_LOG_CACHE_MS) {
-                    stored = _gritLogCache;
-                } else {
-                    stored = await gritReadLedger(20);
-                    _gritLogCache = stored;
+                if (!_gritLogCache || (Date.now() - _gritLogCacheAt) >= GRIT_LOG_CACHE_MS) {
+                    _gritLogCache = await gritReadLedger(GRIT_LOG_DEPTH);
                     _gritLogCacheAt = Date.now();
                 }
-                // Entries still sitting in the write buffer are real and already
-                // reflected in the balance — show them rather than a gap.
-                var pending = _gritLedgerBuffer.map(function (b) { return b.data; }).reverse();
-                var rows = pending.concat(stored).slice(0, 20);
-                var live = document.getElementById('gritLog');
-                if (!live) return;
-                if (!rows.length) {
-                    live.innerHTML = '<div class="grit-empty">Nothing yet. Complete an activity to start earning.</div>';
-                    return;
-                }
-                live.innerHTML = rows.map(function (e) {
-                    var sign = e.delta > 0 ? '+' : '';
-                    return '<div class="grit-log-row">' +
-                             '<span class="grit-log-what">' + gritEsc(gritLedgerPhrase(e)) + '</span>' +
-                             '<span class="grit-log-when">' + gritEsc(gritRelTime(e.at)) + '</span>' +
-                             '<span class="grit-log-amt ' + (e.delta > 0 ? 'is-up' : 'is-down') + '">' +
-                               sign + e.delta + '</span>' +
-                           '</div>';
-                }).join('');
+                gritPaintLog();
             } finally {
                 _gritRewardsBusy = false;
             }
         }
 
+        // The "i" beside the Rewards title. The explainer stays where it is —
+        // at the bottom, out of the way of the things you came here to do —
+        // and the button is the shortcut to it.
+        window.gritScrollToHow = function () {
+            var el = document.getElementById('gritHow');
+            if (!el) return;
+            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            el.classList.remove('is-flagged');
+            void el.offsetWidth;
+            el.classList.add('is-flagged');
+        };
+
         // Called by the v5 nav when it activates More › Rewards.
         window.gritOpenRewards = function () {
             var host = document.getElementById('gritRewardsRoot');
             if (!host) return;
+            _gritLogPage = 0;   // a fresh visit starts at the newest entries
             try { if (typeof window.mkRenderGrit === 'function') window.mkRenderGrit(); } catch (e) {}
             gritRenderRewards(true);
         };
@@ -20098,7 +20411,7 @@
             await vsFetch(true);
             if (vsCountLive() >= VS_MAX_CONCURRENT) {
                 throw new Error('You already have ' + VS_MAX_CONCURRENT +
-                                ' versus challenges running. Finish one first.');
+                                ' challenges running. Finish one first.');
             }
             var committed = vsCommittedActivityIds(null);
             var clash = reqs.find(function (r) { return committed.has(r.activityId); });
@@ -20187,7 +20500,7 @@
             await vsFetch(true);
             if (vsCountLive() > VS_MAX_CONCURRENT) {
                 throw new Error('You already have ' + VS_MAX_CONCURRENT +
-                                ' versus challenges running. Finish one first.');
+                                ' challenges running. Finish one first.');
             }
             var committed = vsCommittedActivityIds(id);
             var clashId = Object.keys(mappingMine).find(function (k) {
@@ -20821,6 +21134,32 @@
             '</div>';
         }
 
+        // The opponent's bar and whatever sits beside it. Forfeit rides this
+        // row rather than the action row below: quitting is about the person
+        // you are racing, so it belongs against their line, and putting it
+        // there leaves the action row to the one thing you actually press.
+        function vsOppRow(model, trailing) {
+            return '<div class="vs-opp-row">' + vsOppBar(model) + (trailing || '') + '</div>';
+        }
+
+        // The header's facts as chips. Dots between four different kinds of
+        // number made them read as one run-on line; a chip each gives the pot,
+        // the bonus, the clock and the standing their own edges.
+        function vsChips(cells) {
+            return '<div class="vs-chips">' + cells.filter(Boolean).map(function (c) {
+                var tone = c.tone || 'plain';
+                // The semantic classes the card has always carried — gold is
+                // money, green is XP, the lead is the standing — ride along, so
+                // the tone is still readable from the markup alone.
+                var extra = tone === 'gold' ? ' vs-gold'
+                          : tone === 'xp'   ? ' vs-xp'
+                          : tone.indexOf('lead-') === 0 ? ' vs-lead vs-' + tone
+                          : '';
+                return '<span class="vs-chip vs-chip-' + tone + extra + '">' +
+                       escapeHtml(String(c.text)) + '</span>';
+            }).join('') + '</div>';
+        }
+
         // One activity inside the breakdown.
         function vsSubBar(label, cur, target, quiet) {
             var done = cur >= target;
@@ -20868,17 +21207,18 @@
 
             return '' +
             '<div class="vs-board" data-state="pending">' +
-                '<div class="vs-ribbon">' + (mine ? 'Sent' : 'Received') + '</div>' +
-                '<h3 class="vs-board-title">' + escapeHtml(ch.name) + '</h3>' +
-                '<div class="vs-board-meta">' +
-                    '<span>' + (mine ? 'To ' : 'From ') + escapeHtml(vsName(ch, opp)) + '</span>' +
-                    '<span class="vs-dot">·</span>' +
-                    '<span class="vs-gold">' + ch.stake + ' Grit each</span>' +
-                    '<span class="vs-dot">·</span>' +
-                    '<span>' + vsDurationText(ch.durationDays) + '</span>' +
-                    '<span class="vs-dot">·</span>' +
-                    '<span>' + vsFmtLeft(ch.expiresAt - vsNow()) + ' to answer</span>' +
+                '<div class="vs-board-head">' +
+                    '<div class="vs-ribbon">' + (mine ? 'Sent' : 'Received') + '</div>' +
+                    '<h3 class="vs-board-title">' + escapeHtml(ch.name) + '</h3>' +
+                    '<div class="vs-board-sub">' + (mine ? 'To ' : 'From ') +
+                        escapeHtml(vsName(ch, opp)) + '</div>' +
+                    vsChips([
+                        { text: ch.stake + ' Grit each', tone: 'gold' },
+                        { text: vsDurationText(ch.durationDays), tone: 'plain' },
+                        { text: 'Answer in ' + vsFmtLeft(ch.expiresAt - vsNow()).replace(/ left$/, ''), tone: 'plain' }
+                    ]) +
                 '</div>' +
+                '<div class="vs-rule"></div>' +
                 '<div class="vs-reqline">' + reqLine + '</div>' +
                 '<div class="vs-actions">' + actions + '</div>' +
             '</div>';
@@ -20911,25 +21251,35 @@
                     '</div>';
             }
 
+            var forfeit =
+                '<button type="button" class="vs-btn vs-btn-danger vs-forfeit" ' +
+                    'onclick="vsConfirmForfeit(\'' + ch.id + '\')">' +
+                    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" ' +
+                    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+                    '<line x1="4" y1="22" x2="4" y2="3"/>' +
+                    '<path d="M4 4h11l-1.6 3.5L15 11H4z"/></svg>' +
+                    '<span>Forfeit</span>' +
+                '</button>';
+
             return '' +
             '<div class="vs-board" data-state="' + (done ? 'won' : 'active') + '">' +
-                '<h3 class="vs-board-title">' + escapeHtml(ch.name) + '</h3>' +
-                '<div class="vs-board-meta">' +
-                    '<span class="vs-gold">' + ch.pot + ' Grit pot</span>' +
-                    '<span class="vs-dot">·</span>' +
-                    '<span class="vs-xp">+' + ch.bonusXP + ' XP</span>' +
-                    '<span class="vs-dot">·</span>' +
-                    '<span>' + vsFmtLeft(ch.endsAt - vsNow()) + '</span>' +
-                    '<span class="vs-dot">·</span>' +
-                    '<span class="vs-lead vs-lead-' + m.leadKey + '">' + m.leadTxt + '</span>' +
+                '<div class="vs-board-head">' +
+                    '<h3 class="vs-board-title">' + escapeHtml(ch.name) + '</h3>' +
+                    vsChips([
+                        { text: ch.pot + ' Grit pot', tone: 'gold' },
+                        { text: '+' + ch.bonusXP + ' XP', tone: 'xp' },
+                        { text: vsFmtLeft(ch.endsAt - vsNow()), tone: 'plain' },
+                        { text: m.leadTxt, tone: 'lead-' + m.leadKey }
+                    ]) +
                 '</div>' +
+                '<div class="vs-rule"></div>' +
                 vsHero(m, done) +
-                vsOppBar(m) +
+                vsOppRow(m, forfeit) +
                 '<div class="vs-board-actions">' +
-                    '<button class="vs-expand" type="button" onclick="vsToggleDetail(\'' + ch.id + '\')">' +
-                        '<span>Breakdown</span>' + vsChevron(open) +
+                    '<button class="vs-expand" type="button" aria-expanded="' + open + '" ' +
+                        'onclick="vsToggleDetail(\'' + ch.id + '\')">' +
+                        '<span>' + (open ? 'Hide breakdown' : 'Breakdown') + '</span>' + vsChevron(open) +
                     '</button>' +
-                    '<button class="vs-btn vs-btn-quiet" onclick="vsConfirmForfeit(\'' + ch.id + '\')">Forfeit</button>' +
                 '</div>' +
                 breakdown +
             '</div>';
@@ -20964,15 +21314,18 @@
 
             return '' +
             '<div class="vs-board" data-state="' + state + '">' +
-                '<div class="vs-ribbon vs-ribbon-' + state + '">' +
-                    (tie ? 'Draw' : (won ? 'Won' : 'Lost')) + '</div>' +
-                '<h3 class="vs-board-title">' + escapeHtml(ch.name) + '</h3>' +
-                '<div class="vs-board-meta">' +
-                    '<span>' + verdict + '</span>' +
-                    '<span class="vs-dot">·</span>' + gritLine +
+                '<div class="vs-board-head">' +
+                    '<div class="vs-ribbon vs-ribbon-' + state + '">' +
+                        (tie ? 'Draw' : (won ? 'Won' : 'Lost')) + '</div>' +
+                    '<h3 class="vs-board-title">' + escapeHtml(ch.name) + '</h3>' +
+                    '<div class="vs-board-meta">' +
+                        '<span>' + verdict + '</span>' +
+                        '<span class="vs-dot">·</span>' + gritLine +
+                    '</div>' +
                 '</div>' +
+                '<div class="vs-rule"></div>' +
                 vsHero(m, won) +
-                vsOppBar(m) +
+                vsOppRow(m) +
             '</div>';
         }
 
@@ -21113,8 +21466,34 @@
         // One reusable overlay, created on demand, styled with the app's
         // existing modal tokens.
 
+        // ── Why sheets used to "refresh" on every tap ─────────────────────
+        // On phones the app animates `.modal-overlay.active > .modal` with
+        // mkSheetRise: the panel slides up from off-screen when it opens. Every
+        // sheet in the app used to show a new state by building a NEW .modal
+        // element — so the browser saw a fresh node matching that selector and
+        // replayed the OPEN animation. Tap "+ Add requirement", or open the
+        // activity picker, and the whole card dropped to the bottom of the
+        // screen and slid back up. That is the flash, and it was never a
+        // re-fetch: it was the entry animation, once per click.
+        //
+        // The fix is to keep the .modal node and swap what is inside it. The
+        // animation runs once, when the sheet genuinely opens.
+        function mkSwapSheetContents(overlay, innerHtml) {
+            var modal = overlay && overlay.querySelector('.modal');
+            if (!modal) return false;
+            var oldBody = modal.querySelector('.modal-body');
+            var top = oldBody ? oldBody.scrollTop : 0;
+            modal.innerHTML = innerHtml;
+            var newBody = modal.querySelector('.modal-body');
+            if (newBody && top) newBody.scrollTop = top;
+            return true;
+        }
+        window.mkSwapSheetContents = mkSwapSheetContents;
+
         function vsSheet(innerHtml) {
             var el = document.getElementById('vsSheet');
+            // Already open: this is a state change, not an open.
+            if (el && el.classList.contains('active') && mkSwapSheetContents(el, innerHtml)) return;
             if (!el) {
                 el = document.createElement('div');
                 el.id = 'vsSheet';
@@ -21163,15 +21542,15 @@
         window.vsOpenCreate = async function () {
             await vsFetch(false);
             if (vsCountLive() >= VS_MAX_CONCURRENT) {
-                showToast('You already have ' + VS_MAX_CONCURRENT + ' versus challenges running.', 'red');
+                showToast('You already have ' + VS_MAX_CONCURRENT + ' challenges running.', 'red');
                 return;
             }
             var friends = (window.userData.friends || []);
-            var head = vsSheetHead('Versus', 'Choose an opponent');
+            var head = vsSheetHead('New challenge', 'Choose an opponent');
 
             if (!friends.length) {
                 vsSheet(head + '<div class="modal-body pl-modal-body">' +
-                    '<p class="vs-note">No friends yet. Add one from the People tab first.</p></div>');
+                    '<p class="vs-note">No friends yet. Add one from the Friends tab first.</p></div>');
                 return;
             }
             vsSheet(head + '<div class="modal-body pl-modal-body"><div class="vs-loading">Loading…</div></div>');
@@ -21229,14 +21608,14 @@
                                  activityId: '', targetCount: 5 });
         }
 
-        window.vsAddRow = function () { vsReadCreateForm(); vsDraftAddRow(); vsRenderCreateForm(); };
+        window.vsAddRow = function () { vsReadCreateForm(); vsDraftAddRow(); vsUpdateCreateForm(); };
         window.vsDelRow = function (i) {
             vsReadCreateForm();
             if (_vsDraft.rows.length > 1) _vsDraft.rows.splice(i, 1);
             _vsDraft.pickerRow = -1;
-            vsRenderCreateForm();
+            vsUpdateCreateForm();
         };
-        window.vsTermsChanged = function () { vsReadCreateForm(); vsRenderCreateForm(); };
+        window.vsTermsChanged = function () { vsReadCreateForm(); vsUpdateCreateForm(); };
 
         function vsReadCreateForm() {
             if (!_vsDraft) return;
@@ -21307,7 +21686,7 @@
             vsReadCreateForm();
             _vsDraft.pickerRow = (_vsDraft.pickerRow === i) ? -1 : i;
             _vsDraft.pickerQuery = '';
-            vsRenderCreateForm();
+            vsUpdateCreateForm();
             if (_vsDraft.pickerRow === i) {
                 var el = document.getElementById('vsActSearch');
                 if (el) setTimeout(function () { el.focus(); }, 40);
@@ -21325,11 +21704,19 @@
             vsReadCreateForm();
             _vsDraft.rows[i].activityId = activityId;
             _vsDraft.pickerRow = -1;
-            vsRenderCreateForm();
+            vsUpdateCreateForm();
         };
 
-        function vsRenderCreateForm() {
-            var rowsHtml = _vsDraft.rows.map(function (r, i) {
+        // ── The terms form ────────────────────────────────────────────────
+        // Split in two on purpose. vsRenderCreateForm() mounts the screen
+        // once; every later interaction goes through vsUpdateCreateForm(),
+        // which rewrites only the three regions that can actually change —
+        // the requirement rows, the add button and the stake summary. The name
+        // field, the description and the duration input are never re-created,
+        // so a half-typed name keeps its caret when you add a requirement.
+
+        function vsReqRowsHtml() {
+            return _vsDraft.rows.map(function (r, i) {
                 var act  = gritFindActivity(r.activityId);
                 var open = _vsDraft.pickerRow === i;
                 return '' +
@@ -21350,7 +21737,8 @@
                         '</button>' +
                         '<div class="vs-req-target">' +
                             '<input class="pl-input" id="vsRowTarget' + i + '" type="number" min="1" max="999" ' +
-                                'inputmode="numeric" value="' + r.targetCount + '" aria-label="Times">' +
+                                'inputmode="numeric" value="' + r.targetCount + '" aria-label="Times" ' +
+                                'onchange="vsTermsChanged()">' +
                             '<span class="vs-req-times">×</span>' +
                         '</div>' +
                     '</div>' +
@@ -21365,17 +21753,51 @@
                         : '') +
                 '</div>';
             }).join('');
+        }
 
-            var stakeOpts = '';
-            for (var s = VS_STAKE_MIN; s <= VS_STAKE_MAX; s += VS_STAKE_STEP) {
-                stakeOpts += '<option value="' + s + '"' + (_vsDraft.stake === s ? ' selected' : '') +
-                             '>' + s + ' Grit</option>';
+        function vsAddReqBtnHtml() {
+            return _vsDraft.rows.length < VS_MAX_REQS
+                ? '<button type="button" class="vs-addreq" onclick="vsAddRow()">+ Add requirement</button>'
+                : '';
+        }
+
+        function vsStakesHtml() {
+            var bal = gritBalance();
+            return vsStakes([
+                { label: 'Pot',     value: (_vsDraft.stake * 2) + ' Grit', tone: 'gold' },
+                { label: 'Bonus',   value: '+' + vsDraftBonusXP() + ' XP', tone: 'xp' },
+                { label: 'Balance', value: bal + ' Grit', tone: bal < _vsDraft.stake ? 'short' : 'neutral' }
+            ]);
+        }
+
+        // Rewrite only what changed. Falls back to a full mount if the form is
+        // not on screen (the first render of the step, or after a close).
+        function vsUpdateCreateForm() {
+            var list = document.getElementById('vsReqList');
+            if (!list) { vsRenderCreateForm(); return; }
+            list.innerHTML = vsReqRowsHtml();
+            var addWrap = document.getElementById('vsAddReqWrap');
+            if (addWrap) addWrap.innerHTML = vsAddReqBtnHtml();
+            var stakesHost = document.getElementById('vsStakesHost');
+            if (stakesHost) stakesHost.innerHTML = vsStakesHtml();
+            var send = document.getElementById('vsSendBtn');
+            if (send) {
+                var short = gritBalance() < _vsDraft.stake;
+                send.disabled = short;
+                if (short) send.title = 'Not enough Grit'; else send.removeAttribute('title');
             }
-            var bal   = gritBalance();
-            var short = bal < _vsDraft.stake;
+        }
+
+        function vsRenderCreateForm() {
+            var stakeOpts = '';
+            for (var st = VS_STAKE_MIN; st <= VS_STAKE_MAX; st += VS_STAKE_STEP) {
+                stakeOpts += '<option value="' + st + '"' + (_vsDraft.stake === st ? ' selected' : '') +
+                             '>' + st + ' Grit</option>';
+            }
+            var short = gritBalance() < _vsDraft.stake;
 
             vsSheet(
-                vsSheetHead('Versus · ' + _vsDraft.opponentName, 'Set the terms') +
+                vsSheetHead('Challenge · ' + _vsDraft.opponentName, 'Set the terms') +
                 '<div class="modal-body pl-modal-body ay-modal-body">' +
                     '<div class="ay-field"><label class="pl-field-label" for="vsName">Name</label>' +
                         '<input class="pl-input" id="vsName" placeholder="Two weeks of mornings" value="' +
@@ -21385,10 +21807,8 @@
                         escapeHtml(_vsDraft.description || '') + '</textarea></div>' +
 
                     '<div class="ay-field"><label class="pl-field-label">Requirements</label>' +
-                        rowsHtml +
-                        (_vsDraft.rows.length < VS_MAX_REQS
-                            ? '<button type="button" class="vs-addreq" onclick="vsAddRow()">+ Add requirement</button>'
-                            : '') +
+                        '<div id="vsReqList">' + vsReqRowsHtml() + '</div>' +
+                        '<div id="vsAddReqWrap">' + vsAddReqBtnHtml() + '</div>' +
                     '</div>' +
 
                     '<div class="vs-two">' +
@@ -21400,11 +21820,7 @@
                             '</select></div>' +
                     '</div>' +
 
-                    vsStakes([
-                        { label: 'Pot',     value: (_vsDraft.stake * 2) + ' Grit', tone: 'gold' },
-                        { label: 'Bonus',   value: '+' + vsDraftBonusXP() + ' XP', tone: 'xp' },
-                        { label: 'Balance', value: bal + ' Grit', tone: short ? 'short' : 'neutral' }
-                    ]) +
+                    '<div id="vsStakesHost">' + vsStakesHtml() + '</div>' +
                     '<p class="vs-note">Your stake is locked in when you send, and returned if they ' +
                     'decline or it expires. Only same-day completions count.</p>' +
                 '</div>' +
@@ -22093,6 +22509,11 @@
         window.giftCloseSheet = giftCloseSheet;
 
         function giftSheet(innerHtml) {
+            // Same rule as vsSheet: moving between the gift picker's steps is a
+            // state change, so it swaps contents rather than rebuilding the
+            // .modal and replaying the slide-up.
+            var open = document.getElementById('giftSheet');
+            if (open && mkSwapSheetContents(open, innerHtml)) return open;
             giftCloseSheet();
             var el = document.createElement('div');
             el.id = 'giftSheet';
@@ -22525,15 +22946,21 @@
             }
         }
 
+        // The Friends tab shows the last five and nothing more. The list is a
+        // reassurance that a gift landed, not a ledger — the full history is
+        // not something anyone scrolls, and a long one pushed the invite box
+        // off the bottom of the page.
+        const GIFT_SENT_SHOWN = 5;
+
         async function giftRenderSentList() {
             var host = document.getElementById('friendsGiftsSent');
             if (!host) return;
-            var list = await giftFetchSent(15);
+            var list = await giftFetchSent(GIFT_SENT_SHOWN);
             _giftSentCache = list;
             if (!list.length) { host.innerHTML = ''; return; }
             host.innerHTML =
                 '<div class="fr-section-kicker">Gifts sent</div>' +
-                list.map(function (gf) {
+                list.slice(0, GIFT_SENT_SHOWN).map(function (gf) {
                     var what = gf.type === 'shield' ? '🛡 Shield' : '⚡ Double XP';
                     var state = gf.status === 'consumed'
                         ? (gf.type === 'shield' ? 'Received' :
@@ -22929,13 +23356,84 @@
             }
             await saveUserData();
             await lbPublishBoard(true);
-            renderFriendsTab();
+            try { lbRenderPayoutSection(window._frEntries || []); } catch (e) {}
         };
 
         // ── The Leaderboards tab panel (§8.6, §8.7) ───────────────────────
+        // The Leaderboards tab is where a board is EDITED. The Friends tab
+        // shows people and sends them things; it carries no board control at
+        // all, so there is exactly one place a roster can change and no way to
+        // reshape your own ranking by accident while browsing.
+        //
         // No projected payout mid-week: scoredSize moves as members become
         // active, and a number that drops on Sunday reads as the app taking
         // something away.
+
+        // The opt-in explainer is collapsed by default — the card only needs
+        // to say whether you are in and let you change it. Kept in memory, not
+        // in userData: it is a reading position, not a preference.
+        let _lbOptInOpen = false;
+        window.lbToggleOptInInfo = function () {
+            _lbOptInOpen = !_lbOptInOpen;
+            var card = document.getElementById('lbOptInCard');
+            var body = document.getElementById('lbOptInBody');
+            var chev = document.getElementById('lbOptInChev');
+            if (body) body.hidden = !_lbOptInOpen;
+            if (card) card.classList.toggle('is-open', _lbOptInOpen);
+            if (chev) {
+                chev.classList.toggle('is-open', _lbOptInOpen);
+                chev.setAttribute('aria-expanded', String(_lbOptInOpen));
+            }
+        };
+
+        function lbBoardCountText() {
+            var friends = (window.userData.friends || []);
+            var hidden  = (window.userData.leaderboardHidden || []);
+            var on = friends.filter(function (u) { return hidden.indexOf(u) === -1; }).length;
+            return on + ' of ' + friends.length + ' on your board';
+        }
+
+        // One roster row, rendered from the same helper the repaint uses, so a
+        // toggle can rewrite a single row rather than the whole panel.
+        function lbRosterRowHtml(uid, entry) {
+            var on = (window.userData.leaderboardHidden || []).indexOf(uid) === -1;
+            var e  = entry || {};
+            var meta = 'Lv ' + (e.level || 1) + (e.characterTitle ? ' · ' + e.characterTitle : '');
+            return '<button type="button" class="lb-roster-row' + (on ? ' is-on' : '') + '" ' +
+                     'data-uid="' + giftEsc(uid) + '" role="switch" aria-checked="' + on + '" ' +
+                     'aria-label="' + (on ? 'Remove ' : 'Add ') + giftEsc(e.displayName || 'this friend') +
+                       (on ? ' from' : ' to') + ' your leaderboard" ' +
+                     'onclick="toggleLeaderboardVisibility(\'' + giftEsc(uid) + '\')">' +
+                     lbRosterAvatar(e) +
+                     '<span class="lb-roster-info">' +
+                       '<span class="lb-roster-name">' + giftEsc(e.displayName || 'Adventurer') + '</span>' +
+                       '<span class="lb-roster-meta">' + giftEsc(meta) + '</span>' +
+                     '</span>' +
+                     '<span class="lb-roster-switch"><span class="lb-roster-knob"></span></span>' +
+                   '</button>';
+        }
+
+        function lbRosterAvatar(e) {
+            if (e && e.photoURL) {
+                return '<img class="lb-roster-av" src="' + giftEsc(e.photoURL) + '" alt="">';
+            }
+            var initial = String((e && e.displayName) || '?').trim().charAt(0).toUpperCase() || '?';
+            return '<span class="lb-roster-av lb-roster-av-initial">' + giftEsc(initial) + '</span>';
+        }
+
+        // Repaint exactly what a board toggle changes: the one row, the count,
+        // and the ranking above. Rebuilding the panel would collapse the
+        // explainer and make the page jump — which is what it used to do.
+        window.lbSyncRosterRow = function (uid) {
+            var row = document.querySelector('.lb-roster-row[data-uid="' + (window.CSS && CSS.escape ? CSS.escape(uid) : uid) + '"]');
+            if (row) {
+                var entry = (window._frEntries || []).filter(function (x) { return x.uid === uid; })[0];
+                row.outerHTML = lbRosterRowHtml(uid, entry);
+            }
+            var count = document.getElementById('lbBoardCount');
+            if (count) count.textContent = lbBoardCountText();
+        };
+
         function lbRenderPayoutSection(entries) {
             var host = document.getElementById('lbPayoutSection');
             if (!host) return;
@@ -22946,10 +23444,7 @@
             var pending = st.optIn && st.optInFrom && st.optInFrom > anchor;
             var html = '';
 
-            // §8.6 — say plainly that the standings above are not settled. No
-            // projected payout: scoredSize moves as members become active, and
-            // a number that drops on Sunday reads as the app taking something
-            // away.
+            // §8.6 — say plainly that the standings above are not settled.
             if (st.optIn && !pending) {
                 html += '<p class="lb-provisional">Standings for the week of ' + giftEsc(anchor) +
                         ' are provisional until Monday.</p>';
@@ -22968,42 +23463,59 @@
                         '</button>';
             }
 
-            html += '<div class="lb-optin-card">' +
-                      '<div class="lb-optin-main">' +
-                        '<div class="lb-optin-title">Weekly payouts</div>' +
-                        '<div class="lb-optin-sub">' +
-                          (st.optIn
-                            ? (pending
-                                ? 'You are in from Monday ' + giftEsc(st.optInFrom) + '. Standings during the week are provisional.'
-                                : 'You are in. Top three are paid every Monday, scaled by how many of your board were mutual and active.')
-                            : 'Opt in to be paid for placing. Nobody is enrolled by default, and joining takes effect the following Monday.') +
+            // ── Opt-in: one line and a button, with the rules behind a chevron ──
+            var oneLiner = st.optIn
+                ? (pending ? 'In from Monday ' + giftEsc(st.optInFrom) + '.'
+                           : 'You are in. Top three paid every Monday.')
+                : 'Not enrolled. Opt in to be paid for placing.';
+            html += '<div class="lb-optin-card' + (_lbOptInOpen ? ' is-open' : '') + '" id="lbOptInCard">' +
+                      '<div class="lb-optin-head">' +
+                        '<div class="lb-optin-main">' +
+                          '<div class="lb-optin-title">Weekly payouts</div>' +
+                          '<div class="lb-optin-line">' + oneLiner + '</div>' +
                         '</div>' +
+                        '<button type="button" class="lb-optin-btn' + (st.optIn ? ' is-on' : '') + '" ' +
+                          'onclick="lbToggleOptIn()">' + (st.optIn ? 'Opt out' : 'Opt in') + '</button>' +
+                        '<button type="button" class="lb-optin-chev' + (_lbOptInOpen ? ' is-open' : '') + '" ' +
+                          'id="lbOptInChev" aria-expanded="' + _lbOptInOpen + '" aria-controls="lbOptInBody" ' +
+                          'aria-label="How weekly payouts work" onclick="lbToggleOptInInfo()">' +
+                          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" ' +
+                          'stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>' +
+                        '</button>' +
                       '</div>' +
-                      '<button type="button" class="lb-optin-btn' + (st.optIn ? ' is-on' : '') + '" ' +
-                        'onclick="lbToggleOptIn()">' + (st.optIn ? 'Opt out' : 'Opt in') + '</button>' +
+                      '<div class="lb-optin-body" id="lbOptInBody"' + (_lbOptInOpen ? '' : ' hidden') + '>' +
+                        '<ul class="lb-optin-rules">' +
+                          '<li>Nobody is enrolled by default, and joining takes effect the following Monday — so you cannot join after seeing you would have won.</li>' +
+                          '<li>First, second and third are paid. The amount scales with how many of your board were <strong>mutual</strong> (they have you on theirs) and <strong>active</strong> (they logged something that week).</li>' +
+                          '<li>Below three scored members, nothing pays.</li>' +
+                          '<li>Standings during the week are provisional. They settle on Monday.</li>' +
+                        '</ul>' +
+                      '</div>' +
                     '</div>';
 
-            // Board roster — add/remove works here as well as on the Friends
-            // tab (§1.1). Changes take effect for scoring next Monday.
-            var hidden = window.userData.leaderboardHidden || [];
+            // ── Your board: the one place a roster is edited ────────────────
             var friends = (window.userData.friends || []);
-            if (friends.length) {
-                html += '<div class="fr-section-kicker">Your board</div>' +
-                        '<div class="lb-roster">' +
+            html += '<div class="lb-board">' +
+                      '<div class="lb-board-head">' +
+                        '<span class="fr-section-kicker">Your board</span>' +
+                        '<span class="lb-board-count" id="lbBoardCount">' + lbBoardCountText() + '</span>' +
+                      '</div>';
+            if (!friends.length) {
+                html += '<div class="lb-board-empty">' +
+                          '<p>Your board is built from your friends. Add someone first and they show up here.</p>' +
+                          '<button type="button" class="lb-board-cta" onclick="switchTab(\'people\')">Go to Friends</button>' +
+                        '</div>';
+            } else {
+                html += '<div class="lb-roster" id="lbRoster">' +
                         friends.map(function (u) {
-                            var e = (entries || []).filter(function (x) { return x.uid === u; })[0] || {};
-                            var on = hidden.indexOf(u) === -1;
-                            return '<button type="button" class="lb-roster-row' + (on ? ' is-on' : '') + '" ' +
-                                     'onclick="toggleLeaderboardVisibility(\'' + giftEsc(u) + '\')">' +
-                                     '<span class="lb-roster-name">' + giftEsc(e.displayName || 'Adventurer') + '</span>' +
-                                     '<span class="lb-roster-state">' + (on ? 'On board' : 'Off board') + '</span>' +
-                                   '</button>';
+                            var e = (entries || []).filter(function (x) { return x.uid === u; })[0];
+                            return lbRosterRowHtml(u, e);
                         }).join('') +
                         '</div>' +
-                        '<p class="gift-note">Adding or removing someone takes effect for scoring next Monday. ' +
-                          'Only friends who also have you on their board, and who logged something that week, ' +
-                          'count toward a payout.</p>';
+                        '<p class="lb-board-note">Taking someone off hides them from your ranking. ' +
+                          'It reaches the scored roster next Monday.</p>';
             }
+            html += '</div>';
 
             host.innerHTML = html;
         }
