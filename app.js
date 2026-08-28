@@ -12419,8 +12419,7 @@
         // VAPID public key. Safe to expose — it's the public half of the pair,
         // and it's what the browser uses to build a push subscription.
         // MUST stay in step with the VAPID_PUBLIC_KEY secret used by the
-        // deploy workflow and the tech tree worker: changing it invalidates
-        // every existing subscription.
+        // deploy workflow: changing it invalidates every existing subscription.
         var VAPID_PUBLIC_KEY = 'BCsaPZ-4JC3l8b_bSvbQO4PZpq_x3cj6lkEJ_y-F9mnp24tB469h-D1UIhlV5k_-4h2l3Nv1L4__GZIdutiSmuw';
 
         // Convert VAPID base64 URL key to Uint8Array (required by PushManager)
@@ -12449,10 +12448,6 @@
                 // Delivery address only. When and what to send lives on the
                 // reminder documents; the old reminderTime/tzOffset fields went
                 // away with the cron that read them.
-                //
-                // Shared with the tech tree worker's "your map is ready" push,
-                // which reads endpoint + keys off this same field — so it is
-                // never torn down just because a reminder was switched off.
                 window.userData.pushSubscription = {
                     endpoint: subJson.endpoint,
                     keys: subJson.keys
@@ -13997,11 +13992,12 @@
         // Activity-centric web: the user's REAL activities are the anchors,
         // AI suggestions (upgrades, quests, fusions, wildcards) grow out of
         // them, and goals are colored threads running through the edges —
-        // not containers. Generation runs server-side (scripts/
-        // generate-tech-tree.js via GitHub Actions); the client writes
-        // techTree.pendingRequest and listens on its own user doc for the
-        // worker's result. The tree is a VIEW; activities/quests/streaks/XP
-        // are the reality and are never mutated destructively.
+        // not containers. Generation is a single instant call to the
+        // weaveWeb Cloud Function, which reads the user's real document,
+        // asks the model, and returns the woven web in its own response —
+        // the client is still the only writer of users/{uid}. The tree is a
+        // VIEW; activities/quests/streaks/XP are the reality and are never
+        // mutated destructively.
         // ════════════════════════════════════════════════════════════════════
 
         // Smart mastery defaults by frequency — starting point, editable.
@@ -14025,8 +14021,11 @@
         // control — 9 dailies is death, 3 dailies + 6 weeklies is a Tuesday.
         var TT_LOAD_WEIGHT = { daily: 7, weekly: 1, biweekly: 0.5, monthly: 0.25, occasional: 0.25, 'one-time': 0.25, custom: 3 };
         var TT_MAX_GOALS = 5;               // the web can't carry more legibly
-        var TT_REGEN_COOLDOWN_DAYS = 30;    // per-goal regenerate
-        var TT_REVISION_LIMIT = 3;          // keep a rate limit, kill the clock
+        var TT_MIN_ACTIVITIES = 3;          // the web grows out of real activities
+        // One reweave per goal per month, one whole-tree regeneration per
+        // month, on separate clocks. Neither starts at the first generation.
+        // The server owns both — these are for what the screen says.
+        var TT_REGEN_COOLDOWN_DAYS = 30;
 
         // Resolution is the biggest moment in the feature; a deep node is
         // worth more than a near one so going deep pays.
@@ -14050,16 +14049,12 @@
                 star: '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
                 spark: '<path d="M12 3v3"/><path d="M12 18v3"/><path d="M3 12h3"/><path d="M18 12h3"/><path d="M5.6 5.6l2.2 2.2"/><path d="M16.2 16.2l2.2 2.2"/><path d="M18.4 5.6l-2.2 2.2"/><path d="M7.8 16.2l-2.2 2.2"/>',
                 plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
-                check: '<polyline points="20 6 9 17 4 12"/>',
                 edit: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
                 x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
                 refresh: '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
-                target: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
                 branch: '<line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
-                flag: '<line x1="4" y1="22" x2="4" y2="4"/><path d="M4 4h13l-2 4 2 4H4"/>',
                 link: '<path d="M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 0 10h-2M8 12h8"/>',
                 map: '<polygon points="1 6 8 3 16 6 23 3 23 18 16 21 8 18 1 21 1 6"/><line x1="8" y1="3" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="21"/>',
-                circle: '<circle cx="12" cy="12" r="9"/>',
             };
             return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24"' + fill + ' aria-hidden="true" style="flex-shrink:0;">' + (paths[name] || '') + '</svg>';
         }
@@ -14078,7 +14073,7 @@
                     schemaVersion: 3, status: 'empty',
                     goals: [], nodes: [],
                     vision: '', goalText: '', goalTextUpdatedAt: null,
-                    pendingRequest: null, rejections: [], lastExpandAt: null,
+                    rejections: [], lastExpandAt: null,
                     loadBudget: { current: 0, updatedAt: null },
                     introSeen: false,
                     // v5 (§3.2) — the reveal loop's tree-level state.
@@ -14095,7 +14090,11 @@
             if (!Array.isArray(tt.nodes)) tt.nodes = [];
             if (!Array.isArray(tt.rejections)) tt.rejections = [];
             if (!tt.loadBudget) tt.loadBudget = { current: 0, updatedAt: null };
-            if (!tt.status) tt.status = tt.nodes.length ? 'ready' : 'empty';
+            if (!tt.status || tt.status === 'generating') tt.status = tt.nodes.length ? 'ready' : 'empty';
+            // A document written by the old worker-and-poll design can still
+            // carry a request nobody will ever pick up. Drop it on sight.
+            if (tt.pendingRequest !== undefined) delete tt.pendingRequest;
+            if (tt.revisionsUsed !== undefined) delete tt.revisionsUsed;
             // v5 (§9 step 2). Idempotent, and marked by revealMigratedAt
             // rather than schemaVersion — the generation worker rewrites
             // schemaVersion on every result, so keying the one-time generous
@@ -14449,9 +14448,11 @@
             });
 
             // Expansion (§6.1): ANY mastery event fans the web wider — a
-            // resolved node of any role, wildcard and fusion included.
-            if (justResolved.length && tt.status !== 'generating' && !tt.pendingRequest) {
-                ttSubmitRequest({ type: 'expand', payload: { resolvedNodeIds: justResolved.map(function(n) { return n.id; }) } }, true);
+            // resolved node of any role, wildcard and fusion included. It runs
+            // in the background: the user is looking at their newly mastered
+            // node, not waiting on a screen.
+            if (justResolved.length) {
+                ttWeave({ mode: 'expand', nodeIds: justResolved.map(function(n) { return n.id; }) }, { silent: true });
             }
             ttMaybeAutoGrow(tt);
             return changed;
@@ -14460,13 +14461,22 @@
         // ── Scheduled regrowth ───────────────────────────────────────────
         // The web grows the more the user uses the app: every few days, if
         // anything moved since the last growth pass (a node resolved, an
-        // activity mastered, or a new activity created), queue an auto-expand.
-        // The worker fans new nodes, proposes fresh fusions and replenishes
-        // spent wildcards.
+        // activity mastered, or a new activity created), grow it again — new
+        // nodes under the latest mastery, plus a refill of the wildcards the
+        // user has spent.
         var TT_AUTO_GROW_DAYS = 5;
+        // Growth used to be self-limiting: a pendingRequest sat on the
+        // document until the worker cleared it, so nothing re-fired. Now the
+        // call is instant and this pass runs on EVERY render, so a growth that
+        // comes back empty would be retried on the next frame forever. One
+        // attempt an hour per session is the backstop; the 5-day clock is
+        // still the actual cadence.
+        var TT_AUTO_GROW_RETRY_MS = 3600000;
+        var _ttAutoGrowTriedAt = 0;
         function ttMaybeAutoGrow(tt) {
-            if (!tt || tt.pendingRequest || tt.status !== 'ready') return;
+            if (!tt || tt.status !== 'ready') return;
             if (!tt.nodes || !tt.nodes.length) return;
+            if (Date.now() - _ttAutoGrowTriedAt < TT_AUTO_GROW_RETRY_MS) return;
             var lastGrow = tt.lastExpandAt || tt.lastGeneratedAt;
             if (!lastGrow) return;
             var since = new Date(lastGrow).getTime();
@@ -14480,7 +14490,8 @@
                     || (a.createdAt && new Date(a.createdAt).getTime() > since);
             });
             if (!recentResolved.length && !activityMoved) return;
-            ttSubmitRequest({ type: 'expand', payload: { resolvedNodeIds: recentResolved.slice(-3).map(function(n) { return n.id; }), auto: true } }, true);
+            _ttAutoGrowTriedAt = Date.now();
+            ttWeave({ mode: 'expand', nodeIds: recentResolved.slice(-3).map(function(n) { return n.id; }) }, { silent: true });
         }
 
         function ttNodeUnlocked(node, tt) {
@@ -14543,14 +14554,7 @@
             return depth(node);
         }
 
-        // ── Gate + goals form ────────────────────────────────────────────
-        function ttGateStatus() {
-            var tt = ensureTechTree();
-            var activityCount = ttAllActivities().length;
-            var goalCount = (tt.goals || []).filter(function(g) { return !g.retiredAt; }).length;
-            return { activityCount: activityCount, goalCount: goalCount, met: activityCount >= 3 && goalCount >= 1 };
-        }
-
+        // ── Goals form ───────────────────────────────────────────────────
         window.ttAddGoalField = function() {
             var wrap = document.getElementById('ttGoalFields');
             if (!wrap) return;
@@ -14560,12 +14564,15 @@
         };
         function ttGoalRowHtml(val, i) {
             return '<div class="tt-goal-row">'
-                + '<input type="text" class="pl-input tt-goal-oneline" maxlength="140" placeholder="' + (i === 0 ? 'Run a half-marathon by next summer' : 'Another goal (optional)') + '" value="' + escapeHtml(val || '') + '">'
-                + '<button class="tt-goal-del" onclick="this.closest(\'.tt-goal-row\').remove()" aria-label="Remove">' + ttIcon('x', 12) + '</button>'
+                + '<input type="text" class="pl-input tt-goal-oneline" maxlength="140" oninput="ttCollectGoalFields()"'
+                + ' placeholder="' + (i === 0 ? 'Run a half-marathon by next summer' : 'Another goal (optional)') + '" value="' + escapeHtml(val || '') + '">'
+                + '<button class="tt-goal-del" onclick="this.closest(\'.tt-goal-row\').remove();ttCollectGoalFields()" aria-label="Remove">' + ttIcon('x', 12) + '</button>'
                 + '</div>';
         }
         // Save the typed goal fields into techTree.goals, preserving ids/readings
         // for text that hasn't changed so we don't discard a sharpened reading.
+        // Bound to every keystroke on the intro screen: a goal that exists only
+        // as DOM state is a goal one stray re-render loses.
         function ttCollectGoalFields() {
             var tt = ensureTechTree();
             var inputs = document.querySelectorAll('#ttGoalFields .tt-goal-oneline');
@@ -14578,53 +14585,172 @@
             });
             return tt.goals;
         }
+        window.ttCollectGoalFields = ttCollectGoalFields;
 
-        // ── Requests ─────────────────────────────────────────────────────
-        // The client never calls the model — it flags pendingRequest on its own
-        // doc; the scheduled worker is the sole authority that honours it.
-        function ttSubmitRequest(req, silent) {
-            var tt = ensureTechTree();
-            if (tt.pendingRequest) return false;
-            tt.pendingRequest = Object.assign({ requestedAt: new Date().toISOString(), attempts: 0 }, req);
-            delete tt.lastError;
-            if (req.type === 'generate' || req.type === 'add_goal') tt.status = 'generating';
-            saveUserData().catch(function() {});
-            ttEnsureListener();
-            if (!silent) renderTechTree();
-            return true;
+        // ── Weaving (the callable) ───────────────────────────────────────
+        // Generation used to be a note the client left for a GitHub Actions
+        // cron: write techTree.pendingRequest, then watch your own document
+        // for minutes with a realtime listener AND a 25s poll because the
+        // cron had no execution-time guarantee. It is now one call that comes
+        // back with the web in its own response.
+        //
+        // The function reads the user's REAL document, so WHAT IS ON SCREEN
+        // HAS TO BE ON DISK FIRST — every weave saves before it calls. It
+        // writes nothing back; the woven web arrives in the response and this
+        // client persists it, which is what keeps generation clear of
+        // saveUserData()'s whole-document overwrite.
+        // The SDK's own default timeout is well under a minute, which would
+        // abandon a legitimate weave, so it is set explicitly. The user guard
+        // below sits ABOVE the function's own model ceilings on purpose: give
+        // up earlier and the server finishes a weave the user never sees, and
+        // their monthly regeneration goes with it. A weave is back in 15-40s;
+        // this only fires when the call is genuinely wedged.
+        var TT_CALL_TIMEOUT_MS = 300000;   // SDK ceiling, matching the function
+        var TT_USER_TIMEOUT_MS = 240000;   // what the user waits, at most
+        var _ttWeaving = null;             // the mode in flight, or null
+        var _ttWeaveStep = 0;
+        var _ttWeaveTimer = null;
+
+        // Paced captions, not progress: a streamed generation has no honest
+        // percentage to report, and a bar that stalls at 80% is worse than none.
+        var TT_WEAVE_STEPS = [
+            'Reading your goals…',
+            'Finding your anchors…',
+            'Sequencing the steps…',
+            'Drawing the threads…',
+            'Almost there…'
+        ];
+
+        async function ttCallWeave(payload) {
+            var call = httpsCallable(functions, 'weaveWeb', { timeout: TT_CALL_TIMEOUT_MS });
+            var timer = null;
+            var guard = new Promise(function(_, reject) {
+                timer = setTimeout(function() { reject(new Error('tt_timeout')); }, TT_USER_TIMEOUT_MS);
+            });
+            try {
+                var res = await Promise.race([call(payload), guard]);
+                return (res && res.data) || null;
+            } finally {
+                clearTimeout(timer);
+            }
         }
 
+        // The server owns both cooldown clocks. These fields are the copy the
+        // screen reads, refreshed from every answer the server gives — so a
+        // stale local value self-corrects instead of lying about a date.
+        function ttSyncWeaveUsage(usage) {
+            if (!usage) return;
+            var tt = ensureTechTree();
+            tt.lastRegenAt = usage.lastTreeRegenAt || null;
+            var per = usage.goalRegenAt || {};
+            (tt.goals || []).forEach(function(g) { g.regeneratedAt = per[g.id] || null; });
+        }
+
+        function ttWeaveError(res) {
+            if (!res) return 'That took too long. Try again in a moment.';
+            if (res.message) return res.message;
+            if (res.reason === 'model') return 'The weave did not come back. Try again in a moment.';
+            if (res.reason === 'invalid') return 'That came back tangled. Try again.';
+            return 'Could not weave that right now.';
+        }
+
+        /**
+         * Run one weave. payload: { mode, goalId?, nodeIds? }.
+         * opts.silent keeps it in the background (expansion); anything else
+         * takes over the Map with the weaving state.
+         * Resolves true only when a new web actually landed.
+         */
+        async function ttWeave(payload, opts) {
+            opts = opts || {};
+            if (_ttWeaving) {
+                if (!opts.silent) showToast('Still weaving — one at a time', 'olive');
+                return false;
+            }
+            _ttWeaving = payload.mode;
+            if (!opts.silent) { ttStartWeaveCaptions(); renderTechTree(); }
+            try {
+                var tt = ensureTechTree();
+                delete tt.lastError;
+                await saveUserData();
+                var res = await ttCallWeave(payload);
+                if (!res || !res.ok) {
+                    ttSyncWeaveUsage(res && res.usage);
+                    if (!opts.silent) {
+                        tt.lastError = ttWeaveError(res);
+                        showToast(tt.lastError, res && res.reason === 'cooldown' ? 'olive' : 'red');
+                    }
+                    return false;
+                }
+                ttApplyWeave(res, opts);
+                return true;
+            } catch (err) {
+                console.warn('weaveWeb failed', err);
+                if (!opts.silent) {
+                    ensureTechTree().lastError = (err && err.message === 'tt_timeout')
+                        ? 'That took too long. Try again in a moment.'
+                        : 'Could not reach the weaver. Check your connection and try again.';
+                    showToast(ensureTechTree().lastError, 'red');
+                }
+                return false;
+            } finally {
+                _ttWeaving = null;
+                ttStopWeaveCaptions();
+                if (!opts.silent) renderTechTree();
+            }
+        }
+
+        function ttApplyWeave(res, opts) {
+            var tt = ensureTechTree();
+            var patch = res.techTree || {};
+            Object.keys(patch).forEach(function(k) { tt[k] = patch[k]; });
+            delete tt.lastError;
+            ttSyncWeaveUsage(res.usage);
+            evaluateTechTreeMastery();
+            saveUserData().catch(function() {});
+            if (res.mode === 'generate') {
+                window._ttPendingReveal = true;
+                if (!opts.silent) showToast('🕸️ Your web is ready', 'green');
+            } else {
+                showToast('🕸️ Your web grew — new nodes are in', 'blue');
+            }
+            if (opts.silent) ttRenderIfVisible();
+        }
+
+        function ttStartWeaveCaptions() {
+            _ttWeaveStep = 0;
+            clearInterval(_ttWeaveTimer);
+            _ttWeaveTimer = setInterval(function() {
+                _ttWeaveStep = Math.min(_ttWeaveStep + 1, TT_WEAVE_STEPS.length - 1);
+                var el = document.getElementById('ttWeaveStep');
+                if (!el) return;
+                el.classList.remove('is-in');
+                void el.offsetWidth;                 // reflow, so the fade replays
+                el.textContent = TT_WEAVE_STEPS[_ttWeaveStep];
+                el.classList.add('is-in');
+            }, 3200);
+        }
+        function ttStopWeaveCaptions() { clearInterval(_ttWeaveTimer); _ttWeaveTimer = null; }
+
+        // ── Entry points ─────────────────────────────────────────────────
+        // The activity requirement is never a standing badge on the intro
+        // screen — it is a sentence, at the moment it actually blocks you.
         window.ttRequestGenerate = function() {
             var tt = ensureTechTree();
-            if (tt.pendingRequest) return;
             ttCollectGoalFields();
-            var gate = ttGateStatus();
-            if (!gate.met) { showToast('🔒 Need 3+ activities and at least one goal', 'olive'); return; }
+            if (!ttActiveGoals().length) { showToast('Write your goal in the box first', 'olive'); return; }
+            if (ttAllActivities().length < TT_MIN_ACTIVITIES) {
+                showToast('Add a few more activities first — the web grows out of what you actually do', 'olive');
+                return;
+            }
             tt.loadBudget = { current: ttWeeklyLoad(), updatedAt: new Date().toISOString() };
-            ttSubmitRequest({ type: 'generate' });
-        };
-        window.ttRetryGenerate = function() {
-            var tt = ensureTechTree();
-            delete tt.lastError;
-            ttSubmitRequest({ type: 'generate' });
-        };
-        // Re-run the FULL generation from the current goals. Unaccepted
-        // suggestions are replaced; resolved nodes and all real activities /
-        // quests / streaks / XP are untouched.
-        window.ttRebuildMap = function() {
-            var tt = ensureTechTree();
-            if (tt.pendingRequest) { showToast('One request at a time — hang tight', 'olive'); return; }
-            if (!confirm('Rebuild your whole web from your goals?\n\nThe AI re-reads your goals, picks anchors from your real activities, and reweaves the suggestions. Unaccepted suggestions are replaced. Your activities, quests, streaks and XP are never touched.')) return;
-            tt.loadBudget = { current: ttWeeklyLoad(), updatedAt: new Date().toISOString() };
-            ttSubmitRequest({ type: 'generate' });
+            ttWeave({ mode: 'generate' });
         };
 
         // Add a goal → weave ONE new thread, touching nothing else.
         window.ttAddGoal = function() {
             var tt = ensureTechTree();
-            if (tt.pendingRequest) { showToast('One request at a time — hang tight', 'olive'); return; }
             if (ttActiveGoals().length >= TT_MAX_GOALS) { showToast('The web already carries ' + TT_MAX_GOALS + ' goals', 'olive'); return; }
-            window._ttAddGoalConfirm = function() {
+            window._ttAddGoalConfirm = async function() {
                 var el = document.getElementById('ttNewGoalInput');
                 var text = (el && el.value || '').trim();
                 if (!text) { showToast('Type the goal first', 'olive'); return; }
@@ -14634,8 +14760,16 @@
                 goal.color = TT_LINE_PALETTE.find(function(c) { return !used[c]; }) || TT_LINE_PALETTE[(tt.goals || []).length % TT_LINE_PALETTE.length];
                 tt.goals.push(goal);
                 ttCloseOverlay();
-                ttSubmitRequest({ type: 'add_goal', payload: { goalId: goal.id } });
-                showToast('🕸️ Weaving a new thread — we\'ll ping you when it\'s in', 'blue');
+                // The goal is written first because the weaver reads it off the
+                // real document. If the weave fails it comes straight back out
+                // — a goal with no thread is worse than no goal.
+                var ok = await ttWeave({ mode: 'add_goal', goalId: goal.id });
+                if (!ok) {
+                    var i = tt.goals.indexOf(goal);
+                    if (i !== -1) tt.goals.splice(i, 1);
+                    saveUserData().catch(function() {});
+                    renderTechTree();
+                }
             };
             ttShowOverlay('<div class="tt-form"><h3 class="tt-form-title">Add a goal</h3>'
                 + '<p class="tt-muted">A new goal becomes a new coloured thread through your web. The rest is untouched.</p>'
@@ -14644,19 +14778,22 @@
                 + '<button class="tt-btn tt-btn-primary" onclick="window._ttAddGoalConfirm&&window._ttAddGoalConfirm()">Add goal</button></div></div>');
         };
 
+        // Days left on a 30-day clock, 0 when it has run out or never started.
+        function ttCooldownLeft(iso) {
+            if (!iso) return 0;
+            var t = new Date(iso).getTime();
+            if (!isFinite(t)) return 0;
+            return Math.max(0, Math.ceil(TT_REGEN_COOLDOWN_DAYS - (Date.now() - t) / 86400000));
+        }
+
         window.ttRegenerateGoal = function(goalId) {
-            var tt = ensureTechTree();
-            if (tt.pendingRequest) { showToast('One request at a time', 'olive'); return; }
             var goal = ttGoalById(goalId);
             if (!goal) return;
-            var last = goal.regeneratedAt || tt.lastGeneratedAt;
-            if (last) {
-                var ageDays = (Date.now() - new Date(last).getTime()) / 86400000;
-                if (ageDays < TT_REGEN_COOLDOWN_DAYS) { showToast('This thread was rewoven recently — free again in ' + Math.ceil(TT_REGEN_COOLDOWN_DAYS - ageDays) + ' days', 'olive'); return; }
-            }
-            if (!confirm('Reweave this goal\'s thread? Resolved and accepted nodes stay; the unclaimed suggestions are replaced. No other goal is touched.')) return;
-            ttSubmitRequest({ type: 'regenerate', payload: { goalId: goalId } });
+            var left = ttCooldownLeft(goal.regeneratedAt);
+            if (left) { showToast('This thread was rewoven recently — free again in ' + left + ' day' + (left === 1 ? '' : 's'), 'olive'); return; }
+            if (!confirm('Reweave this goal\'s thread?\n\nResolved and accepted nodes stay; the unclaimed suggestions are replaced. No other goal is touched. One reweave per goal per month.')) return;
             ttCloseSheet();
+            ttWeave({ mode: 'regenerate', goalId: goalId });
         };
 
         window.ttRetireGoal = function(goalId) {
@@ -14679,71 +14816,6 @@
             renderTechTree();
         };
 
-        // ── Result listener + reveal ─────────────────────────────────────
-        // Belt and suspenders: an onSnapshot listener for the fast path, plus
-        // a 25s getDoc poll (and a visibility-change kick) so a finished
-        // generation is ALWAYS picked up even if the realtime channel drops —
-        // no more being stuck on "Weaving your web" after the worker is done.
-        var _ttUnsubscribe = null;
-        var _ttPollTimer = null;
-        function ttApplyRemoteResult(rt, localPendingType) {
-            var wasGenerate = localPendingType === 'generate' || localPendingType === 'add_goal' || localPendingType === 'add_line';
-            window.userData.techTree = rt;
-            ttDetachListener();
-            ttStopResultPoll();
-            if (rt.lastError) { showToast('⚠️ ' + rt.lastError, 'red'); }
-            else if (wasGenerate) { window._ttPendingReveal = true; showToast('🕸️ Your web is ready', 'green'); }
-            else { showToast('🕸️ Your web grew — new nodes are in', 'blue'); }
-            evaluateTechTreeMastery();
-            ttRenderIfVisible();
-        }
-        function ttEnsureListener() {
-            ttStartResultPoll();
-            if (_ttUnsubscribe || !window.currentUser) return;
-            var tt = ensureTechTree();
-            if (!tt || !tt.pendingRequest) return;
-            var ref = doc(db, 'users', window.currentUser.uid);
-            _ttUnsubscribe = onSnapshot(ref, function(snap) {
-                if (!snap.exists() || snap.metadata.hasPendingWrites) return;
-                var remote = snap.data();
-                var rt = remote && remote.techTree;
-                if (!rt) return;
-                var localPending = window.userData && window.userData.techTree && window.userData.techTree.pendingRequest;
-                if (localPending && !rt.pendingRequest) ttApplyRemoteResult(rt, localPending.type);
-            }, function(err) { console.warn('techTree listener error', err); });
-        }
-        function ttStartResultPoll() {
-            if (_ttPollTimer) return;
-            _ttPollTimer = setInterval(ttPollResultOnce, 25000);
-        }
-        function ttStopResultPoll() { if (_ttPollTimer) { clearInterval(_ttPollTimer); _ttPollTimer = null; } }
-        async function ttPollResultOnce() {
-            try {
-                if (!window.currentUser || !window.userData) return;
-                var localPending = window.userData.techTree && window.userData.techTree.pendingRequest;
-                if (!localPending) { ttStopResultPoll(); return; }
-                var snap = await getDoc(doc(db, 'users', window.currentUser.uid));
-                if (!snap.exists()) return;
-                var rt = snap.data().techTree;
-                if (rt && !rt.pendingRequest) ttApplyRemoteResult(rt, localPending.type);
-            } catch (e) { /* transient — next tick retries */ }
-        }
-        document.addEventListener('visibilitychange', function() {
-            if (document.visibilityState !== 'visible') return;
-            var tt = window.userData && window.userData.techTree;
-            if (tt && tt.pendingRequest) { ttEnsureListener(); ttPollResultOnce(); }
-        });
-        function ttDetachListener() { if (_ttUnsubscribe) { try { _ttUnsubscribe(); } catch (e) {} _ttUnsubscribe = null; } }
-        window.ttCancelPending = function() {
-            var tt = ensureTechTree();
-            if (!tt.pendingRequest) return;
-            tt.pendingRequest = null;
-            if (tt.status === 'generating') tt.status = (tt.nodes && tt.nodes.length) ? 'ready' : 'empty';
-            saveUserData().catch(function() {});
-            ttDetachListener();
-            ttStopResultPoll();
-            renderTechTree();
-        };
         function ttRenderIfVisible() {
             var panel = document.getElementById('activitiesSubTechTree');
             var tab = document.getElementById('activitiesTab');
@@ -15061,37 +15133,31 @@
             var tt = ensureTechTree();
             if (evaluateTechTreeMastery()) debouncedSaveUserData();
 
-            // Generating screen — anticipation, not a stall.
-            if (tt.pendingRequest && (tt.status === 'generating' || tt.pendingRequest.type === 'generate' || tt.pendingRequest.type === 'add_goal')) {
-                ttEnsureListener();
-                var goalsList = (tt.goals || []).filter(function(g) { return !g.retiredAt; }).map(function(g) {
-                    return '<div class="tt-gen-goal">' + escapeHtml(g.rawText) + '</div>';
-                }).join('');
+            // Weaving — seconds, not minutes, so it is a held breath rather
+            // than a place you leave and come back to.
+            if (_ttWeaving) {
                 container.innerHTML = '<div class="tt-gen">'
                     + '<div class="tt-gen-orbit"><div class="tt-gen-dot"></div></div>'
                     + '<h2 class="tt-gen-title">Weaving your web</h2>'
-                    + '<p class="tt-gen-sub">This takes a few minutes — we\'ll ping you the moment it\'s ready. You can leave this screen.</p>'
-                    + (goalsList ? '<div class="tt-gen-goals">' + goalsList + '</div>' : '')
-                    + '<button class="tt-btn tt-btn-ghost" onclick="ttCancelPending()">' + ttIcon('x', 12) + '<span>Cancel</span></button>'
+                    + '<p class="tt-gen-sub" id="ttWeaveStep">' + escapeHtml(TT_WEAVE_STEPS[_ttWeaveStep] || TT_WEAVE_STEPS[0]) + '</p>'
                     + '</div>';
                 return;
             }
 
-            // Empty / gate — goals form.
+            // Empty — the goal form. No standing requirement badges: the one
+            // rule that can block you says so when it blocks you, not before.
             if (tt.status === 'empty' || !tt.nodes.filter(function(n) { return n.lifecycle !== 'archived'; }).length) {
-                var gate = ttGateStatus();
                 var goals = (tt.goals || []).filter(function(g) { return !g.retiredAt; });
                 var rows = (goals.length ? goals.map(function(g, i) { return ttGoalRowHtml(g.rawText, i); }) : [ttGoalRowHtml('', 0)]).join('');
                 container.innerHTML = '<div class="tt-intro">'
-                    + '<p class="tt-intro-sub">Name what you\'re working toward. Your real activities become the anchors; the AI weaves upgrades, quests, fusions and a wildcard or two out of them. Goals run through it all as coloured threads.</p>'
-                    + (tt.lastError ? '<div class="tt-error">' + escapeHtml(tt.lastError) + ' <button class="tt-inline-btn" onclick="ttRetryGenerate()">Retry</button></div>' : '')
+                    + '<p class="tt-intro-sub">Write down your goal below and AI will build a roadmap and recommend activities you can pick up.</p>'
+                    + (tt.lastError ? '<div class="tt-error">' + escapeHtml(tt.lastError) + '</div>' : '')
                     + '<div id="ttGoalFields" class="tt-goal-fields">' + rows + '</div>'
                     + '<button class="tt-add-goal" onclick="ttAddGoalField()">' + ttIcon('plus', 12) + '<span>Add another goal</span></button>'
-                    + '<div class="tt-gate">'
-                    + '<div class="tt-gate-item' + (gate.activityCount >= 3 ? ' met' : '') + '">' + ttIcon(gate.activityCount >= 3 ? 'check' : 'circle', 12) + '<span>' + Math.min(gate.activityCount, 3) + '/3 activities</span></div>'
-                    + '<div class="tt-gate-item' + (gate.goalCount >= 1 ? ' met' : '') + '">' + ttIcon(gate.goalCount >= 1 ? 'check' : 'circle', 12) + '<span>' + (gate.goalCount >= 1 ? 'goal set' : 'add a goal') + '</span></div>'
-                    + '</div>'
-                    + '<button class="tt-btn tt-btn-primary tt-generate-btn" onclick="ttSyncGoalsAndGenerate()">' + ttIcon('map') + '<span>Weave my web</span></button>'
+                    // mousedown is swallowed so pressing the button never blurs
+                    // the goal field first — on mobile that blur closes the
+                    // keyboard, the layout jumps, and the tap lands on nothing.
+                    + '<button class="tt-btn tt-btn-primary tt-generate-btn" onmousedown="event.preventDefault()" onclick="ttRequestGenerate()">' + ttIcon('map') + '<span>Weave my web</span></button>'
                     + '</div>';
                 return;
             }
@@ -15120,9 +15186,8 @@
                 + '<div class="tt-web-head">'
                 + '<div class="tt-head-chips">'
                 + '<button class="tt-chip-btn" onclick="ttAddGoal()">＋ Goal</button>'
-                + '<button class="tt-chip-btn" onclick="ttRebuildMap()">⟳ Rebuild</button>'
                 + '</div></div>';
-            if (tt.lastError) html += '<div class="tt-error">' + escapeHtml(tt.lastError) + ' <button class="tt-inline-btn" onclick="ttRetryGenerate()">Retry</button></div>';
+            if (tt.lastError) html += '<div class="tt-error">' + escapeHtml(tt.lastError) + '</div>';
             // "We read your goals as" — ONLY in the post-generation reveal
             // state, then never again as a header (§4.4).
             if (reveal) {
@@ -15135,8 +15200,10 @@
                         + '<button class="tt-inline-btn" onclick="ttEditReadings()">Not right?</button></div>';
                 }
             }
-            // Goal legend chips — tap for the goal menu.
-            if (activeGoals.length) {
+            // Goal legend chips — tap for the goal menu. Sky only: Branch
+            // draws its own coloured chip per goal as the filter, and two
+            // identical rows doing different things is worse than one.
+            if (activeGoals.length && ttViewMode() !== 'branch') {
                 html += '<div class="tt-goal-legend">' + activeGoals.map(function(g) {
                     return '<button class="tt-goal-chip" onclick="ttGoalMenu(\'' + g.id + '\')"><span class="tt-goal-chip-dot" style="background:' + (g.color || '#888') + '"></span>' + escapeHtml(g.shortName || 'Goal') + '</button>';
                 }).join('') + '</div>';
@@ -15163,51 +15230,75 @@
             html += '<div class="tt-map-actions">'
                 + '<button class="tt-tb-btn" onclick="ttOpenAvailableList()">' + ttIcon('spark', 12) + '<span>Open' + (availCount ? ' · ' + availCount : '') + '</span></button>'
                 + '<button class="tt-tb-btn" onclick="ttOpenCustomNodeForm()">' + ttIcon('edit', 12) + '<span>Add your own</span></button>'
-                + '<button class="tt-tb-btn' + (_rg.masteryMet && _rg.affordable ? ' tt-tb-ready' : '') + '" onclick="ttOpenRegenSheet()">'
+                + '<button class="tt-tb-btn' + (_rg.ready ? ' tt-tb-ready' : '') + '" onclick="ttOpenRegenSheet()">'
                 + ttIcon('refresh', 12) + '<span>Regenerate</span></button>'
                 + '</div>';
             html += '</div>';
             container.innerHTML = html;
         }
         window.renderTechTree = renderTechTree;
-        window.ttSyncGoalsAndGenerate = function() { ttCollectGoalFields(); ttRequestGenerate(); };
 
         // ── Goal menu + readings ─────────────────────────────────────────
         window.ttGoalMenu = function(goalId) {
             var g = ttGoalById(goalId);
             if (!g) return;
+            var left = ttCooldownLeft(g.regeneratedAt);
             ttShowSheet('<div class="tt-sheet-body"><div class="tt-sheet-kicker" style="color:' + (g.color || '#9a9a9a') + '">Goal</div>'
                 + '<h3 class="tt-sheet-title">' + escapeHtml(g.sharpened || g.rawText || g.shortName) + '</h3>'
                 + (g.kind === 'rhythm' ? '<p class="tt-sheet-desc">A rhythm — no finish line. It runs.</p>' : '')
                 + '<div class="tt-sheet-actions">'
-                + '<button class="tt-btn tt-btn-ghost" onclick="ttEditReadings()">Not right? Edit the reading</button>'
-                + '<button class="tt-btn tt-btn-ghost" onclick="ttRegenerateGoal(\'' + goalId + '\')">Reweave this thread</button>'
+                + '<button class="tt-btn tt-btn-ghost" onclick="ttEditReadings(\'' + goalId + '\')">Not right? Edit the reading</button>'
+                + '<button class="tt-btn tt-btn-ghost" onclick="ttRegenerateGoal(\'' + goalId + '\')"' + (left ? ' disabled' : '') + '>'
+                +   'Reweave this thread' + (left ? ' · ' + left + 'd' : '') + '</button>'
                 + '<button class="tt-btn tt-btn-ghost" onclick="ttRetireGoal(\'' + goalId + '\')">Retire this goal</button>'
                 + '</div></div>');
         };
 
-        window.ttEditReadings = function() {
+        // The reading is the sentence the AI wove the thread from, so this
+        // screen has one job: show what you wrote next to what it understood,
+        // and let you correct the second. It used to be a bare <label> per
+        // goal with no styles at all — the two lines ran together and it read
+        // like a form fault. Now each goal is its own card: your words on top
+        // in your goal's colour, the reading under them in a labelled field.
+        // Opened from a goal's menu it shows that goal alone.
+        window.ttEditReadings = function(goalId) {
             ttCloseSheet();
             var tt = ensureTechTree();
             var goals = (tt.goals || []).filter(function(g) { return !g.retiredAt; });
-            var rows = goals.map(function(g) { return '<label class="tt-read-row"><span class="tt-read-raw">' + escapeHtml(g.rawText) + '</span>'
-                + '<input type="text" class="pl-input" data-ttread="' + g.id + '" maxlength="200" value="' + escapeHtml(g.sharpened || '') + '"></label>'; }).join('');
+            if (goalId) goals = goals.filter(function(g) { return g.id === goalId; });
+            if (!goals.length) return;
+
+            var rows = goals.map(function(g) {
+                return '<div class="tt-read-card" style="--gc:' + (g.color || '#888') + '">'
+                    + '<div class="tt-read-head"><span class="tt-read-dot"></span>'
+                    +   '<span class="tt-read-k">You wrote</span></div>'
+                    + '<p class="tt-read-raw">' + escapeHtml(g.rawText || g.shortName || '') + '</p>'
+                    + '<label class="tt-read-field"><span class="tt-read-k">We read it as</span>'
+                    +   '<input type="text" class="pl-input" data-ttread="' + g.id + '" maxlength="200"'
+                    +   ' placeholder="A concrete target, not a restatement" value="' + escapeHtml(g.sharpened || '') + '"></label>'
+                    + '</div>';
+            }).join('');
+
             window._ttReadConfirm = function() {
                 var changed = false;
                 document.querySelectorAll('[data-ttread]').forEach(function(el) {
                     var g = goals.find(function(x) { return x.id === el.getAttribute('data-ttread'); });
-                    if (g && (el.value || '').trim() && el.value.trim() !== g.sharpened) { g.sharpened = el.value.trim(); g.sharpenedEditedByUser = true; changed = true; }
+                    var v = (el.value || '').trim();
+                    if (g && v && v !== g.sharpened) { g.sharpened = v; g.sharpenedEditedByUser = true; changed = true; }
                 });
                 ttCloseOverlay();
-                if (changed) {
-                    saveUserData().catch(function() {});
-                    showToast('Saved — hit Rebuild when you want the web rewoven around it', 'blue');
-                    renderTechTree();
-                }
+                if (!changed) return;
+                saveUserData().catch(function() {});
+                showToast('Saved — the next weave builds from your words', 'blue');
+                renderTechTree();
             };
-            ttShowOverlay('<div class="tt-form"><h3 class="tt-form-title">How we read your goals</h3>'
-                + '<p class="tt-muted">Edit any reading. The next generation builds from your words.</p>' + rows
-                + '<div class="tt-form-actions"><button class="tt-btn tt-btn-ghost" onclick="ttCloseOverlay()">Cancel</button><button class="tt-btn tt-btn-primary" onclick="window._ttReadConfirm&&window._ttReadConfirm()">Save</button></div></div>');
+
+            ttShowOverlay('<div class="tt-form">'
+                + '<h3 class="tt-form-title">' + (goalId ? 'How we read this goal' : 'How we read your goals') + '</h3>'
+                + '<p class="tt-muted">Your words never change. The reading is what the web is built from — sharpen it and the next weave follows it.</p>'
+                + '<div class="tt-read-list">' + rows + '</div>'
+                + '<div class="tt-form-actions"><button class="tt-btn tt-btn-ghost" onclick="ttCloseOverlay()">Cancel</button>'
+                + '<button class="tt-btn tt-btn-primary" onclick="window._ttReadConfirm&&window._ttReadConfirm()">Save</button></div></div>');
         };
 
         // ── Open list (secondary compact list — the web is the primary) ──
@@ -15282,7 +15373,6 @@
                 if (pl.type === 'activity') {
                     actions = '<button class="tt-btn tt-btn-primary" onclick="ttOpenAccept(\'' + node.id + '\')">Accept — shape it →</button>'
                         + '<button class="tt-btn tt-btn-ghost' + (dup ? ' tt-btn-glow' : '') + '" onclick="ttOpenLinkPicker(\'' + node.id + '\')">' + ttIcon('link', 13) + '<span>I already do this — link it</span></button>'
-                        + '<button class="tt-btn tt-btn-ghost" onclick="ttReviseNode(\'' + node.id + '\')">Revise</button>'
                         + '<button class="tt-btn tt-btn-ghost" onclick="ttRejectNode(\'' + node.id + '\')">Not now</button>';
                 }
             } else {
@@ -15617,25 +15707,6 @@
             saveUserData().catch(function() {});
             ttCloseSheet(); renderTechTree();
         };
-        window.ttReviseNode = function(nodeId) {
-            var tt = ensureTechTree();
-            if ((tt.revisionsUsed || 0) >= TT_REVISION_LIMIT) { showToast('Revision limit reached for now', 'olive'); return; }
-            var node = tt.nodes.find(function(n) { return n.id === nodeId; });
-            if (!node) return;
-            ttCloseSheet();
-            window._ttReviseConfirm = function() {
-                var el = document.getElementById('ttReviseNote'); var note = (el && el.value || '').trim();
-                if (!note) { showToast('Add a line of feedback first', 'olive'); return; }
-                ttCloseOverlay();
-                ttSubmitRequest({ type: 'revise', payload: { note: note, nodeIds: [nodeId] } });
-                showToast('✍️ Revision queued — a fresh take lands shortly', 'blue');
-            };
-            ttShowOverlay('<div class="tt-form"><h3 class="tt-form-title">Revise "' + escapeHtml(node.title) + '"</h3>'
-                + '<p class="tt-muted">What should be different? The AI replaces only this node, guided by your note.</p>'
-                + '<textarea id="ttReviseNote" class="pl-input" rows="3" maxlength="240" placeholder="e.g. Too vague — suggest one concrete morning habit that pairs with my sleep schedule."></textarea>'
-                + '<div class="tt-form-actions"><button class="tt-btn tt-btn-ghost" onclick="ttCloseOverlay()">Cancel</button><button class="tt-btn tt-btn-primary" onclick="window._ttReviseConfirm&&window._ttReviseConfirm()">Send revision</button></div></div>');
-        };
-
         window.ttAttachToGoal = function(nodeId) {
             var goals = ttActiveGoals();
             if (!goals.length) return;
@@ -15794,15 +15865,6 @@
                     inner.insertBefore(btn, cancel);
                 };
             }
-        })();
-        // Re-attach the result listener on app load if a request was pending.
-        (function() {
-            var tries = 0;
-            var timer = setInterval(function() {
-                tries++;
-                if (window.userData && window.currentUser) { clearInterval(timer); var tt = window.userData.techTree; if (tt && tt.pendingRequest) ttEnsureListener(); }
-                else if (tries > 60) clearInterval(timer);
-            }, 1000);
         })();
         /* ═══════════════════════════════════════════════════════════════════
            QUESTS (Projects) — v5 redesign: recursive groups
@@ -17385,8 +17447,8 @@
         //   qcWalkLeaves      was ttWalkLeaves
         //   qcDraftToBuilder  was ttAcceptQuestToBuilder (minus the tt lookup)
         //   qcFinishDraft     was ttFinishQuestAccept   (minus the node link)
-        //   qcValidateGroup   was validateGroup  in scripts/generate-tech-tree.js
-        //   qcValidateLeaf    was validateLeaf   in scripts/generate-tech-tree.js
+        //   qcValidateGroup   was validateGroup  in the old tech-tree worker
+        //   qcValidateLeaf    was validateLeaf   in the old tech-tree worker
         // ════════════════════════════════════════════════════════════════════
 
         // The pending draft context: { newSpecs: {leafId: spec}, nodeId? }.
@@ -17851,8 +17913,8 @@
         // malformed model response never reaches the client. Edit both or
         // neither.
         //
-        // Ported verbatim from validateGroup / validateLeaf in
-        // scripts/generate-tech-tree.js. Their leniency is load-bearing: Haiku
+        // Ported verbatim from validateGroup / validateLeaf in the tech-tree
+        // worker this repo used to run. Their leniency is load-bearing: Haiku
         // drops the `spec` wrapper and puts leaves where groups belong, and an
         // earlier strict implementation discarded the whole quest when it did
         // — which is why quests "never generated". Repair, do not reject.
@@ -19837,10 +19899,18 @@
         // often, and it rewards hoarding that starves every other sink.
         // Requiring a mastery means someone who has not done the work cannot
         // regenerate no matter how rich they are.
+        //
+        // A third gate joined them once generation became instant: ONCE A
+        // MONTH. Cheap-feeling AI invites spamming it, and a web rewoven
+        // weekly is a web nobody ever walks. The server owns that clock —
+        // this only reads it, so the screen and the answer agree. Hand-adding
+        // a node ("Add your own") stays free and unlimited; that is the
+        // pressure valve.
 
         function ttRegenStatus() {
             var tt = ensureTechTree();
             var masteries = tt.masteriesSinceRegen || 0;
+            var cooldown = ttCooldownLeft(tt.lastRegenAt);
             return {
                 masteries: masteries,
                 needed: TT_REGEN_MASTERIES,
@@ -19848,7 +19918,8 @@
                 cost: TT_REGEN_COST,
                 balance: gritBalance(),
                 affordable: gritBalance() >= TT_REGEN_COST,
-                pending: !!tt.pendingRequest
+                cooldown: cooldown,
+                ready: masteries >= TT_REGEN_MASTERIES && gritBalance() >= TT_REGEN_COST && !cooldown && !_ttWeaving
             };
         }
 
@@ -19870,11 +19941,17 @@
                 +   '<div><span>Replaced</span><strong>' + dark + ' silhouette' + (dark === 1 ? '' : 's') + '</strong></div>'
                 +   '<div><span>Cost</span><strong>' + s.cost + ' Grit</strong></div>'
                 +   '<div><span>Your balance</span><strong class="' + (s.affordable ? '' : 'tt-short') + '">' + s.balance + ' Grit</strong></div>'
+                +   '<div><span>Allowance</span><strong class="' + (s.cooldown ? 'tt-short' : '') + '">'
+                +     (s.cooldown ? s.cooldown + ' day' + (s.cooldown === 1 ? '' : 's') + ' to go' : 'Once a month · ready') + '</strong></div>'
                 + '</div>'
                 + '<p class="tt-muted">Anything you have adopted, mastered, or paid to reveal is kept. '
                 + 'Regeneration replaces the unexplored frontier, not the journey.</p>';
 
-            if (!s.masteryMet) {
+            if (s.cooldown) {
+                body += '<div class="tt-locked-note">' + ttIcon('lock', 12) +
+                        ' Once a month. Free again in ' + s.cooldown + ' day' + (s.cooldown === 1 ? '' : 's') +
+                        ' — until then, add your own nodes.</div>';
+            } else if (!s.masteryMet) {
                 body += '<div class="tt-locked-note">' + ttIcon('lock', 12) +
                         ' Master one activity since your last regeneration first. ' +
                         'No balance unlocks this — the work does.</div>';
@@ -19885,7 +19962,7 @@
 
             body += '<div class="tt-sheet-actions">'
                  +   '<button class="tt-btn tt-btn-primary" id="ttRegenBtn" onclick="ttConfirmRegen()"'
-                 +     ((s.masteryMet && s.affordable && !s.pending) ? '' : ' disabled') + '>'
+                 +     (s.ready ? '' : ' disabled') + '>'
                  +     ttIcon('refresh', 13) + '<span>Regenerate · ' + s.cost + '</span></button>'
                  +   '<button class="tt-btn tt-btn-ghost" onclick="ttCloseSheet()">Close</button>'
                  + '</div></div>';
@@ -19893,43 +19970,24 @@
         };
 
         window.ttConfirmRegen = async function () {
-            var s = ttRegenStatus();
-            if (!s.masteryMet || !s.affordable || s.pending) return;
+            if (!ttRegenStatus().ready) return;
             var tt = ensureTechTree();
-            var btn = document.getElementById('ttRegenBtn');
-            if (btn) { btn.disabled = true; btn.innerHTML = '<span>Weaving…</span>'; }
-
-            // Same ordering discipline as a reveal: the charge and the
-            // request land in one write, or neither does.
-            gritApplyDelta(-TT_REGEN_COST, 'tree_regen', { nodes: (tt.nodes || []).length });
-            var prevMasteries = tt.masteriesSinceRegen || 0;
-            tt.masteriesSinceRegen = 0;
-            tt.lastRegenAt = new Date().toISOString();
-            tt.loadBudget = { current: ttWeeklyLoad(), updatedAt: new Date().toISOString() };
-            tt.pendingRequest = {
-                requestedAt: new Date().toISOString(), attempts: 0, type: 'generate',
-                payload: { reason: 'regen', keepNodeIds: (tt.nodes || []).filter(function (n) {
-                    return n.revealed || n.resolvedAt || n.lifecycle === 'active';
-                }).map(function (n) { return n.id; }) }
-            };
-            tt.status = 'generating';
-            delete tt.lastError;
-
-            var ok = await gritPersist();
-            if (!ok) {
-                tt.pendingRequest = null;
-                tt.status = 'ready';
-                tt.masteriesSinceRegen = prevMasteries;
-                tt.lastRegenAt = null;
-                gritApplyDelta(TT_REGEN_COST, 'correction', { note: 'regeneration write failed, cost returned' });
-                showToast('Could not start that regeneration — your Grit is untouched', 'red');
-                if (btn) { btn.disabled = false; btn.innerHTML = '<span>Regenerate · ' + TT_REGEN_COST + '</span>'; }
-                return;
-            }
             ttCloseSheet();
-            ttEnsureListener();
+            tt.loadBudget = { current: ttWeeklyLoad(), updatedAt: new Date().toISOString() };
+
+            // The web arrives before the Grit leaves. When generation was a
+            // cron the charge had to be committed with the request, because
+            // nothing came back to charge against; now a failed weave simply
+            // costs nothing. The server's own monthly clock — stamped only on
+            // a weave that produced something — is what stops a retry loop,
+            // not the price.
+            var ok = await ttWeave({ mode: 'generate' });
+            if (!ok) return;
+
+            gritApplyDelta(-TT_REGEN_COST, 'tree_regen', { nodes: (tt.nodes || []).length });
+            tt.masteriesSinceRegen = 0;
+            await gritPersist();
             renderTechTree();
-            showToast('🕸️ Reweaving the frontier — we\'ll ping you', 'blue');
         };
 
         // ── Sky / Branch (§8) ─────────────────────────────────────────────
@@ -19973,9 +20031,9 @@
         function ttViewToggleHtml() {
             var m = ttViewMode();
             return '<div class="tt-viewtoggle" role="tablist">'
-                 +   '<button class="tt-vt-btn' + (m === 'sky' ? ' on' : '') + '" role="tab" onclick="ttSetView(\'sky\')">'
+                 +   '<button class="tt-vt-btn' + (m === 'sky' ? ' on' : '') + '" role="tab" aria-selected="' + (m === 'sky') + '" onclick="ttSetView(\'sky\')">'
                  +     ttIcon('map', 12) + '<span>Sky</span></button>'
-                 +   '<button class="tt-vt-btn' + (m === 'branch' ? ' on' : '') + '" role="tab" onclick="ttSetView(\'branch\')">'
+                 +   '<button class="tt-vt-btn' + (m === 'branch' ? ' on' : '') + '" role="tab" aria-selected="' + (m === 'branch') + '" onclick="ttSetView(\'branch\')">'
                  +     ttIcon('branch', 12) + '<span>Branch</span></button>'
                  + '</div>';
         }
@@ -20000,13 +20058,34 @@
 
         // ── Branch view (§8.2) ────────────────────────────────────────────
         // A single column through the lineages, ordered by tier so a chain
-        // reads top to bottom. Optional goal filter — the threads are the
-        // natural way to slice a web into branches.
+        // reads top to bottom.
+        //
+        // It opens on ONE goal, not on all of them, because that is the read
+        // people actually want out of a roadmap: master this, then that, then
+        // the thing after it. Filtered to a goal the column becomes a literal
+        // chain — a spine down the glyphs, no tier headings interrupting it,
+        // and every locked node saying in full what opens it. "All" is still
+        // there, one tap away, for the cross-goal view.
 
+        // undefined means "not chosen yet" and resolves to the first goal;
+        // null is the user explicitly asking for All. They are not the same.
         window.ttBranchFilter = function (goalId) {
             window._ttBranchGoal = goalId || null;
             renderTechTree();
         };
+        // Tapping the thread you are already reading opens its menu — the
+        // edit-the-reading / reweave / retire actions Sky's legend carries.
+        window.ttBranchGoalChip = function (goalId) {
+            if (window._ttBranchGoal === goalId) { ttGoalMenu(goalId); return; }
+            ttBranchFilter(goalId);
+        };
+
+        function ttBranchFilterId(goals) {
+            var f = window._ttBranchGoal;
+            if (f === undefined) return goals.length ? goals[0].id : null;
+            if (f && !goals.some(function (g) { return g.id === f; })) return goals.length ? goals[0].id : null;
+            return f;
+        }
 
         function ttBranchHtml(tt) {
             var alive = (tt.nodes || []).filter(function (n) { return n.lifecycle !== 'archived'; });
@@ -20014,8 +20093,8 @@
             ttComputeTiers(alive);
 
             var goals = ttActiveGoals();
-            var filter = window._ttBranchGoal || null;
-            if (filter && !goals.some(function (g) { return g.id === filter; })) filter = window._ttBranchGoal = null;
+            var filter = ttBranchFilterId(goals);
+            window._ttBranchGoal = filter;
 
             var shown = filter
                 ? alive.filter(function (n) { return (n.goalIds || []).indexOf(filter) !== -1; })
@@ -20027,31 +20106,40 @@
             });
 
             var chips = '';
-            if (goals.length > 1) {
+            if (goals.length) {
                 chips = '<div class="tt-goal-legend tt-branch-filter">'
-                      + '<button class="tt-goal-chip' + (!filter ? ' on' : '') + '" onclick="ttBranchFilter(null)">All</button>'
                       + goals.map(function (g) {
-                          return '<button class="tt-goal-chip' + (filter === g.id ? ' on' : '') + '" onclick="ttBranchFilter(\'' + g.id + '\')">'
+                          var on = filter === g.id;
+                          return '<button class="tt-goal-chip' + (on ? ' on' : '') + '" onclick="ttBranchGoalChip(\'' + g.id + '\')"'
+                               + ' title="' + (on ? 'Goal options' : 'Show only this thread') + '">'
                                + '<span class="tt-goal-chip-dot" style="background:' + (g.color || '#888') + '"></span>'
                                + escapeHtml(g.shortName || 'Goal') + '</button>';
                         }).join('')
+                      + '<button class="tt-goal-chip' + (!filter ? ' on' : '') + '" onclick="ttBranchFilter(null)">All</button>'
                       + '</div>';
             }
 
+            if (!shown.length) {
+                return chips + '<p class="tt-muted" style="margin:14px 2px;">Nothing on this thread yet.</p>';
+            }
+
+            // One goal = one chain, so the tier headings become noise: the
+            // order IS the tiers, and the spine already says "then this".
+            var linear = !!filter;
             var lastTier = null;
             var rows = shown.map(function (n) {
                 var head = '';
-                if (n._tier !== lastTier) {
+                if (!linear && n._tier !== lastTier) {
                     lastTier = n._tier;
                     head = '<div class="tt-branch-tier">Tier ' + n._tier + '</div>';
                 }
-                return head + ttBranchRow(n, tt);
+                return head + ttBranchRow(n, tt, linear);
             }).join('');
 
-            return chips + '<div class="tt-branch">' + rows + '</div>';
+            return chips + '<div class="tt-branch' + (linear ? ' tt-branch-linear' : '') + '">' + rows + '</div>';
         }
 
-        function ttBranchRow(node, tt) {
+        function ttBranchRow(node, tt, linear) {
             var color = ttNodeColor(node);
             var sil   = ttIsSilhouette(node);
             var state = ttRevealState(node, tt);
@@ -20086,8 +20174,17 @@
                 : (state === 'adoptable' ? '<span class="tt-seg-badge tt-seg-open">open</span>'
                 : '<span class="tt-seg-badge tt-seg-locked">' + escapeHtml(ttShort(ttLockReason(node, tt), 26)) + '</span>'));
 
-            body = '<span class="tt-branch-name">' + escapeHtml(node.title) + '</span>'
-                 + '<span class="tt-branch-sub">' + escapeHtml(ttShort(ttNodeSublabel(node, tt), 40)) + '</span>';
+            // In the chain read the unlock condition is the point, so it gets
+            // the whole sub-line instead of a 26-character badge.
+            var locked = !node.resolvedAt && node.lifecycle !== 'active' && state !== 'adoptable';
+            if (linear && locked) {
+                badge = '';
+                body = '<span class="tt-branch-name">' + escapeHtml(node.title) + '</span>'
+                     + '<span class="tt-branch-sub tt-branch-gate">' + ttIcon('lock', 10) + ' ' + escapeHtml(ttLockReason(node, tt)) + '</span>';
+            } else {
+                body = '<span class="tt-branch-name">' + escapeHtml(node.title) + '</span>'
+                     + '<span class="tt-branch-sub">' + escapeHtml(ttShort(ttNodeSublabel(node, tt), 40)) + '</span>';
+            }
 
             return '<button class="tt-branch-row" id="ttb-' + node.id + '" style="--rc:' + color + '"'
                  + ' onclick="ttOpenNode(\'' + node.id + '\')">'

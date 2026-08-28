@@ -62,7 +62,7 @@ jobs:
             exit 1
           fi
           if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "::error::ANTHROPIC_API_KEY secret is not set — composeQuest needs it."
+            echo "::error::ANTHROPIC_API_KEY secret is not set — composeQuest and weaveWeb need it."
             exit 1
           fi
           # The Firebase CLI reads functions/.env and turns each line into a
@@ -72,7 +72,6 @@ jobs:
           printf 'VAPID_CONTACT_EMAIL=%s\n' "${VAPID_CONTACT_EMAIL:-admin@mindkraft.life}" >> functions/.env
           # Deliberately NOT Secret Manager: binding a secret makes the deploy
           # call setIamPolicy on it, which this CI service account may not do.
-          # Same key, same repo secret the tech-tree worker already uses.
           printf 'ANTHROPIC_API_KEY=%s\n'   "$ANTHROPIC_API_KEY"   >> functions/.env
 
       - name: Deploy functions and Firestore index
@@ -98,7 +97,7 @@ jobs:
           # ADD NEW FUNCTIONS TO THIS LIST, with the codebase prefix — one
           # left out is one never deployed.
           npx --yes firebase-tools@13 deploy \
-            --only functions:reminders:sendDueReminders,functions:reminders:onGiftReceived,functions:reminders:onGiftConsumed,functions:reminders:onPactWrite,functions:reminders:onReminderWrite,functions:reminders:createActivityReminder,functions:reminders:composeQuest,firestore:indexes \
+            --only functions:reminders:sendDueReminders,functions:reminders:onGiftReceived,functions:reminders:onGiftConsumed,functions:reminders:onPactWrite,functions:reminders:onReminderWrite,functions:reminders:createActivityReminder,functions:reminders:composeQuest,functions:reminders:weaveWeb,firestore:indexes \
             --project "$FIREBASE_PROJECT" \
             --non-interactive \
             --force

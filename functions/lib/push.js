@@ -9,8 +9,6 @@
 //
 // One subscription per user — the field is a single map, not an array, so
 // there is no multi-device support today (out of scope today).
-// The tech tree worker (scripts/generate-tech-tree.js) sends its "your map
-// is ready" push over this same field and the same VAPID keys.
 
 const webpush = require('web-push');
 

@@ -11834,28 +11834,6 @@
             margin: 8px 0;
         }
 
-        /* Gate rows — recessed surface, met = green (reward job) */
-        .tt-gate {
-            display: flex;
-            gap: 8px;
-            margin: 14px 0 10px;
-        }
-        .tt-gate-item {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 6px;
-            font-size: 12px;
-            font-weight: 600;
-            color: var(--color-text-secondary);
-            background: var(--recessed-bg);
-            box-shadow: 0 0 0 1px var(--recessed-ring) inset;
-            border-radius: 9px;
-            padding: 9px 10px;
-        }
-        .tt-gate-item.met { color: var(--chip-xp-fg, #8fbf8f); }
-
         /* Buttons — primary CTA is blue (interactive), secondary is card
            material, ghost is bare text. All carry an SVG glyph + label. */
         .tt-btn {
@@ -11896,9 +11874,7 @@
             box-shadow: none;
             color: var(--color-text-secondary);
         }
-        .tt-generate-btn { margin-top: 6px; }
-
-        /* Building state */
+        .tt-generate-btn { margin-top: 14px; }
 
         /* Toolbar — recessed chip buttons */
         .tt-tb-btn {
@@ -11975,6 +11951,30 @@
             margin-top: 14px;
         }
         .tt-form-actions .tt-btn { margin-top: 0; }
+
+        /* Goal readings — your words, then the reading built from them */
+        .tt-read-list { display: flex; flex-direction: column; gap: 10px; margin: 14px 0 4px; }
+        .tt-read-card {
+            border-radius: 12px; padding: 11px 13px 13px;
+            background: var(--recessed-bg);
+            box-shadow: 0 0 0 1px var(--recessed-ring) inset;
+            border-left: 3px solid var(--gc, #888);
+        }
+        .tt-read-head { display: flex; align-items: center; gap: 6px; }
+        .tt-read-dot {
+            width: 7px; height: 7px; border-radius: 50%;
+            background: var(--gc, #888); flex-shrink: 0;
+        }
+        .tt-read-k {
+            font-size: 9.5px; font-weight: 800; letter-spacing: 0.13em;
+            text-transform: uppercase; color: var(--color-text-secondary);
+        }
+        .tt-read-raw {
+            font-size: 13.5px; font-weight: 600; line-height: 1.45;
+            color: var(--color-text-primary); margin: 5px 0 12px;
+        }
+        .tt-read-field { display: flex; flex-direction: column; gap: 5px; }
+        .tt-read-field .pl-input { width: 100%; }
 
         /* Picker & prereq lists — recessed rows separated by hairlines */
 
@@ -12522,9 +12522,10 @@
 .tt-gen-dot{position:absolute;top:-5px;left:50%;width:10px;height:10px;border-radius:50%;background:#5a9fd4;box-shadow:0 0 12px #5a9fd4;margin-left:-5px;}
 @keyframes ttSpin{to{transform:rotate(360deg);}}
 .tt-gen-title{font-size:19px;font-weight:800;letter-spacing:-0.02em;color:#f0f0f0;margin-top:6px;}
-.tt-gen-sub{font-size:12.5px;color:#9a9a9a;line-height:1.55;max-width:280px;}
-.tt-gen-goals{display:flex;flex-direction:column;gap:6px;margin-top:6px;width:100%;max-width:300px;}
-.tt-gen-goal{font-size:12.5px;font-weight:600;color:#d8d8d8;padding:9px 12px;border-radius:9px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);}
+.tt-gen-sub{font-size:12.5px;color:#9a9a9a;line-height:1.55;max-width:280px;min-height:20px;animation:ttFadeStep .4s ease both;}
+.tt-gen-sub.is-in{animation:ttFadeStep .4s ease both;}
+@keyframes ttFadeStep{from{opacity:0;transform:translateY(3px);}to{opacity:1;transform:none;}}
+@media (prefers-reduced-motion: reduce){.tt-gen-orbit,.tt-gen-sub{animation:none;}}
 
 /* Bottom sheet */
 .tt-sheet-scrim{position:fixed;inset:0;z-index:6000;background:rgba(0,0,0,0.55);display:none;align-items:flex-end;justify-content:center;backdrop-filter:blur(3px);}
@@ -14776,20 +14777,31 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 .tt-darkmeta b { color: #d8d8d8; font-weight: 700; }
 .tt-darkbal { color: var(--color-accent-amber); font-weight: 700; }
 
-/* ── Sky / Branch toggle ────────────────────────────────────────────*/
+/* ── Sky / Branch toggle ────────────────────────────────────────────
+   Same segmented control as .an-range-selector in Analytics: a pill track
+   on the recessed surface, electric blue for the selected half. One pattern
+   for this kind of switch across the app, not one per screen.            */
 .tt-viewtoggle {
-    display: inline-flex; gap: 2px; padding: 2px; margin-bottom: 10px;
-    background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 10px;
+    display: inline-flex; gap: 1px; padding: 2px; margin-bottom: 10px;
+    background: var(--recessed-bg-2); border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 999px;
+}
+[data-theme-mode="light"] .tt-viewtoggle {
+    background: rgba(0,0,0,0.04); border-color: var(--color-border);
 }
 .tt-vt-btn {
     display: inline-flex; align-items: center; gap: 5px;
-    font-family: inherit; font-size: 11.5px; font-weight: 700;
-    padding: 6px 12px; border-radius: 8px; border: none;
-    background: transparent; color: #8a8a8a; cursor: pointer;
-    transition: background .18s ease, color .18s ease;
+    font-family: inherit; font-size: 11.5px; font-weight: 600;
+    letter-spacing: 0.02em; white-space: nowrap;
+    padding: 5px 13px; border-radius: 999px; border: none;
+    background: transparent; color: var(--color-text-secondary); cursor: pointer;
+    transition: background .15s ease, color .15s ease;
 }
-.tt-vt-btn.on { background: rgba(255,255,255,0.08); color: #f0f0f0; }
+.tt-vt-btn:hover { color: var(--color-text-primary); }
+.tt-vt-btn.on {
+    background: var(--color-progress); color: #fff; font-weight: 700;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+}
 
 /* ── Branch: one readable column at 360px ───────────────────────────*/
 .tt-branch { display: flex; flex-direction: column; gap: 6px; }
@@ -14825,6 +14837,21 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 }
 .tt-branch-price-off { color: #6a6a6a; background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.08); }
 .tt-branch-filter { margin-bottom: 10px; }
+
+/* One goal, one chain: master this, then the next. The spine runs behind
+   the glyph column so consecutive rows read as steps rather than a list. */
+.tt-branch-linear { position: relative; }
+.tt-branch-linear::before {
+    content: ''; position: absolute; top: 18px; bottom: 18px; left: 30px; width: 2px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0.05));
+    border-radius: 1px; pointer-events: none;
+}
+.tt-branch-linear .tt-branch-row { position: relative; z-index: 1; }
+.tt-branch-gate {
+    display: flex; align-items: center; gap: 4px;
+    color: var(--color-text-secondary); white-space: normal;
+}
+.tt-branch-gate svg { flex-shrink: 0; opacity: 0.8; }
 .tt-goal-chip.on { border-color: rgba(255,255,255,0.3); background: #2a2a2a; }
 .tt-seg-badge.tt-seg-gold { background: rgba(245,197,99,0.16); color: #f5c563; }
 

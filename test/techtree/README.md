@@ -25,9 +25,22 @@ Birth state (§3.1/§10.2), the lineage rule (§5.1), the purchase and its
 persistence-before-grant ordering (§5.3/§10.4), reveal not buying access
 (§1/§10.1), silhouettes leaking nothing in either view (§10.9), the
 rejection fallback (§5.4/§10.5), the one-time migration and its idempotence
-(§9), the regeneration gate in both directions (§6), what a regeneration
-keeps (§6.1), and mastery paying exactly once with node resolution paying
-nothing on top (§7/§10.8).
+(§9), all three regeneration gates — mastery, Grit and the once-a-month
+clock (§6) — a failed weave costing nothing, and mastery paying exactly once
+with node resolution paying nothing on top (§7/§10.8).
+
+It also drives the Map's own screens, since those are where the workflow
+revision landed: the intro screen carrying no standing activity-count
+requirement, a typed goal registering from the first keystroke rather than
+only from the DOM, the node sheet having no per-node "revise the AI" path
+left, and Branch opening as a single-goal chain — no tier headings, a spine,
+each locked node stating in full what opens it.
+
+The generation callable itself is not exercised here: the harness stubs
+`httpsCallable`, so a weave from these tests is always the FAILED path, which
+is exactly what the "costs nothing" assertions want. The weaver's own gates
+and materializer are unit-tested server-side in
+`functions/test/web-weaver.test.js`.
 
 Two of these caught real bugs on the first run: `masteriesSinceRegen` was
 being incremented at one call site while mastery could also be declared by

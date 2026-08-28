@@ -19,6 +19,7 @@ const dir = build(`
         window.__ttSkySvg    = function ()          { return ttBuildWebSVG(ttWebLayout()); };
         window.__ttRegen     = function ()          { return ttRegenStatus(); };
         window.__ttEval      = function ()          { return evaluateTechTreeMastery(); };
+        window.__ttNodeSheet = function (id)        { ttOpenNode(id); var el = document.querySelector('.tt-sheet-card'); return el ? el.innerHTML : ''; };
         window.__grit        = function ()          { return gritState(); };
         window.__vsPeekLedger= function ()          { return _gritLedgerBuffer.slice(); };
 `);
@@ -177,36 +178,54 @@ const out = await p.evaluate(async () => {
   ok('§9 migration is idempotent', window.__ttEnsure().revealMigratedAt === marker);
 
   // ── §6 regeneration gate ───────────────────────────────────────
-  boot(500, chain, { revealMigratedAt:new Date().toISOString(), masteriesSinceRegen:0 });
+  // Three gates now, all of which must open: a mastery since the last
+  // regeneration, the Grit, and the once-a-month clock.
+  boot(500, chain, { revealMigratedAt:new Date().toISOString(), masteriesSinceRegen:0,
+                     pendingRequest:{ type:'generate', attempts:0 } });
+  ok('§6 a request left over from the worker era is dropped on load',
+     window.__ttEnsure().pendingRequest === undefined);
   // Nothing mastered since the last regeneration: the gate must hold no
   // matter how rich the user is.
   window.userData.dimensions[0].paths[0].activities[0].techTreeMasteredAt = null;
   window.userData.techTree.lastRegenAt = new Date().toISOString();
   let r = window.__ttRegen();
-  ok('§6 rich but no mastery → refused', r.affordable && !r.masteryMet, r);
+  ok('§6 rich but no mastery → refused', r.affordable && !r.masteryMet && !r.ready, r);
   // Master it again, in the past, with no prior regeneration — the gate opens.
   window.userData.dimensions[0].paths[0].activities[0].techTreeMasteredAt = new Date().toISOString();
   window.userData.techTree.lastRegenAt = null;
   window.userData.grit.balance = 50;
   r = window.__ttRegen();
-  ok('§6 mastery but poor → refused', r.masteryMet && !r.affordable, r);
+  ok('§6 mastery but poor → refused', r.masteryMet && !r.affordable && !r.ready, r);
   window.userData.grit.balance = 500;
   r = window.__ttRegen();
-  ok('§6 both met → allowed', r.masteryMet && r.affordable);
+  ok('§6 mastery + Grit + no clock running → allowed', r.ready, r);
 
+  // The monthly clock is its own veto: it holds against a user who has
+  // mastered something and can pay twice over.
+  window.userData.techTree.lastRegenAt = new Date(Date.now() - 3 * 86400000).toISOString();
+  r = window.__ttRegen();
+  ok('§6 regenerated 3 days ago → refused for 27 more', r.cooldown === 27 && !r.ready, r);
+  window.userData.techTree.lastRegenAt = new Date(Date.now() - 31 * 86400000).toISOString();
+  r = window.__ttRegen();
+  ok('§6 a month later → allowed again', r.cooldown === 0 && r.ready, r);
+  // A tree that has never been regenerated is not on any clock: the FIRST
+  // generation is free and does not start it.
+  window.userData.techTree.lastRegenAt = null;
+  ok('§6 the initial generation never starts the clock', window.__ttRegen().cooldown === 0);
+
+  // A weave that does not come back costs nothing: the charge follows the
+  // web, it no longer rides along with the request. (The harness stubs the
+  // callable, so this is exactly the failed-weave path.)
   await window.ttConfirmReveal('n1');
   const balPre = window.__grit().balance;
+  const masteriesPre = window.__ttEnsure().masteriesSinceRegen;
   await window.ttConfirmRegen();
   tt = window.__ttEnsure();
-  ok('§6 regeneration charged 200', window.__grit().balance === balPre - 200, window.__grit().balance);
-  ok('§6 masteriesSinceRegen reset', tt.masteriesSinceRegen === 0);
-  ok('§6 lastRegenAt stamped', !!tt.lastRegenAt);
-  ok('§6 request queued for the generator', !!tt.pendingRequest && tt.status === 'generating');
-  ok('§6.1 keep list carries the revealed node',
-     (tt.pendingRequest.payload.keepNodeIds || []).includes('n1'),
-     tt.pendingRequest.payload.keepNodeIds);
-  ok('§6.1 keep list excludes silhouettes',
-     !(tt.pendingRequest.payload.keepNodeIds || []).includes('n3'));
+  ok('§6 a failed weave charges no Grit', window.__grit().balance === balPre, window.__grit().balance);
+  ok('§6 a failed weave does not spend the mastery credit',
+     tt.masteriesSinceRegen === masteriesPre, tt.masteriesSinceRegen);
+  ok('§6 a failed weave leaves no request behind', tt.pendingRequest === undefined && tt.status !== 'generating',
+     { pending: tt.pendingRequest, status: tt.status });
 
   // ── §7 / §10.8 mastery pays once; resolving pays nothing extra ──
   boot(500, chain, { revealMigratedAt:new Date().toISOString() });
@@ -229,6 +248,71 @@ const out = await p.evaluate(async () => {
   window.userData.techTree.masteriesSinceRegen = 0;          // simulate a missed increment
   ok('§6 gate self-corrects a drifted counter',
      window.__ttEnsure().masteriesSinceRegen === 2, window.__ttEnsure().masteriesSinceRegen);
+
+  // ── The screens themselves ──────────────────────────────────────
+  // The intro is the one place the activity rule used to live as a standing
+  // "0/3 activities" badge. It says one plain thing now, and the rule shows
+  // up only when it actually blocks a tap.
+  boot(500, [], { status:'empty', nodes:[], goals:[] });
+  document.getElementById('activitiesSubTechTree').style.display = '';
+  document.getElementById('activitiesTab').classList.add('active');
+  window.renderTechTree();
+  let intro = document.getElementById('techTreeContainer').innerHTML;
+  ok('§1 no standing activity-count requirement', !/\/3 activit/i.test(intro), intro.slice(0, 200));
+  ok('§1 no gate checklist at all', !/tt-gate/.test(intro));
+  ok('§1 the instruction is plain English, no metaphor',
+     /Write down your goal below and AI will build a roadmap/.test(intro));
+  ok('§1 goal rows are still separate inputs, not one textarea',
+     intro.includes('tt-goal-oneline') && !intro.includes('<textarea'));
+
+  // §2 — the reported bug: what is typed into the first row had to survive to
+  // generation without the user tapping "Add another goal" first. It lives in
+  // techTree.goals from the first keystroke now, not only in the DOM.
+  const field = document.querySelector('#ttGoalFields .tt-goal-oneline');
+  field.value = 'Run a half marathon';
+  field.dispatchEvent(new Event('input', { bubbles: true }));
+  ok('§2 typing one goal registers it without adding a second row',
+     (window.__ttEnsure().goals || []).map(g => g.rawText).join() === 'Run a half marathon',
+     window.__ttEnsure().goals);
+  // And it survives a re-render, which used to wipe it back to the stored list.
+  window.renderTechTree();
+  ok('§2 the typed goal survives a re-render',
+     document.querySelector('#ttGoalFields .tt-goal-oneline').value === 'Run a half marathon');
+
+  // §3 — an available node offers accept / link / not now, and nothing that
+  // sends a single node back to the model. (n1 and n2 have to be lit first —
+  // a silhouette's sheet is the reveal sheet, not the pitch.)
+  boot(500, chain, { revealMigratedAt:new Date().toISOString() });
+  await window.ttConfirmReveal('n1');
+  await window.ttConfirmReveal('n2');
+  const sheet = window.__ttNodeSheet('n1');
+  ok('§3 Revise is gone from the node sheet', !/Revise/.test(sheet));
+  ok('§3 no per-node AI affordance is left', !/ttReviseNode/.test(sheet));
+  ok('§3 accept, link and not-now are untouched',
+     /ttOpenAccept/.test(sheet) && /ttOpenLinkPicker/.test(sheet) && /ttRejectNode/.test(sheet));
+  ok('§3 window.ttReviseNode no longer exists', typeof window.ttReviseNode === 'undefined');
+  window.ttCloseSheet();
+
+  // §6 — Branch opens on ONE goal, as a chain: no tier headings, a spine, and
+  // every locked node saying in full what opens it.
+  window._ttBranchGoal = undefined;
+  const linear = window.__ttBranchHtml(window.__ttEnsure());
+  ok('§6 Branch opens filtered to a goal, not All', /tt-branch-linear/.test(linear));
+  ok('§6 tier headings are gone from the chain', !/tt-branch-tier/.test(linear));
+  ok('§6 the unlock condition is stated in full, not clipped to a badge',
+     /tt-branch-gate/.test(linear) && /Unlocks after/.test(linear), linear.slice(0, 300));
+  ok('§6 All is still one tap away', /ttBranchFilter\(null\)/.test(linear));
+  window.ttBranchFilter(null);
+  const all = window.__ttBranchHtml(window.__ttEnsure());
+  ok('§6 All restores the tier-grouped read', /tt-branch-tier/.test(all) && !/tt-branch-linear/.test(all));
+
+  // §7 — the Sky/Branch toggle carries the app's segmented-control classes.
+  window._ttBranchGoal = undefined;
+  window.renderTechTree();
+  const web = document.getElementById('techTreeContainer').innerHTML;
+  ok('§7 the toggle is one control with a selected half',
+     /tt-vt-btn on/.test(web) && /aria-selected="true"/.test(web));
+  ok('§7 Rebuild no longer shadows Regenerate', !/ttRebuildMap/.test(web));
 
   return log;
 });

@@ -34,6 +34,7 @@ const {
 const { findActivity, resolveActivityName } = require('./lib/activities');
 const { modeReminderCopy } = require('./lib/modes');
 const questComposer = require('./lib/quest-composer');
+const webWeaver = require('./lib/web-weaver');
 const { callModel, parseModelJson } = require('./lib/model');
 
 const {
@@ -662,9 +663,9 @@ exports.createActivityReminder = onCall(
 // a subcollection for exactly the same reason.
 //
 // ANTHROPIC_API_KEY arrives as a runtime environment variable, written into
-// functions/.env at deploy time from the repo secret the tech-tree worker
-// already uses. Not Secret Manager: binding a secret makes the deploy call
-// setIamPolicy on it, which this CI service account is not permitted to do.
+// functions/.env at deploy time from the repo's ANTHROPIC_API_KEY secret. Not
+// Secret Manager: binding a secret makes the deploy call setIamPolicy on it,
+// which this CI service account is not permitted to do.
 
 const RATE_LIMIT_FREE = 3;                          // compositions per window
 const RATE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;     // rolling seven days
@@ -765,5 +766,286 @@ exports.composeQuest = onCall(
             uid, shape, size, groups: spec.groups.length, activities: activities.length,
         });
         return { ok: true, spec, remaining: Math.max(0, RATE_LIMIT_FREE - (quota.count + 1)) };
+    }
+);
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// ══ MAP — "WEAVE MY WEB" ══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Replaces the GitHub Actions tech-tree worker. That design had the client
+// write techTree.pendingRequest and then watch its own document for minutes,
+// with a realtime listener AND a poll because a cron has no execution-time
+// guarantee. Generation is now a single call that returns the web in its own
+// HTTP response — the shape composeQuest above already proved out.
+//
+// Like composeQuest, it writes NOTHING to users/{uid}. The woven web comes
+// back in the response and the CLIENT persists it, which keeps generation
+// clear of saveUserData()'s full-document overwrite. The only thing persisted
+// here is the cooldown record, in a subcollection for the same reason.
+//
+// The user's real Firestore document is the sole input. Nothing about the web
+// is taken from the request beyond the mode and which goal it applies to.
+
+const WEAVE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+// An abuse ceiling, not a product limit: legitimate use is one regeneration a
+// month, at most five goals ever, and an expansion every few days.
+const WEAVE_WINDOW_MAX = 20;
+
+async function readWeaveUsage(uid) {
+    const ref = db.collection('users').doc(uid).collection('aiUsage').doc('mapWeave');
+    const snap = await ref.get();
+    const data = snap.exists ? snap.data() : {};
+    const now = Date.now();
+    const startedAt = data.windowStart ? new Date(data.windowStart).getTime() : 0;
+    const fresh = !startedAt || now - startedAt >= WEAVE_WINDOW_MS;
+    return {
+        ref,
+        lastTreeRegenAt: data.lastTreeRegenAt || null,
+        goalRegenAt: data.goalRegenAt || {},
+        count: fresh ? 0 : (data.count || 0),
+        windowStart: fresh ? new Date(now).toISOString() : data.windowStart,
+    };
+}
+
+// Only a weave that actually produced something spends anything. A failed
+// model call costs the user neither their monthly regeneration nor a slot in
+// the abuse window.
+async function commitWeaveUsage(usage, mode, goalId, isTreeRegen) {
+    const now = new Date().toISOString();
+    const next = {
+        count: usage.count + 1,
+        windowStart: usage.windowStart,
+        lastAt: now,
+    };
+    if (isTreeRegen) next.lastTreeRegenAt = now;
+    if (mode === 'regenerate' && goalId) {
+        next.goalRegenAt = Object.assign({}, usage.goalRegenAt, { [goalId]: now });
+    }
+    await usage.ref.set(next, { merge: true });
+    return {
+        lastTreeRegenAt: next.lastTreeRegenAt || usage.lastTreeRegenAt || null,
+        goalRegenAt: next.goalRegenAt || usage.goalRegenAt || {},
+    };
+}
+
+function anchorSummaries(techTree, actById) {
+    return (techTree.nodes || [])
+        .filter((n) => n.role === 'anchor' && n.payload && n.payload.activityId && actById[n.payload.activityId])
+        .map((n) => ({ activityId: n.payload.activityId, name: n.title, dimensionId: n.dimensionId }));
+}
+
+// A full generation runs to several thousand output tokens, so it is streamed
+// and judged on STALLING rather than duration — the same discipline the worker
+// used, with the ceilings brought down to what someone will actually sit
+// through. In practice a weave returns in 15-40s.
+//
+// The ceilings have to multiply out under the function's own 300s timeout AND
+// under the client's guard, because callModel retries once: generate is at
+// worst 2 x 100s, everything else 2 x 60s. Otherwise the client gives up on a
+// call the server then completes, and the user loses a monthly regeneration
+// they never saw.
+function modelBudget(mode) {
+    return {
+        maxTokens: webWeaver.MAX_TOKENS[mode] || 4000,
+        idleMs: 30000,
+        totalMs: mode === 'generate' ? 100000 : 60000,
+    };
+}
+
+async function weaveGeneration(uid, mode, userData, techTree, goalId) {
+    const goals = (techTree.goals || []).filter((g) => !g.retiredAt);
+    const actById = {};
+    webWeaver.collectActivities(userData).forEach(({ act }) => { actById[act.id] = act; });
+
+    const opts = { mode };
+    let scopedGoal = null;
+
+    if (mode === 'add_goal') {
+        opts.goalIds = [goalId];
+        opts.existingAnchors = anchorSummaries(techTree, actById);
+    } else if (mode === 'regenerate') {
+        scopedGoal = goals.find((g) => g.id === goalId);
+        opts.goalIds = [goalId];
+        opts.resolvedOnGoal = (techTree.nodes || [])
+            .filter((n) => (n.goalIds || []).indexOf(goalId) !== -1 && n.resolvedAt)
+            .map((n) => n.title);
+    }
+
+    const scopedGoals = goals.filter((g) => !opts.goalIds || opts.goalIds.indexOf(g.id) !== -1);
+    const prompt = webWeaver.buildGeneratePrompt(userData, opts);
+
+    let parsed;
+    try {
+        const res = await callModel(Object.assign({ system: prompt.system, user: prompt.user }, modelBudget(mode)));
+        // Truncation is the likeliest cause of unparseable JSON on the big
+        // generate, and it is invisible in the parse failure alone.
+        if (res.truncated) logger.warn('weaveWeb hit the token ceiling', { uid, mode });
+        parsed = parseModelJson(res.content);
+    } catch (err) {
+        logger.warn('weaveWeb model call failed', { uid, mode, error: err.message });
+        return { ok: false, reason: 'model' };
+    }
+    if (!parsed) {
+        logger.warn('weaveWeb returned unparseable output', { uid, mode });
+        return { ok: false, reason: 'invalid' };
+    }
+
+    // GENERATE may split one typed goal into several distinct goals; the
+    // scoped modes reuse the goals they were given, in order. Reserved colours
+    // are the ones belonging to threads this call is not rebuilding, so a new
+    // goal cannot draw a colour another thread already wears.
+    const inBatch = new Set(scopedGoals.map((g) => g.id));
+    const built = webWeaver.materializeWeb(parsed, userData, scopedGoals, {
+        positional: mode !== 'generate',
+        reservedColors: (techTree.goals || [])
+            .filter((g) => !inBatch.has(g.id))
+            .map((g) => g.color),
+    });
+    if (!built.goals.length || (mode === 'generate' && !built.nodes.length)) {
+        logger.warn('weaveWeb produced nothing valid', { uid, mode });
+        return { ok: false, reason: 'invalid' };
+    }
+
+    const folded = webWeaver.foldGeneration(mode, techTree, built, parsed.vision, goalId);
+    if (scopedGoal) scopedGoal.regeneratedAt = new Date().toISOString();
+
+    return {
+        ok: true,
+        newNodes: built.nodes.length,
+        patch: Object.assign({
+            status: 'ready',
+            schemaVersion: 3,
+            lastGeneratedAt: new Date().toISOString(),
+        }, folded),
+    };
+}
+
+// Expansion: fan new nodes under the single most recent mastery, and refill
+// the wildcard slots the user has used up. One source per call, not three —
+// this runs while someone is looking at the screen now, not on a cron.
+async function weaveExpansion(uid, userData, techTree, nodeIds) {
+    const nodes = techTree.nodes || [];
+    const candidates = nodes
+        .filter((n) => n.resolvedAt && n.lifecycle !== 'archived'
+            && (!nodeIds.length || nodeIds.indexOf(n.id) !== -1))
+        .sort((a, b) => new Date(a.resolvedAt) - new Date(b.resolvedAt));
+    const resolved = candidates[candidates.length - 1] || null;
+
+    const goalsById = {};
+    (techTree.goals || []).forEach((g) => { goalsById[g.id] = g; });
+    const actById = {};
+    webWeaver.collectActivities(userData).forEach(({ act }) => { actById[act.id] = act; });
+
+    const existingTitles = nodes.filter((n) => n.lifecycle !== 'archived').map((n) => n.title);
+    let added = [];
+
+    if (resolved) {
+        const ctx = {
+            resolvedNode: {
+                title: resolved.title, role: resolved.role, dimensionId: resolved.dimensionId,
+                activity: resolved.payload && resolved.payload.activityId && actById[resolved.payload.activityId]
+                    ? {
+                        activityId: resolved.payload.activityId,
+                        completions: actById[resolved.payload.activityId].completionCount || 0,
+                    }
+                    : null,
+            },
+            goals: (resolved.goalIds || []).map((gid) => goalsById[gid]).filter(Boolean)
+                .map((g) => ({ goalId: g.id, shortName: g.shortName, sharpened: g.sharpened })),
+            activities: webWeaver.activitySnapshot(userData, true),
+            existingTitles,
+            rejections: webWeaver.rejectionStrings(techTree),
+        };
+        const prompt = webWeaver.buildExpandPrompt(userData, ctx);
+        try {
+            const res = await callModel(Object.assign({ system: prompt.system, user: prompt.user }, modelBudget('expand')));
+            added = webWeaver.materializeExpansion(parseModelJson(res.content), userData, techTree, resolved, existingTitles);
+            added.forEach((n) => existingTitles.push(n.title));
+        } catch (err) {
+            logger.warn('weaveWeb expansion failed', { uid, error: err.message });
+        }
+    }
+
+    // Once the old wildcards are accepted or done, the web owes the user fresh
+    // serendipity (max 2 on offer at any time).
+    const openWilds = nodes.filter((n) => n.role === 'wildcard' && n.lifecycle === 'available').length;
+    const wildSlots = Math.max(0, 2 - openWilds);
+    const spentWild = nodes.some((n) => n.role === 'wildcard'
+        && n.lifecycle !== 'available' && n.lifecycle !== 'archived');
+    if (wildSlots > 0 && spentWild) {
+        const prompt = webWeaver.buildWildcardPrompt(userData, techTree, wildSlots, existingTitles);
+        try {
+            const res = await callModel(Object.assign({ system: prompt.system, user: prompt.user }, modelBudget('expand')));
+            added = added.concat(webWeaver.materializeWildcards(parseModelJson(res.content), userData, wildSlots, existingTitles));
+        } catch (err) {
+            logger.warn('weaveWeb wildcard replenish failed', { uid, error: err.message });
+        }
+    }
+
+    if (!added.length) return { ok: false, reason: 'empty' };
+    return {
+        ok: true,
+        newNodes: added.length,
+        patch: {
+            status: 'ready',
+            schemaVersion: 3,
+            lastExpandAt: new Date().toISOString(),
+            nodes: nodes.concat(added),
+        },
+    };
+}
+
+exports.weaveWeb = onCall(
+    {
+        region: REGION,
+        memory: '512MiB',
+        timeoutSeconds: 300,
+        maxInstances: 5,
+    },
+    async (request) => {
+        // The uid comes from the verified token, never from the payload.
+        if (!request.auth || !request.auth.uid) {
+            throw new HttpsError('unauthenticated', 'You must be signed in to weave your web.');
+        }
+        const uid = request.auth.uid;
+        const data = request.data || {};
+
+        const mode = webWeaver.VALID_MODES.indexOf(data.mode) !== -1 ? data.mode : null;
+        if (!mode) throw new HttpsError('invalid-argument', 'Unknown weave mode.');
+        const goalId = typeof data.goalId === 'string' ? data.goalId.slice(0, 64) : null;
+        const nodeIds = (Array.isArray(data.nodeIds) ? data.nodeIds : [])
+            .filter((id) => typeof id === 'string').slice(0, 5);
+
+        const userSnap = await db.collection('users').doc(uid).get();
+        if (!userSnap.exists) throw new HttpsError('not-found', 'User profile not found.');
+        const userData = userSnap.data();
+        const techTree = userData.techTree || {};
+
+        const usage = await readWeaveUsage(uid);
+        if (usage.count >= WEAVE_WINDOW_MAX) {
+            return { ok: false, reason: 'ratelimit', message: 'That is a lot of weaving for one week — try again in a few days.' };
+        }
+
+        const blocked = webWeaver.gateFor(mode, techTree, userData, { goalId }, usage);
+        if (blocked) {
+            return Object.assign({ ok: false, usage: { lastTreeRegenAt: usage.lastTreeRegenAt, goalRegenAt: usage.goalRegenAt } }, blocked);
+        }
+
+        // A generate against a web that already has nodes IS the whole-tree
+        // regeneration — the first weave is the free one.
+        const isTreeRegen = mode === 'generate' && webWeaver.liveNodes(techTree).length > 0;
+
+        const result = mode === 'expand'
+            ? await weaveExpansion(uid, userData, techTree, nodeIds)
+            : await weaveGeneration(uid, mode, userData, techTree, goalId);
+
+        if (!result.ok) return result;
+
+        const committed = await commitWeaveUsage(usage, mode, goalId, isTreeRegen);
+
+        logger.info('weaveWeb ok', { uid, mode, newNodes: result.newNodes });
+        return { ok: true, mode, techTree: result.patch, usage: committed };
     }
 );

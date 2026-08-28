@@ -3,9 +3,9 @@
 // The single place any Cloud Function talks to the model. Native fetch, no SDK,
 // no new dependency.
 //
-// SHARED ON PURPOSE. The Quest Composer uses it today; the Tech Tree generator
-// uses it when it moves off GitHub Actions. Its behaviour is ported from
-// scripts/generate-tech-tree.js, whose lessons are worth keeping:
+// SHARED ON PURPOSE — the Quest Composer and the Map weaver both go through
+// it. Its behaviour carries over the lessons of the GitHub Actions worker the
+// Map used to run on:
 //
 //   - STREAM. A large generation runs well past two minutes of wall clock. A
 //     plain fetch timeout kills healthy-but-slow generation; watching the
@@ -23,8 +23,7 @@
 const API_BASE = 'https://api.anthropic.com';
 const API_VERSION = '2023-06-01';
 
-// Pinned by the deploy environment; the fallback is the model the tech-tree
-// worker has always used. Do not change one without the other.
+// Pinned by the deploy environment. Do not change one without the other.
 function modelName() {
     return process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5';
 }
