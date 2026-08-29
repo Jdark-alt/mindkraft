@@ -55,7 +55,7 @@ function isUsableSubscription(sub) {
 function buildPayload(reminder, activityName, modeCopy) {
     if (reminder.type === 'mode') {
         return {
-            title: 'Mindkraft ⚔️',
+            title: 'Mindkraft',
             body: (modeCopy && modeCopy.body) || 'Your mode window is coming up.',
             // Per mode document, so a habit's pre-window nudge and its
             // post-window nudge don't silently replace each other, and neither
@@ -74,7 +74,7 @@ function buildPayload(reminder, activityName, modeCopy) {
     if (reminder.type === 'activity') {
         const name = activityName || reminder.activityName || 'Your activity';
         return {
-            title: 'Mindkraft ⚔️',
+            title: 'Mindkraft',
             body: name + ' — time to log it',
             tag: 'mindkraft-activity-' + String(reminder.activityId),
             data: {
@@ -85,7 +85,7 @@ function buildPayload(reminder, activityName, modeCopy) {
     }
 
     return {
-        title: 'Mindkraft ⚔️',
+        title: 'Mindkraft',
         body: "Don't forget to check off today's tasks!",
         tag: 'mindkraft-daily-reminder',
         data: { type: 'general', activityId: null },

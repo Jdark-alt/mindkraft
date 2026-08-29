@@ -19,6 +19,17 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- Phosphor Icons — the app's icon set, replacing the emoji it used to draw.
+         Two weights only. The documented one-line <script> loader pulls all six
+         (~3MB of CSS and fonts) and injects the <link> tags from JS, which flashes
+         empty boxes until it runs. Linking the two weights we actually use keeps
+         it to ~170KB of CSS plus ~280KB of woff2 and renders on first paint.
+         Pinned: an unpinned CDN URL would re-resolve to a new major on its own. -->
+    <link rel="preconnect" href="https://unpkg.com" crossorigin>
+    <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.2/src/bold/style.css">
+    <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.2/src/fill/style.css">
+
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -33,7 +44,7 @@
         <div class="iab-card">
             <div class="lp-logo-ring">
                 <div class="lp-logo-pulse"></div>
-                <div class="lp-logo-emoji">🧠</div>
+                <div class="lp-logo-emoji"><i class="ph-bold ph-brain" aria-hidden="true"></i></div>
             </div>
             <div class="lp-brand-name">Mindkraft</div>
             <div class="iab-headline" id="iabHeadline"></div>
@@ -96,7 +107,7 @@
             // Reusable copy-link button HTML
             var copyBtnHTML =
                 '<button class="iab-secondary-btn" id="iabCopyBtn" type="button">' +
-                  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>' +
+                  '<i class="ph-bold ph-copy" id="iabCopyIcon" aria-hidden="true"></i>' +
                   '<span>Copy link</span>' +
                 '</button>';
 
@@ -106,11 +117,19 @@
                 btn._bound = true;
                 btn.addEventListener('click', function() {
                     var span = btn.querySelector('span');
+                    var ico = btn.querySelector('i');
                     var done = function() {
                         if (!span) return;
                         var orig = span.textContent;
-                        span.textContent = '✓ Copied — paste in Safari';
-                        setTimeout(function() { span.textContent = orig; }, 2200);
+                        span.textContent = 'Copied — paste in Safari';
+                        // The confirmation is the icon flipping from copy to
+                        // check, which is why the label no longer carries a
+                        // tick of its own.
+                        if (ico) ico.className = 'ph-bold ph-check';
+                        setTimeout(function() {
+                            span.textContent = orig;
+                            if (ico) ico.className = 'ph-bold ph-copy';
+                        }, 2200);
                     };
                     var url = window.location.href;
                     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -222,15 +241,15 @@
         <div class="lp-hero" id="lpInstallSection">
             <div class="lp-logo-ring">
                 <div class="lp-logo-pulse"></div>
-                <div class="lp-logo-emoji">🧠</div>
+                <div class="lp-logo-emoji"><i class="ph-bold ph-brain" aria-hidden="true"></i></div>
             </div>
             <div class="lp-brand-name">Mindkraft</div>
             <div class="lp-tagline">Gamify your life.</div>
 
             <div class="lp-pills">
-                <span class="lp-pill">⚡ XP &amp; Levels</span>
-                <span class="lp-pill">🔥 Streaks</span>
-                <span class="lp-pill">🏆 Challenges</span>
+                <span class="lp-pill"><i class="ph-bold ph-lightning mk-ico-lead" aria-hidden="true"></i>XP &amp; Levels</span>
+                <span class="lp-pill"><i class="ph-bold ph-fire mk-ico-lead" aria-hidden="true"></i>Streaks</span>
+                <span class="lp-pill"><i class="ph-bold ph-trophy mk-ico-lead" aria-hidden="true"></i>Challenges</span>
             </div>
 
             <!-- Platform-specific install card — populated by JS -->
@@ -314,7 +333,7 @@
             <div class="ob-slide" id="obSlide1" style="display:none;">
                 <div class="ob-visual ob-visual-tree">
                     <div class="ob-mock-tier ob-mock-tier-dim" data-tier="DIMENSION" style="--tier-accent: var(--color-progress);">
-                        <span class="ob-mock-tier-icon" aria-hidden="true">💪</span>
+                        <span class="ob-mock-tier-icon"><i class="ph-bold ph-barbell" aria-hidden="true"></i></span>
                         <span class="ob-mock-tier-name">Health</span>
                         <span class="ob-mock-tier-label">DIMENSION</span>
                     </div>
@@ -376,7 +395,7 @@
 
         <!-- Slide navigation -->
         <div class="ob-nav" id="obNav">
-            <button class="ob-btn-ghost" id="obBackBtn" onclick="obBack()" style="visibility:hidden;">← Back</button>
+            <button class="ob-btn-ghost" id="obBackBtn" onclick="obBack()" style="visibility:hidden;"><i class="ph-bold ph-arrow-left mk-ico-lead" aria-hidden="true"></i>Back</button>
             <button class="ob-btn-next" id="obNextBtn" onclick="obNext()">Next</button>
         </div>
 
@@ -432,7 +451,7 @@
             </div>
             <div class="ob-area-grid" id="obFocusGrid"><!-- rendered by JS --></div>
             <div class="ob-focus-nav">
-                <button type="button" class="ob-btn-ghost" onclick="obShowChoiceScreenAgain()">← Back</button>
+                <button type="button" class="ob-btn-ghost" onclick="obShowChoiceScreenAgain()"><i class="ph-bold ph-arrow-left mk-ico-lead" aria-hidden="true"></i>Back</button>
                 <button type="button" class="ob-btn-next" id="obFocusNextBtn"
                         onclick="obShowActivityPicker()" disabled>Pick at least one</button>
             </div>
@@ -453,7 +472,7 @@
             </div>
             <div class="ob-activity-groups" id="obActivityGroups"><!-- rendered by JS --></div>
             <div class="ob-focus-nav">
-                <button type="button" class="ob-btn-ghost" onclick="obBackToFocus()">← Back</button>
+                <button type="button" class="ob-btn-ghost" onclick="obBackToFocus()"><i class="ph-bold ph-arrow-left mk-ico-lead" aria-hidden="true"></i>Back</button>
                 <button type="button" class="ob-btn-next" id="obActivityFinishBtn"
                         onclick="obFinishPicker()" disabled>Pick at least one</button>
             </div>
@@ -919,7 +938,7 @@
 
                     <!-- Inline Daily Planner panel — replaces activity list when open -->
                     <div id="activitiesInlinePlanner" style="display:none;">
-                        <!-- Title row: date title left, [Today] [📅] [+ Schedule] right -->
+                        <!-- Title row: date title left, [Today] [calendar] [+ Schedule] right -->
                         <div class="planner-cal-actions">
                             <div class="planner-cal-title" id="plannerCalTitle">Today</div>
                             <div class="planner-cal-jump">
@@ -1731,7 +1750,7 @@
             </div>
             <div id="mkEmptyPursuitsNarratives" class="tab-content">
                 <div class="empty-state mk-empty-page">
-                    <div class="empty-state-icon">📖</div>
+                    <div class="empty-state-icon"><i class="ph-bold ph-book-open mk-ico-block" aria-hidden="true"></i></div>
                     <p>Narratives live here. Nothing to show yet.</p>
                 </div>
             </div>
@@ -1785,7 +1804,7 @@
                     <div class="pl-modal-eyebrow">Daily Planner</div>
                     <h3 class="modal-title">Add to schedule</h3>
                 </div>
-                <button class="pl-modal-close" onclick="closePlannerAddModal()" aria-label="Close">✕</button>
+                <button class="pl-modal-close" onclick="closePlannerAddModal()" aria-label="Close"><i class="ph-bold ph-x" aria-hidden="true"></i></button>
             </div>
             <div class="modal-body pl-modal-body">
                 <!-- Type toggle — sub-tab-style underline primitive -->
@@ -1851,7 +1870,14 @@
                     <div class="cat-form-group">
                         <label class="pl-field-label">Quest name</label>
                         <div class="pr-b-name-row">
-                            <input type="text" id="projectEmoji" class="pl-input pr-b-emoji-input" value="🎯" maxlength="2" aria-label="Emoji">
+                            <!-- Was a free-text emoji box. The value is now a
+                                 Phosphor icon name, so it is picked from a grid
+                                 rather than typed; the hidden input keeps the
+                                 form-read path unchanged. -->
+                            <button type="button" id="projectIconBtn" class="pl-input pr-b-emoji-input mk-icon-pick"
+                                    onclick="openIconPicker('projectIcon','projectIconBtn')"
+                                    aria-label="Quest icon"><i class="ph-bold ph-target" aria-hidden="true"></i></button>
+                            <input type="hidden" id="projectIcon" value="ph-target">
                             <input type="text" id="projectName" class="pl-input pr-b-name-input" placeholder="e.g. Learn Spanish, Run a 5K, Launch my shop" required>
                         </div>
                     </div>
@@ -2144,7 +2170,7 @@
                 <div class="cat-info-graphic">
                     <div class="ob-visual-tree" style="min-height:auto;margin:0 auto 16px;">
                         <div class="ob-mock-tier ob-mock-tier-dim" data-tier="DIMENSION" style="--tier-accent: var(--color-progress); animation: none;">
-                            <span class="ob-mock-tier-icon" aria-hidden="true">💪</span>
+                            <span class="ob-mock-tier-icon"><i class="ph-bold ph-barbell" aria-hidden="true"></i></span>
                             <span class="ob-mock-tier-name">Health</span>
                             <span class="ob-mock-tier-label">DIMENSION</span>
                         </div>
@@ -2215,7 +2241,7 @@
                     <div class="pl-modal-eyebrow">Routine Group</div>
                     <h3 class="modal-title" id="groupModalTitle">New Group</h3>
                 </div>
-                <button class="pl-modal-close" onclick="closeGroupModal()" aria-label="Close">✕</button>
+                <button class="pl-modal-close" onclick="closeGroupModal()" aria-label="Close"><i class="ph-bold ph-x" aria-hidden="true"></i></button>
             </div>
             <form id="groupForm" onsubmit="saveGroupFromModal(event)">
                 <div class="modal-body pl-modal-body">
@@ -2242,7 +2268,7 @@
                         </div>
                         <div id="groupTimeRow" class="group-time-row pl-time-row">
                             <select id="groupTimeStart" class="pl-input pl-input-select"></select>
-                            <span class="group-time-sep">→</span>
+                            <span class="group-time-sep"><i class="ph-bold ph-arrow-right" aria-hidden="true"></i></span>
                             <select id="groupTimeEnd" class="pl-input pl-input-select"></select>
                         </div>
                         <div class="pl-info-hint" hidden>
@@ -2591,9 +2617,12 @@
                             <input type="text" id="rewardTitle" placeholder="e.g., Weekend Getaway, New Sneakers…" required>
                         </div>
                         <div class="form-group reward-modal-icon-col">
-                            <label for="rewardIcon">Icon</label>
-                            <input type="text" id="rewardIcon" placeholder="🎁" maxlength="4">
-                            <span class="rwd-helper">Optional emoji</span>
+                            <label for="rewardIconBtn">Icon</label>
+                            <button type="button" id="rewardIconBtn" class="mk-icon-pick mk-icon-pick-wide"
+                                    onclick="openIconPicker('rewardIcon','rewardIconBtn')"
+                                    aria-label="Reward icon"><i class="ph-fill ph-gift" aria-hidden="true"></i></button>
+                            <input type="hidden" id="rewardIcon" value="">
+                            <span class="rwd-helper">Optional</span>
                         </div>
                     </div>
 
@@ -2620,22 +2649,22 @@
     <!-- Reward Unlock Celebration Overlay -->
     <div id="rewardUnlockOverlay" style="display:none;" class="reward-unlock-overlay" onclick="dismissRewardOverlay()">
         <div class="reward-unlock-card" onclick="event.stopPropagation()">
-            <span class="reward-unlock-icon" id="rewardUnlockIcon">🎁</span>
+            <span class="reward-unlock-icon" id="rewardUnlockIcon"><i class="ph-fill ph-gift" aria-hidden="true"></i></span>
             <div class="reward-unlock-level" id="rewardUnlockLevel">LEVEL UP!</div>
             <div class="reward-unlock-title" id="rewardUnlockTitle">You earned a reward!</div>
             <div class="reward-unlock-desc" id="rewardUnlockDesc"></div>
-            <button class="btn-reward-claim" onclick="dismissRewardOverlay()">🎉 Claim Reward</button>
+            <button class="btn-reward-claim" onclick="dismissRewardOverlay()"><i class="ph-fill ph-confetti mk-ico-lead" aria-hidden="true"></i>Claim Reward</button>
         </div>
     </div>
 
     <!-- Dim Reward Unlock Overlay -->
     <div id="dimRewardUnlockOverlay" style="display:none;" class="reward-unlock-overlay" onclick="dismissDimRewardOverlay()">
         <div class="reward-unlock-card" onclick="event.stopPropagation()">
-            <span class="reward-unlock-icon" id="dimRewardUnlockIcon">🗺️</span>
+            <span class="reward-unlock-icon" id="dimRewardUnlockIcon"><i class="ph-fill ph-map-trifold" aria-hidden="true"></i></span>
             <div class="reward-unlock-level" id="dimRewardUnlockLevel" style="color:var(--color-accent-olive);">DIMENSION LEVEL UP!</div>
             <div class="reward-unlock-title" id="dimRewardUnlockTitle">Dimension reward unlocked!</div>
             <div class="reward-unlock-desc" id="dimRewardUnlockDesc"></div>
-            <button class="btn-reward-claim" onclick="dismissDimRewardOverlay()">🎉 Claim Reward</button>
+            <button class="btn-reward-claim" onclick="dismissDimRewardOverlay()"><i class="ph-fill ph-confetti mk-ico-lead" aria-hidden="true"></i>Claim Reward</button>
         </div>
     </div>
 
@@ -2677,7 +2706,7 @@
                     <div id="profileUsernameEdit" class="pf-name-edit" style="display:none;">
                         <input id="profileUsernameInput" class="pf-name-input" type="text" maxlength="32" placeholder="Your username" onkeydown="profileUsernameKeydown(event)">
                         <button class="pf-name-btn" onclick="saveUsername()">Save</button>
-                        <button class="pf-name-btn-cancel" onclick="cancelUsernameEdit()">✕</button>
+                        <button class="pf-name-btn-cancel" onclick="cancelUsernameEdit()"><i class="ph-bold ph-x" aria-hidden="true"></i></button>
                     </div>
 
                     <!-- Member since + tenure -->
@@ -3524,7 +3553,7 @@
                     <div class="retro-picker-eyebrow">Add Missed Activity</div>
                     <div class="modal-title" id="retroPickerTitle">—</div>
                 </div>
-                <button class="retro-picker-close-btn" onclick="closeRetroPicker()">✕</button>
+                <button class="retro-picker-close-btn" onclick="closeRetroPicker()"><i class="ph-bold ph-x" aria-hidden="true"></i></button>
             </div>
             <div class="retro-picker-search-wrap">
                 <input id="retroPickerSearch" class="retro-picker-search" type="text"

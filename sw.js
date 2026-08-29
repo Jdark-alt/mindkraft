@@ -7,7 +7,7 @@
 // Bump CACHE_VERSION whenever you deploy a meaningful update.
 // This causes the old cache to be deleted and the new one installed.
 
-const CACHE_VERSION = 'v179';
+const CACHE_VERSION = 'v180';
 const CACHE_NAME = 'mindkraft-shell-' + CACHE_VERSION;
 
 // Files that make up the app shell — must all load for the app to work
@@ -109,8 +109,17 @@ self.addEventListener('fetch', function(event) {
         return; // Let browser handle Firebase directly
     }
 
-    // Google Fonts — cache first (they're versioned and immutable)
-    if (url.includes('fonts.googleapis.com') || url.includes('fonts.gstatic.com')) {
+    // Google Fonts and Phosphor Icons — cache first.
+    //
+    // Both are pinned to a version in the URL, so a cached copy can never go
+    // stale: a different version is a different URL. Phosphor belongs here and
+    // not in APP_SHELL because the icon fonts are only fetched once a glyph is
+    // actually painted, so pre-caching them would download weights the first
+    // screen may never use. Caching on first paint instead means the icons
+    // survive going offline, which for a PWA is the difference between a
+    // working UI and a page full of blank squares.
+    if (url.includes('fonts.googleapis.com') || url.includes('fonts.gstatic.com') ||
+        url.includes('unpkg.com/@phosphor-icons')) {
         event.respondWith(
             caches.match(event.request).then(function(cached) {
                 if (cached) return cached;
@@ -182,7 +191,7 @@ self.addEventListener('push', function(event) {
     try { data = event.data ? event.data.json() : {}; } catch(e) {}
 
     var payload = data.data || {};
-    var title   = data.title || 'Mindkraft ⚔️';
+    var title   = data.title || 'Mindkraft';
     var options = {
         body:      data.body  || "Don't forget to check off today's tasks!",
         icon:      './icon-192.svg',

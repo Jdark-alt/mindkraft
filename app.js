@@ -36,13 +36,241 @@
         window.userData = null;
         window.currentTab = 'activities';
 
+        // ── Icons (Phosphor) ──────────────────────────────────────────────
+        // The UI used to draw emoji. Emoji render in each platform's own font,
+        // so the same string was a flat glyph on one device and a glossy 3D
+        // blob on another, always in colours the theme could not touch. These
+        // are Phosphor glyphs from a webfont instead: one drawing everywhere,
+        // sized by font-size and tinted by colour like any other text.
+        //
+        // Weights are loaded in index.html. `bold` is the default because it
+        // matches the stroke-width of the inline SVGs already in the UI;
+        // `fill` is for the solid, celebratory marks (trophies, stars, fire).
+
+        // Icons drawn into a <canvas> or an SVG <text> cannot use a CSS class,
+        // so they need the glyph itself. Phosphor maps every icon to the same
+        // Private Use Area codepoint in all six weights — only the font file
+        // differs — so one table serves every weight.
+        const PH_GLYPH = {
+            'barbell': '\ue0b6', 'brain': '\ue74e', 'circle': '\ue18a',
+            'circle-dashed': '\ue602', 'circle-half': '\ue18c', 'diamond': '\ue1ec',
+            'fire': '\ue242', 'hammer': '\ue80e', 'handshake': '\ue582',
+            'lightning': '\ue2de', 'lock': '\ue2fa', 'sparkle': '\ue6a2',
+            'star': '\ue46a', 'target': '\ue47c', 'trophy': '\ue67e',
+        };
+
+        const PH_FONT = { bold: 'Phosphor-Bold', fill: 'Phosphor-Fill' };
+
+        // Markup for one icon. `weight` is 'bold' (default) or 'fill'.
+        // `lead: true` adds the trailing gap an icon needs when text follows it
+        // — the spacing an emoji used to carry in its own glyph advance.
+        function phIcon(name, opts) {
+            opts = opts || {};
+            const weight = opts.weight === 'fill' ? 'ph-fill' : 'ph-bold';
+            const cls = [weight, 'ph-' + name];
+            if (opts.lead) cls.push('mk-ico-lead');
+            if (opts.block) cls.push('mk-ico-block');
+            if (opts.cls) cls.push(opts.cls);
+            return '<i class="' + cls.join(' ') + '"'
+                 + (opts.style ? ' style="' + opts.style + '"' : '')
+                 + ' aria-hidden="true"></i>';
+        }
+        window.phIcon = phIcon;
+
+        // Emoji that users already have saved in their own data — a quest they
+        // gave a 🎯, a reward they gave a 🎁, a dimension emoji from an older
+        // build. Those strings live in Firestore and cannot be rewritten by a
+        // deploy, so every render path maps them through this table on the way
+        // out. Anything unmapped falls through and still renders as the emoji
+        // the user chose, which is the only honest fallback: their data, their
+        // glyph.
+        const LEGACY_EMOJI_ICON = {
+            '⚡': 'lightning',   '🧠': 'brain',        '🤝': 'handshake',
+            '🔨': 'hammer',      '🛠': 'hammer',       '🛠️': 'hammer',
+            '✦': 'sparkle',      '✨': 'sparkle',      '🔥': 'fire',
+            '🎯': 'target',      '🎉': 'confetti',     '✅': 'check-circle',
+            '✓': 'check',        '✗': 'x',            '❌': 'x-circle',
+            '✕': 'x',            '🏆': 'trophy',       '⚔': 'sword',
+            '⚔️': 'sword',       '🎁': 'gift',         '🔒': 'lock',
+            '🔓': 'lock-open',   '★': 'star',          '⭐': 'star',
+            '🌟': 'star-four',   '🕸': 'graph',        '🕸️': 'graph',
+            '💪': 'barbell',     '🗺': 'map-trifold',  '🗺️': 'map-trifold',
+            '▼': 'caret-down',   '▶': 'caret-right',   '↩': 'arrow-u-up-left',
+            '↺': 'arrow-counter-clockwise', '🔄': 'arrows-clockwise',
+            '🔗': 'link',        '💡': 'lightbulb',    '🌱': 'plant',
+            '📋': 'clipboard-text', '🎨': 'palette',   '📲': 'device-mobile',
+            '🏁': 'flag-checkered', '🩹': 'bandaids',  '📅': 'calendar-blank',
+            '📖': 'book-open',   '🎮': 'game-controller', '📸': 'camera',
+            '🚀': 'rocket-launch', '📥': 'tray',       '💎': 'diamond',
+            '👑': 'crown',       '💾': 'floppy-disk',  '⬆': 'upload-simple',
+            '⬇': 'download-simple', '🗑': 'trash',     '🗑️': 'trash',
+            '📊': 'chart-bar',   '👥': 'users',        '👆': 'hand-pointing',
+            '😄': 'smiley',      '🏅': 'medal',        '⚠': 'warning',
+            '⚠️': 'warning',     '◆': 'diamond',       '◈': 'diamond',
+            '◐': 'circle-half',  '●': 'circle',        '◌': 'circle-dashed',
+            '◍': 'circle-dashed', '🧵': 'needle',      '🎲': 'dice-five',
+            '🛡': 'shield',      '🛡️': 'shield',
+        };
+
+        // Resolve a stored icon value to markup. Accepts a Phosphor name
+        // ('ph-target'), a legacy emoji, or anything else — in that last case
+        // the raw value is escaped and returned so nothing a user typed is
+        // silently swallowed.
+        function renderStoredIcon(value, opts) {
+            const raw = String(value == null ? '' : value).trim();
+            if (!raw) return '';
+            if (raw.slice(0, 3) === 'ph-') return phIcon(raw.slice(3), opts);
+            const mapped = LEGACY_EMOJI_ICON[raw] || LEGACY_EMOJI_ICON[raw.replace('️', '')];
+            if (mapped) return phIcon(mapped, opts);
+            return escapeHtml(raw);
+        }
+        window.renderStoredIcon = renderStoredIcon;
+
+        // Same resolution, but returns the icon *name* rather than markup —
+        // for the canvas and SVG paths that need a glyph, not an <i>.
+        function storedIconName(value, fallback) {
+            const raw = String(value == null ? '' : value).trim();
+            if (raw.slice(0, 3) === 'ph-') return raw.slice(3);
+            return LEGACY_EMOJI_ICON[raw]
+                || LEGACY_EMOJI_ICON[raw.replace('️', '')]
+                || fallback || null;
+        }
+
+        // The glyph for an icon, for <canvas> fillText and SVG <text>. Returns
+        // '' when the icon has no entry in PH_GLYPH, and callers skip drawing
+        // rather than painting a tofu box.
+        function phGlyph(name) { return PH_GLYPH[name] || ''; }
+
+        // Status lines used to prefix their text with an emoji, which worked
+        // because they were set as textContent. An icon is markup, so it cannot
+        // ride along in the same string — this sets the two together and
+        // escapes the text itself, keeping the call sites one line each.
+        function setIconStatus(el, iconName, text) {
+            if (!el) return;
+            el.innerHTML = phIcon(iconName, { lead: true }) + escapeHtml(text);
+        }
+
+        // Canvas will silently fall back to a default font if the icon font
+        // has not loaded yet, painting garbage into a share card the user is
+        // about to post. Awaiting this before drawing avoids that. It resolves
+        // either way — a font that fails to load costs us the icons, not the
+        // card.
+        async function ensureIconFont() {
+            if (!document.fonts || !document.fonts.load) return;
+            try {
+                await Promise.all([
+                    document.fonts.load('16px "Phosphor-Bold"', ''),
+                    document.fonts.load('16px "Phosphor-Fill"', ''),
+                ]);
+            } catch (e) { /* icons degrade, the drawing still happens */ }
+        }
+
+        // ── Icon picker ───────────────────────────────────────────────────
+        // Quests and rewards used to take a free-text emoji, which let people
+        // paste anything and rendered differently on every device. They now
+        // pick from this set, stored as a 'ph-<name>' string. A curated grid,
+        // not all 1,500 icons: a searchable index of the whole family is a
+        // bigger feature than either field justifies, and these cover the
+        // things people actually name a quest or a reward after.
+        const ICON_PICKER_SET = [
+            'target', 'trophy', 'flag-checkered', 'medal', 'crown', 'star',
+            'fire', 'lightning', 'rocket-launch', 'mountains', 'path',
+            'barbell', 'person-simple-run', 'bicycle', 'heartbeat', 'bed',
+            'brain', 'book-open', 'graduation-cap', 'pencil', 'palette',
+            'music-notes', 'camera', 'game-controller', 'code',
+            'briefcase', 'chart-line-up', 'coins', 'piggy-bank', 'handshake',
+            'users', 'house', 'plant', 'sun', 'moon', 'globe-hemisphere-west',
+            'airplane-tilt', 'gift', 'shopping-bag', 'coffee', 'pizza',
+            'confetti', 'sparkle', 'diamond', 'shield', 'compass',
+        ];
+
+        // Which hidden input and which trigger button the open picker writes
+        // back to. Module-scoped rather than on window: nothing outside this
+        // flow has any business retargeting a picker mid-selection.
+        var _iconPickerTarget = null;
+
+        window.openIconPicker = function(inputId, buttonId) {
+            _iconPickerTarget = { inputId: inputId, buttonId: buttonId };
+            var input = document.getElementById(inputId);
+            var current = input ? String(input.value || '') : '';
+            var currentName = storedIconName(current, null);
+
+            var host = document.getElementById('mkIconPicker');
+            if (!host) {
+                host = document.createElement('div');
+                host.id = 'mkIconPicker';
+                host.className = 'mk-icon-picker';
+                host.addEventListener('click', function(e) {
+                    if (e.target === host) closeIconPicker();
+                });
+                document.body.appendChild(host);
+            }
+
+            host.innerHTML =
+                '<div class="mk-icon-picker-sheet" role="dialog" aria-label="Choose an icon">' +
+                  '<div class="mk-icon-picker-head">' +
+                    '<span>Choose an icon</span>' +
+                    '<button type="button" class="mk-icon-picker-close" onclick="closeIconPicker()" aria-label="Close">' +
+                      phIcon('x') + '</button>' +
+                  '</div>' +
+                  '<div class="mk-icon-picker-grid">' +
+                    ICON_PICKER_SET.map(function(name) {
+                        return '<button type="button" class="mk-icon-picker-item' +
+                                 (name === currentName ? ' is-on' : '') + '"' +
+                               ' onclick="pickIcon(\'' + name + '\')"' +
+                               ' aria-label="' + name.replace(/-/g, ' ') + '"' +
+                               ' aria-pressed="' + (name === currentName ? 'true' : 'false') + '">' +
+                                 phIcon(name) + '</button>';
+                    }).join('') +
+                  '</div>' +
+                '</div>';
+            host.classList.add('is-open');
+        };
+
+        window.pickIcon = function(name) {
+            if (!_iconPickerTarget) return closeIconPicker();
+            var input = document.getElementById(_iconPickerTarget.inputId);
+            var btn   = document.getElementById(_iconPickerTarget.buttonId);
+            if (input) input.value = 'ph-' + name;
+            if (btn) { btn.innerHTML = phIcon(name); btn.classList.remove('is-placeholder'); }
+            closeIconPicker();
+        };
+
+        window.closeIconPicker = function() {
+            var host = document.getElementById('mkIconPicker');
+            if (host) { host.classList.remove('is-open'); host.innerHTML = ''; }
+            _iconPickerTarget = null;
+        };
+
+        // Point a picker button at a stored value — a 'ph-<name>', or an emoji
+        // from before the swap, which resolves through the legacy table.
+        //
+        // `placeholder` is drawn, dimmed, when nothing is set, on the fields
+        // where the icon is optional: an empty button reads as broken, but a
+        // fallback written into the input would save an icon the user never
+        // chose. So it shows in the button and stays out of the value.
+        function setIconPickerValue(inputId, buttonId, value, fallbackName, placeholder) {
+            var input = document.getElementById(inputId);
+            var btn   = document.getElementById(buttonId);
+            var name  = storedIconName(value, fallbackName);
+            if (input) input.value = name ? 'ph-' + name : '';
+            if (!btn) return;
+            if (name) {
+                btn.innerHTML = phIcon(name);
+                btn.classList.remove('is-placeholder');
+            } else {
+                btn.innerHTML = placeholder ? phIcon(placeholder) : '';
+                btn.classList.add('is-placeholder');
+            }
+        }
+
         // ── Life Categories (for spider chart & share card) ───────────────
         window.LIFE_CATEGORIES = [
-            { id: 'body',   label: 'Body',   emoji: '⚡', color: '#e05c3a', desc: 'Health, fitness, nutrition, sleep' },
-            { id: 'mind',   label: 'Mind',   emoji: '🧠', color: '#5a7fd4', desc: 'Learning, focus, mental health, growth' },
-            { id: 'people', label: 'People', emoji: '🤝', color: '#d45a9f', desc: 'Relationships, social, community' },
-            { id: 'work',   label: 'Work',   emoji: '🔨', color: '#d4a03a', desc: 'Career, finances, projects, skills' },
-            { id: 'extra',  label: 'Extra',  emoji: '✦',  color: '#6b9e5e', desc: 'Hobbies, creativity, play, misc' },
+            { id: 'body',   label: 'Body',   icon: 'lightning', color: '#e05c3a', desc: 'Health, fitness, nutrition, sleep' },
+            { id: 'mind',   label: 'Mind',   icon: 'brain',     color: '#5a7fd4', desc: 'Learning, focus, mental health, growth' },
+            { id: 'people', label: 'People', icon: 'handshake', color: '#d45a9f', desc: 'Relationships, social, community' },
+            { id: 'work',   label: 'Work',   icon: 'hammer',    color: '#d4a03a', desc: 'Career, finances, projects, skills' },
+            { id: 'extra',  label: 'Extra',  icon: 'sparkle',   color: '#6b9e5e', desc: 'Hobbies, creativity, play, misc' },
         ];
 
         // Aggregate dimension XP by life category
@@ -340,6 +568,7 @@
 
         // ── Level-Up Share Card renderer (1080×1920 canvas → PNG blob) ────
         async function buildLevelUpCard(newLevel) {
+            await ensureIconFont();
             const W = 540, H = 960;
             const canvas = document.createElement('canvas');
             canvas.width = W; canvas.height = H;
@@ -419,8 +648,9 @@
             ctx.fillStyle=ig; ctx.fill();
             ctx.strokeStyle=rgba(uAcc,0.25); ctx.lineWidth=0.75; ctx.stroke();
             ctx.restore();
-            ctx.font='32px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
-            ctx.fillText('\uD83E\uDDE0', W/2, brandY);
+            ctx.font='30px "Phosphor-Bold"'; ctx.textAlign='center'; ctx.textBaseline='middle';
+            ctx.fillStyle=uProg;
+            ctx.fillText(phGlyph('brain'), W/2, brandY);
             ctx.textBaseline='alphabetic';
             ctx.font=sf(800,27); ctx.textAlign='center';
             const bng=ctx.createLinearGradient(W/2-110,0,W/2+110,0);
@@ -668,8 +898,13 @@
                 ctx.fillText(tName, PAD+12, curY+22);
 
                 if (ta.streak>0) {
-                    ctx.font=sf(400,12); ctx.fillStyle=uOlv;
-                    ctx.fillText('\uD83D\uDD25 '+ta.streak+'d streak', PAD+12, curY+42);
+                    // The flame is a glyph in a different family, so it and the
+                    // label are two draws — one font run cannot hold both.
+                    ctx.fillStyle=uOlv;
+                    ctx.font='12px "Phosphor-Fill"';
+                    ctx.fillText(phGlyph('fire'), PAD+12, curY+42);
+                    ctx.font=sf(400,12);
+                    ctx.fillText(ta.streak+'d streak', PAD+30, curY+42);
                 }
 
                 ctx.save(); rr(W-PAD-84,curY+10,80,26,8);
@@ -704,8 +939,9 @@
                     ctx.fillStyle=ctg; ctx.fill();
                     ctx.strokeStyle=rgba(cat.color,0.32); ctx.lineWidth=0.75; ctx.stroke();
                     ctx.restore();
-                    ctx.font='22px serif'; ctx.textAlign='left';
-                    ctx.fillText(cat.emoji, cx+10, cy+36);
+                    ctx.font='20px "Phosphor-Bold"'; ctx.textAlign='left';
+                    ctx.fillStyle=cat.color;
+                    ctx.fillText(phGlyph(cat.icon), cx+10, cy+36);
                     ctx.font=sf(600,14); ctx.fillStyle=cat.color;
                     ctx.fillText(cat.label, cx+42, cy+28);
                     ctx.font=sf(400,11); ctx.fillStyle='rgba(255,255,255,0.38)';
@@ -842,7 +1078,7 @@
                 const isIos = /iP(hone|ad|od)/.test(navigator.userAgent);
                 if (navigator.share) {
                     const shareData = { title: 'I reached Level ' + level + ' on Mindkraft!',
-                                        text: 'Gamify your life at mindkraft.life 🎮' };
+                                        text: 'Gamify your life at mindkraft.life' };
                     // Try with file first, then fall back to text-only — all synchronous setup
                     const fileObj = new File([blob], 'mindkraft-level-' + level + '.png', { type: 'image/png' });
                     let canFile = false;
@@ -851,7 +1087,7 @@
                         ? navigator.share({ ...shareData, files: [fileObj] })
                         : navigator.share(shareData);
                     sharePromise.then(() => {
-                        showToast('Shared! 🎉', 'olive');
+                        showToast('Shared!', 'olive', null, 'confetti');
                         overlay.remove();
                         URL.revokeObjectURL(objectUrl);
                     }).catch(e => {
@@ -863,7 +1099,7 @@
                     a.href = objectUrl;
                     a.download = 'mindkraft-level-' + level + '.png';
                     a.click();
-                    showToast('Card downloaded! 🎉', 'blue');
+                    showToast('Card downloaded!', 'blue', null, 'confetti');
                 }
             };
 
@@ -889,13 +1125,13 @@
                 const isIos = /iP(hone|ad|od)/.test(navigator.userAgent);
                 if (isIos) {
                     window.open(objectUrl, '_blank');
-                    showToast('Image opened — press and hold to save to Photos 📸', 'blue');
+                    showToast('Image opened — press and hold to save to Photos', 'blue', null, 'camera');
                 } else {
                     const a = document.createElement('a');
                     a.href = objectUrl;
                     a.download = 'mindkraft-level-' + level + '.png';
                     a.click();
-                    showToast('Saved! 🎉', 'blue');
+                    showToast('Saved!', 'blue', null, 'confetti');
                 }
             };
 
@@ -1118,7 +1354,7 @@
                     scheduleReminder();
                     updateDashboard();
                     updateProfileAvatar();
-                    showToast('⚠️ Could not reach server — offline mode', 'olive');
+                    showToast('Could not reach server — offline mode', 'olive', null, 'warning');
                 } else {
                     authContainer.style.display = 'flex';
                     initAuthScreen();
@@ -1215,7 +1451,7 @@
             }
             el.innerHTML =
                 '<div class="tutorial-card" style="max-width:420px;">' +
-                  '<div class="tutorial-emoji">⚠️</div>' +
+                  '<div class="tutorial-emoji">' + phIcon('warning', { block: true }) + '</div>' +
                   '<h2 class="tutorial-title">Couldn\'t load your data</h2>' +
                   '<p class="tutorial-body">' +
                     'Your account is still there — this device just couldn\'t read it, so the app ' +
@@ -1296,7 +1532,7 @@
                     try {
                         userDoc = await getDocFromCache(userDocRef);
                         console.log('Loaded user data from local Firestore cache');
-                        showToast('⚠️ Offline — showing saved data', 'olive');
+                        showToast('Offline — showing saved data', 'olive', null, 'warning');
                     } catch (cacheErr) {
                         // Neither the network nor the local cache could answer.
                         // We do NOT know whether this account has data.
@@ -1573,10 +1809,10 @@
 
         // ── Activity Sort & Filter ────────────────────────────────────────
         const SORT_OPTIONS = [
-            { id: 'by-routine',  icon: '🎯', label: 'By Routine' },
-            { id: 'smart',       icon: '⚡', label: "Today's Focus" },
-            { id: 'grouped',     icon: '📋', label: 'Grouped by frequency' },
-            { id: 'streak-high', icon: '🔥', label: 'Longest streak first' },
+            { id: 'by-routine',  icon: 'target',          label: 'By Routine' },
+            { id: 'smart',       icon: 'lightning',       label: "Today's Focus" },
+            { id: 'grouped',     icon: 'clipboard-text',  label: 'Grouped by frequency' },
+            { id: 'streak-high', icon: 'fire',            label: 'Longest streak first' },
         ];
 
         // Smart default — picks based on activity count.
@@ -1636,7 +1872,7 @@
             if (!container) return;
             container.innerHTML = SORT_OPTIONS.map(o => `
                 <button class="filter-option ${current === o.id ? 'selected' : ''}" onclick="applyActivitySort('${o.id}')">
-                    <span class="fo-icon">${o.icon}</span>
+                    <span class="fo-icon">${phIcon(o.icon)}</span>
                     ${o.label}
                     ${current === o.id ? '<svg style="margin-left:auto;flex-shrink:0;" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
                 </button>
@@ -1662,7 +1898,7 @@
             const btn = document.getElementById('filterBtn');
             if (panel) panel.style.display = 'none';
             if (btn) btn.classList.remove('active');
-            showToast(`✓ "${SORT_OPTIONS.find(o=>o.id===sort)?.label}" set as default`, 'olive');
+            showToast(`"${SORT_OPTIONS.find(o=>o.id===sort)?.label}" set as default`, 'olive', null, 'check');
         };
 
         // Close filter panel when clicking outside
@@ -1700,10 +1936,10 @@
             if (allActivities.length === 0) {
                 container.innerHTML = `
                     <div class="empty-state" style="padding: 60px 20px;">
-                        <div class="empty-state-icon">🚀</div>
+                        <div class="empty-state-icon"><i class="ph-bold ph-rocket-launch mk-ico-block"></i></div>
                         <p style="font-size:16px;font-weight:600;color:var(--color-text-primary);margin-bottom:8px;">Ready to level up your life?</p>
                         <p style="margin-bottom:24px;">Set up your first Dimension and Path, then add activities to start earning XP.</p>
-                        <button class="cta-button" onclick="switchSubTab('activities','categories')">🎯 &nbsp;Set up Dimensions</button>
+                        <button class="cta-button" onclick="switchSubTab('activities','categories')"><i class="ph-bold ph-target mk-ico-lead"></i>Set up Dimensions</button>
                     </div>
                 `;
                 return;
@@ -1808,8 +2044,8 @@
                 if (window.activityGroupExpanded['smart_notnow'] === undefined) window.activityGroupExpanded['smart_notnow'] = false;
 
                 var smartGroups = [
-                    { key: 'smart_todo',   label: '⚡ To Do',    activities: toDo },
-                    { key: 'smart_done',   label: '✓ Done',      activities: doneTd },
+                    { key: 'smart_todo',   label: phIcon('lightning', { lead: true }) + 'To Do', activities: toDo },
+                    { key: 'smart_done',   label: phIcon('check', { lead: true }) + 'Done',      activities: doneTd },
                     { key: 'smart_notnow', label: '⏸ Not Now',   activities: notNow },
                 ].filter(function(g) { return g.activities.length > 0; });
 
@@ -1819,7 +2055,7 @@
                         : window.activityGroupExpanded[g.key] === true;
                     return '<div class="act-group" data-group="' + g.key + '">'
                         + '<div class="act-group-header" onclick="toggleActivityGroup(\'' + g.key + '\')">'
-                        + '<span class="collapse-icon ' + (isExpanded ? 'expanded' : '') + '">▼</span>'
+                        + '<span class="collapse-icon ' + (isExpanded ? 'expanded' : '') + '"><i class="ph-bold ph-caret-down"></i></span>'
                         + '<span class="act-group-label">' + g.label + '</span>'
                         + '<span class="act-group-count">' + g.activities.length + '</span>'
                         + '</div>'
@@ -1844,7 +2080,7 @@
                     return `
                     <div class="act-group" data-group="${g.key}">
                         <div class="act-group-header" onclick="toggleActivityGroup('${g.key}')">
-                            <span class="collapse-icon ${isExpanded ? 'expanded' : ''}">▼</span>
+                            <span class="collapse-icon ${isExpanded ? 'expanded' : ''}"><i class="ph-bold ph-caret-down"></i></span>
                             <span class="act-group-label">${g.label}</span>
                             <span class="act-group-count">${g.activities.length}</span>
                         </div>
@@ -1863,7 +2099,7 @@
                 if (getGroups().length === 0) {
                     container.innerHTML =
                         '<div class="routine-empty">'
-                        + '<div class="routine-empty-emoji">🎯</div>'
+                        + '<div class="routine-empty-emoji"><i class="ph-bold ph-target mk-ico-block"></i></div>'
                         + '<div class="routine-empty-title">Group activities into routines</div>'
                         + '<div class="routine-empty-sub">Bundle activities like meditation, stretch &amp; workout into a "Morning Routine" so the right things bubble to the top at the right time of day.</div>'
                         + '<button class="btn-primary routine-empty-cta" onclick="openGroupModal()">Create your first group</button>'
@@ -1963,7 +2199,7 @@
                         + (acts.length ? groupBodyAttrs(isExpanded) : '') + '>'
                         + (acts.length
                             ? groupBodyHtml(key, acts, isExpanded)
-                            : '<div class="routine-empty-inline">No activities in this group yet. <a href="#" onclick="event.preventDefault();openGroupModal(\'' + g.id + '\')">Add some →</a></div>')
+                            : '<div class="routine-empty-inline">No activities in this group yet. <a href="#" onclick="event.preventDefault();openGroupModal(\'' + g.id + '\')">Add some <i class="ph-bold ph-arrow-right"></i></a></div>')
                         + '</div></div>';
                 });
 
@@ -2134,9 +2370,9 @@
                 const shieldCritical = currentStreak > 0 && shieldsUsed > 0 && shieldsLeft === 0;
                 if (currentStreak > 0 && shieldsUsed > 0) {
                     if (shieldsLeft === 0) {
-                        shieldBadge = '<span class="activity-badge badge-shield-warn" title="No shields left — next miss breaks your streak!">🛡 0 left!</span>';
+                        shieldBadge = '<span class="activity-badge badge-shield-warn" title="No shields left — next miss breaks your streak!"><i class="ph-fill ph-shield-warning mk-ico-lead"></i>0 left!</span>';
                     } else {
-                        shieldBadge = '<span class="activity-badge badge-shield" title="' + shieldsLeft + ' shield' + (shieldsLeft !== 1 ? 's' : '') + ' remaining">' + shieldsLeft + ' 🛡 left</span>';
+                        shieldBadge = '<span class="activity-badge badge-shield" title="' + shieldsLeft + ' shield' + (shieldsLeft !== 1 ? 's' : '') + ' remaining">' + shieldsLeft + ' <i class="ph-fill ph-shield mk-ico-lead"></i>left</span>';
                     }
                 }
 
@@ -2206,10 +2442,10 @@
                 detailBadges.push(`<span class="activity-badge badge-frequency">${activity.dimensionName} › ${activity.pathName}</span>`);
                 detailBadges.push(`<span class="activity-badge ${activity.isNegative ? 'badge-negative' : 'badge-xp'}">${xpBadgeLabel}</span>`);
                 if (shieldBadge) detailBadges.push(shieldBadge);
-                if (atRisk) detailBadges.push('<span class="activity-badge badge-at-risk">⚠ at risk</span>');
-                if (showPenaltyTag) detailBadges.push(`<span class="activity-badge badge-penalty">⚡ −${penaltyDays}d penalty</span>`);
+                if (atRisk) detailBadges.push('<span class="activity-badge badge-at-risk"><i class="ph-bold ph-warning mk-ico-lead"></i>at risk</span>');
+                if (showPenaltyTag) detailBadges.push(`<span class="activity-badge badge-penalty"><i class="ph-bold ph-lightning mk-ico-lead"></i>−${penaltyDays}d penalty</span>`);
                 if (counterBadge) detailBadges.push(counterBadge);
-                if (isSkipMode && !completedToday) detailBadges.push('<span class="activity-badge badge-penalty" style="opacity:0.7;">⚡ Skip-penalty</span>');
+                if (isSkipMode && !completedToday) detailBadges.push('<span class="activity-badge badge-penalty" style="opacity:0.7;"><i class="ph-bold ph-lightning mk-ico-lead"></i>Skip-penalty</span>');
 
                 // Streak chip — coral (celebratory)
                 const streakChip = currentStreak > 0
@@ -2654,11 +2890,11 @@
 
                 // Badge HTML
                 var badges = '';
-                if (currentStreak > 0 && shieldsUsed > 0) badges += '<span class="gc-badge gc-badge-shield">' + shieldsLeft + ' 🛡</span>';
+                if (currentStreak > 0 && shieldsUsed > 0) badges += '<span class="gc-badge gc-badge-shield">' + shieldsLeft + ' <i class="ph-fill ph-shield"></i></span>';
                 if (activity.frequency === 'custom') badges += '<span class="gc-badge gc-badge-counter">' + activity._cycleCompletions + '/' + (activity.timesPerCycle||1) + '</span>';
-                if (atRisk) badges += '<span class="gc-badge gc-badge-alert">⚠</span>';
-                if (showPenaltyTag) badges += '<span class="gc-badge gc-badge-skip">⚡' + penaltyDays + 'd</span>';
-                if (isSkipMode && !completedToday) badges += '<span class="gc-badge gc-badge-skip">⚡skip</span>';
+                if (atRisk) badges += '<span class="gc-badge gc-badge-alert"><i class="ph-bold ph-warning"></i></span>';
+                if (showPenaltyTag) badges += '<span class="gc-badge gc-badge-skip"><i class="ph-bold ph-lightning"></i>' + penaltyDays + 'd</span>';
+                if (isSkipMode && !completedToday) badges += '<span class="gc-badge gc-badge-skip"><i class="ph-bold ph-lightning"></i>skip</span>';
                 if (allowMulti && todayCount > 0) badges += '<span class="gc-badge gc-badge-multi">×' + todayCount + '</span>';
 
                 // XP badge label (full, for type 2)
@@ -2697,9 +2933,9 @@
 
                 // Mini alert badges for compact types (3 and 5): only at-risk + multi-count + shield-0
                 var miniAlerts = '';
-                if (atRisk) miniAlerts += '<span class="gc-badge gc-badge-alert">⚠</span>';
+                if (atRisk) miniAlerts += '<span class="gc-badge gc-badge-alert"><i class="ph-bold ph-warning"></i></span>';
                 if (allowMulti && todayCount > 0) miniAlerts += '<span class="gc-badge gc-badge-multi">×' + todayCount + '</span>';
-                if (currentStreak > 0 && shieldsLeft === 0 && shieldsUsed > 0) miniAlerts += '<span class="gc-badge gc-badge-skip">0 🛡</span>';
+                if (currentStreak > 0 && shieldsLeft === 0 && shieldsUsed > 0) miniAlerts += '<span class="gc-badge gc-badge-skip">0 <i class="ph-fill ph-shield"></i></span>';
 
                 // Full info badges for richer types (4, 6) — same content as `badges`
                 // but include path breadcrumb.
@@ -2711,12 +2947,12 @@
                     var fullBadges = '';
                     fullBadges += '<span class="gc-badge gc-badge-counter" style="background:rgba(255,255,255,0.07);color:var(--color-text-secondary);">' + escapeHtml(activity.dimensionName) + ' › ' + escapeHtml(activity.pathName) + '</span>';
                     fullBadges += '<span class="gc-badge ' + (activity.isNegative ? 'gc-badge-alert' : 'gc-badge-multi') + '">' + xpBadgeLabel + '</span>';
-                    if (currentStreak > 0) fullBadges += '<span class="gc-badge gc-badge-challenge">🔥 ' + currentStreak + ' streak</span>';
-                    if (currentStreak > 0 && shieldsUsed > 0) fullBadges += '<span class="gc-badge gc-badge-shield">' + shieldsLeft + ' 🛡 left</span>';
+                    if (currentStreak > 0) fullBadges += '<span class="gc-badge gc-badge-challenge"><i class="ph-fill ph-fire mk-ico-lead"></i>' + currentStreak + ' streak</span>';
+                    if (currentStreak > 0 && shieldsUsed > 0) fullBadges += '<span class="gc-badge gc-badge-shield">' + shieldsLeft + ' <i class="ph-fill ph-shield mk-ico-lead"></i>left</span>';
                     if (activity.frequency === 'custom') fullBadges += '<span class="gc-badge gc-badge-counter">' + activity._cycleCompletions + '/' + (activity.timesPerCycle||1) + ' cycle</span>';
-                    if (atRisk) fullBadges += '<span class="gc-badge gc-badge-alert">⚠ at risk</span>';
-                    if (showPenaltyTag) fullBadges += '<span class="gc-badge gc-badge-skip">⚡ −' + penaltyDays + 'd penalty</span>';
-                    if (isSkipMode && !completedToday) fullBadges += '<span class="gc-badge gc-badge-skip">⚡ skip-penalty</span>';
+                    if (atRisk) fullBadges += '<span class="gc-badge gc-badge-alert"><i class="ph-bold ph-warning mk-ico-lead"></i>at risk</span>';
+                    if (showPenaltyTag) fullBadges += '<span class="gc-badge gc-badge-skip"><i class="ph-bold ph-lightning mk-ico-lead"></i>−' + penaltyDays + 'd penalty</span>';
+                    if (isSkipMode && !completedToday) fullBadges += '<span class="gc-badge gc-badge-skip"><i class="ph-bold ph-lightning mk-ico-lead"></i>skip-penalty</span>';
                     if (allowMulti && todayCount > 0) fullBadges += '<span class="gc-badge gc-badge-multi">×' + todayCount + ' today</span>';
                     bodyContent = '<div class="gc-name">' + escapeHtml(activity.name) + '</div>'
                         + '<div class="gc-badges" style="margin-top:5px;">' + fullBadges + '</div>';
@@ -2725,7 +2961,7 @@
                     bodyContent = '<div class="gc-name">' + escapeHtml(activity.name) + '</div>'
                         + '<div class="gc-xp-row">'
                         + '<span class="gc-xp' + (activity.isNegative ? ' gc-xp-neg' : '') + '">' + xpText + ' XP</span>'
-                        + (currentStreak > 0 ? '<span class="gc-streak">🔥 ' + currentStreak + '</span>' : '')
+                        + (currentStreak > 0 ? '<span class="gc-streak"><i class="ph-fill ph-fire mk-ico-lead"></i>' + currentStreak + '</span>' : '')
                         + miniAlerts
                         + '</div>';
                 } else if (type === 1) {
@@ -2739,7 +2975,7 @@
                     bodyContent = '<div class="gc-name">' + escapeHtml(activity.name) + '</div>'
                         + '<div class="gc-xp-row">'
                         + '<span class="gc-xp' + (activity.isNegative ? ' gc-xp-neg' : '') + '">' + xpText + ' XP</span>'
-                        + (currentStreak > 0 ? '<span class="gc-streak">🔥 ' + currentStreak + '</span>' : '')
+                        + (currentStreak > 0 ? '<span class="gc-streak"><i class="ph-fill ph-fire mk-ico-lead"></i>' + currentStreak + '</span>' : '')
                         + miniAlerts
                         + '</div>';
                 } else {
@@ -2748,7 +2984,7 @@
                         + richInfo
                         + '<div class="gc-xp-row">'
                         + '<span class="gc-xp' + (activity.isNegative ? ' gc-xp-neg' : '') + '">' + xpText + ' XP</span>'
-                        + (currentStreak > 0 ? '<span class="gc-streak">🔥 ' + currentStreak + '</span>' : '')
+                        + (currentStreak > 0 ? '<span class="gc-streak"><i class="ph-fill ph-fire mk-ico-lead"></i>' + currentStreak + '</span>' : '')
                         + '</div>'
                         + (badges ? '<div class="gc-badges">' + badges + '</div>' : '');
                 }
@@ -2831,7 +3067,7 @@
                     + (acts.length ? groupBodyAttrs(isExpanded) : '') + '>'
                     + (acts.length
                         ? groupBodyHtml(key, acts, isExpanded, renderGridSection)
-                        : '<div class="routine-empty-inline">No activities in this group yet. <a href="#" onclick="event.preventDefault();openGroupModal(\'' + gid + '\')">Add some →</a></div>')
+                        : '<div class="routine-empty-inline">No activities in this group yet. <a href="#" onclick="event.preventDefault();openGroupModal(\'' + gid + '\')">Add some <i class="ph-bold ph-arrow-right"></i></a></div>')
                     + '</div></div>';
             });
 
@@ -2917,16 +3153,16 @@
             var badgesHtml = '';
             badgesHtml += '<span class="activity-badge badge-frequency">' + escapeHtml(activity.dimensionName) + ' › ' + escapeHtml(activity.pathName) + '</span>';
             badgesHtml += '<span class="activity-badge ' + (activity.isNegative ? 'badge-negative' : 'badge-xp') + '">' + xpBadgeLabel + '</span>';
-            if (streak > 0) badgesHtml += '<span class="activity-badge" style="background:rgba(224,160,58,0.12);color:#d4a82a;border:1px solid rgba(224,160,58,0.3);">🔥 ' + streak + ' day streak</span>';
+            if (streak > 0) badgesHtml += '<span class="activity-badge" style="background:rgba(224,160,58,0.12);color:#d4a82a;border:1px solid rgba(224,160,58,0.3);"><i class="ph-fill ph-fire mk-ico-lead"></i>' + streak + ' day streak</span>';
             if (streak > 0 && shieldsUsed > 0) {
-                if (shieldsLeft === 0) badgesHtml += '<span class="activity-badge badge-shield-warn">🛡 0 left!</span>';
-                else badgesHtml += '<span class="activity-badge badge-shield">' + shieldsLeft + ' 🛡 left</span>';
+                if (shieldsLeft === 0) badgesHtml += '<span class="activity-badge badge-shield-warn"><i class="ph-fill ph-shield-warning mk-ico-lead"></i>0 left!</span>';
+                else badgesHtml += '<span class="activity-badge badge-shield">' + shieldsLeft + ' <i class="ph-fill ph-shield mk-ico-lead"></i>left</span>';
             }
-            if (atRisk) badgesHtml += '<span class="activity-badge badge-at-risk">⚠ at risk</span>';
-            if (showPenaltyTag) badgesHtml += '<span class="activity-badge badge-penalty">⚡ −' + penaltyDays + 'd penalty</span>';
+            if (atRisk) badgesHtml += '<span class="activity-badge badge-at-risk"><i class="ph-bold ph-warning mk-ico-lead"></i>at risk</span>';
+            if (showPenaltyTag) badgesHtml += '<span class="activity-badge badge-penalty"><i class="ph-bold ph-lightning mk-ico-lead"></i>−' + penaltyDays + 'd penalty</span>';
             if (activity.frequency === 'custom') badgesHtml += '<span class="activity-badge badge-counter">' + (activity._cycleCompletions||0) + '/' + (activity.timesPerCycle||1) + ' cycle</span>';
             if (allowMulti && todayCount > 0) badgesHtml += '<span class="activity-badge badge-counter">×' + todayCount + ' today</span>';
-            if (isSkipMode && !completedToday) badgesHtml += '<span class="activity-badge badge-penalty" style="opacity:0.7;">⚡ Skip-penalty</span>';
+            if (isSkipMode && !completedToday) badgesHtml += '<span class="activity-badge badge-penalty" style="opacity:0.7;"><i class="ph-bold ph-lightning mk-ico-lead"></i>Skip-penalty</span>';
             badgesHtml += '<span class="activity-badge" style="background:rgba(255,255,255,0.05);color:var(--color-text-secondary);">' + activity.frequency + '</span>';
 
             var overlay = document.getElementById('gridCardOverlay');
@@ -2961,10 +3197,10 @@
                 // Actions
                 + '<div class="grid-overlay-actions">'
                 + (!notScheduled && canComplete && !completedToday
-                    ? '<button class="grid-overlay-btn complete" style="background:' + dimHex + ';" onclick="completeActivityById(\'' + activityId + '\');closeGridCardOverlay();">✓ Complete</button>'
-                    : (completedToday ? '<button class="grid-overlay-btn" style="opacity:0.45;cursor:default;">✓ Done today</button>' : ''))
+                    ? '<button class="grid-overlay-btn complete" style="background:' + dimHex + ';" onclick="completeActivityById(\'' + activityId + '\');closeGridCardOverlay();"><i class="ph-bold ph-check mk-ico-lead"></i>Complete</button>'
+                    : (completedToday ? '<button class="grid-overlay-btn" style="opacity:0.45;cursor:default;"><i class="ph-bold ph-check mk-ico-lead"></i>Done today</button>' : ''))
                 + (todayCount > 0
-                    ? '<button class="grid-overlay-btn undo" onclick="undoActivityById(\'' + activityId + '\');closeGridCardOverlay();">↩ Undo</button>'
+                    ? '<button class="grid-overlay-btn undo" onclick="undoActivityById(\'' + activityId + '\');closeGridCardOverlay();"><i class="ph-bold ph-arrow-u-up-left mk-ico-lead"></i>Undo</button>'
                     : '')
                 + '</div>';
 
@@ -3106,7 +3342,7 @@
             if (dimensions.length === 0 && uncActs.length === 0) {
                 container.innerHTML = `
                     <div class="empty-state">
-                        <div class="empty-state-icon">🎯</div>
+                        <div class="empty-state-icon"><i class="ph-bold ph-target mk-ico-block"></i></div>
                         <p>No dimensions yet. Tap <strong>+ Add Dimension</strong> above to create your first life area.</p>
                     </div>
                 `;
@@ -3157,7 +3393,7 @@
                     <div class="cat-dim-head" style="cursor:default;">
                         <span style="width:14px;flex-shrink:0;"></span>
                         <div class="cat-dim-textcol">
-                            <div class="cat-dim-name">📥 Uncategorized</div>
+                            <div class="cat-dim-name"><i class="ph-bold ph-tray mk-ico-lead"></i>Uncategorized</div>
                             <div class="cat-dim-meta">${uncActs.length} ${uncActs.length === 1 ? 'activity' : 'activities'} · assign a Dimension &amp; Path to organise</div>
                         </div>
                     </div>
@@ -3310,7 +3546,7 @@
                         <div class="cat-act-meta">
                             <span class="activity-badge badge-frequency">${freqText}${customNote}</span>
                             <span class="activity-badge ${activity.isNegative ? 'badge-negative' : 'badge-xp'}">${activity.isNegative ? '−' : '+'}${activity.baseXP} XP</span>
-                            ${activity.streak > 0 ? `<span class="activity-badge badge-streak">🔥 ${activity.streak}</span>` : ''}
+                            ${activity.streak > 0 ? `<span class="activity-badge badge-streak"><i class="ph-fill ph-fire mk-ico-lead"></i>${activity.streak}</span>` : ''}
                             ${cycleChip}
                             ${multiCount}
                         </div>
@@ -5154,7 +5390,7 @@
             try { gritOnRetroComplete(foundActivity, dateStr); } catch (e) { console.warn('Grit retro hook failed', e); }
             if (typeof renderHistoryEdit === 'function') renderHistoryEdit();
             renderActivityHistory(true);
-            showToast(`✓ Logged ${foundActivity.name} for ${dateStr} (+${xp} XP)`, 'blue');
+            showToast(`Logged ${foundActivity.name} for ${dateStr} (+${xp} XP)`, 'blue', null, 'check');
         };
 
         window.retroactiveDelete = async function(activityId, entryTimestamp) {
@@ -5213,7 +5449,7 @@
             }
             if (typeof renderHistoryEdit === 'function') renderHistoryEdit();
             renderActivityHistory(true);
-            showToast(`↩ Removed entry for ${entryDateStr}`, 'blue');
+            showToast(`Removed entry for ${entryDateStr}`, 'blue', null, 'arrow-u-up-left');
         };
 
         // ── End Retroactive Write Functions ──────────────────────────────
@@ -5223,7 +5459,7 @@
             // undo reverses it, so message should reflect what was removed
             const isNegAct = xp < 0; // negative activity was undone → we restored XP
             _showToastPill({
-                icon: '↩',
+                icon: phIcon('arrow-u-up-left'),
                 label: isNegAct ? `+${Math.abs(xp)} XP restored` : `${Math.abs(xp)} XP removed`,
                 tone: 'undo',
             });
@@ -5232,12 +5468,10 @@
         function showXPToast(xp, streak, multiplier) {
             const isPos = xp > 0;
             let label = isPos ? `+${Math.abs(xp)} XP` : `−${Math.abs(xp)} XP`;
-            // Use SVG icons inline so they pick up the tone color via
-            // `currentColor`, matching the rest of the design system.
-            // Bolt icon for positive XP, heartbreak fallback for negative.
-            const ICON_BOLT  = '<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M13 2 4.5 13.5h6L10 22l9-13.5h-6L13 2z"/></svg>';
-            const ICON_HEART = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.29 1.51 4.04 3 5.5l7 7Z"/><polyline points="12 6 11 15 13 13"/></svg>';
-            const icon = isPos ? ICON_BOLT : ICON_HEART;
+            // Icons inherit the tone colour through `currentColor`, same as
+            // the rest of the design system. A bolt for XP earned, a broken
+            // heart for XP lost.
+            const icon = phIcon(isPos ? 'lightning' : 'heart-break', { weight: 'fill' });
             if (isPos && streak > 1) { label += ` · ×${streak}`; }
             if (isPos && multiplier > 1) { label += ` · ${multiplier}× boost`; }
             _showToastPill({
@@ -5398,7 +5632,7 @@
 
                 const emoji = document.createElement('div');
                 emoji.className = 'level-up-emoji';
-                emoji.textContent = '🎉';
+                emoji.innerHTML = phIcon('confetti', { weight: 'fill', block: true });
 
                 const headline = document.createElement('div');
                 headline.className = 'level-up-headline';
@@ -5535,18 +5769,18 @@
                 const isUnlocked = lvl < currentLevel;
                 const isCurrent = lvl === currentLevel;
                 const nodeClass = isUnlocked ? 'unlocked' : isCurrent ? 'current' : 'future';
-                const statusLabel = isUnlocked ? '✓ Unlocked' : isCurrent ? 'Current' : 'Upcoming';
+                const statusLabel = isUnlocked ? phIcon('check', { lead: true }) + 'Unlocked' : isCurrent ? 'Current' : 'Upcoming';
 
                 const rewardContent = reward
-                    ? `<div class="pf-reward-title">${reward.icon ? escapeHtml(reward.icon) + ' &nbsp;' : ''}${escapeHtml(reward.title)}</div>
+                    ? `<div class="pf-reward-title">${reward.icon ? renderStoredIcon(reward.icon) + ' &nbsp;' : ''}${escapeHtml(reward.title)}</div>
                        ${reward.description ? `<div class="pf-reward-desc">${escapeHtml(reward.description)}</div>` : ''}
                        <div class="pf-reward-actions">
-                           ${reward.link && isUnlocked ? `<a href="${escapeHtml(reward.link)}" target="_blank" rel="noopener" class="pf-reward-action pf-reward-action-claim">🎁 Claim Reward</a>` : ''}
+                           ${reward.link && isUnlocked ? `<a href="${escapeHtml(reward.link)}" target="_blank" rel="noopener" class="pf-reward-action pf-reward-action-claim">${phIcon('gift', { weight: 'fill', lead: true })}Claim Reward</a>` : ''}
                            <button class="pf-reward-action" onclick="openRewardModal(${lvl})">Edit</button>
                            <button class="pf-reward-action pf-reward-action-danger" onclick="deleteReward(${lvl})" title="Delete reward">Delete</button>
                        </div>`
                     : lvl === 100
-                    ? `<div class="pf-reward-title" style="filter: blur(6px); user-select:none; pointer-events:none;">🌟 &nbsp;A secret message awaits you at Level 100!</div>
+                    ? `<div class="pf-reward-title" style="filter: blur(6px); user-select:none; pointer-events:none;">${phIcon('star-four', { weight: 'fill' })} &nbsp;A secret message awaits you at Level 100!</div>
                        <div class="pf-reward-desc" style="margin-top:6px;font-style:italic;">Reach Level 100 to reveal your reward.</div>`
                     : `<div class="pf-reward-title pf-reward-title-empty">No reward set yet</div>
                        <div class="pf-reward-actions">
@@ -5603,7 +5837,8 @@
             document.getElementById('rewardTitle').value = existing ? existing.title : '';
             document.getElementById('rewardDescription').value = existing ? (existing.description || '') : '';
             document.getElementById('rewardLink').value = existing ? (existing.link || '') : '';
-            document.getElementById('rewardIcon').value = existing ? (existing.icon || '') : '';
+            setIconPickerValue('rewardIcon', 'rewardIconBtn',
+                existing ? existing.icon : null, null, 'gift');
             document.getElementById('rewardModal').classList.add('active');
         };
 
@@ -5650,8 +5885,8 @@
 
         function showRewardUnlock(level) {
             if (level === 100) {
-                document.getElementById('rewardUnlockIcon').textContent = '🌟';
-                document.getElementById('rewardUnlockLevel').textContent = '🎉 Level 100 — Legendary!';
+                document.getElementById('rewardUnlockIcon').innerHTML = phIcon('star-four', { weight: 'fill', block: true });
+                document.getElementById('rewardUnlockLevel').textContent = 'Level 100 — Legendary!';
                 document.getElementById('rewardUnlockTitle').textContent = 'You did it!';
                 document.getElementById('rewardUnlockDesc').textContent = 'Amazing! You\'ve finally reached level 100! Settle down, breathe. And take a moment to look back at the life you\'ve created!';
                 document.getElementById('rewardUnlockOverlay').style.display = 'flex';
@@ -5659,12 +5894,13 @@
             }
             const reward = (window.userData.rewards || {})[level];
             if (!reward) return;
-            document.getElementById('rewardUnlockIcon').textContent = reward.icon || '🎁';
-            document.getElementById('rewardUnlockLevel').textContent = `🎉 Level ${level} Unlocked!`;
+            document.getElementById('rewardUnlockIcon').innerHTML =
+                renderStoredIcon(reward.icon, { weight: 'fill', block: true }) || phIcon('gift', { weight: 'fill', block: true });
+            document.getElementById('rewardUnlockLevel').textContent = `Level ${level} Unlocked!`;
             document.getElementById('rewardUnlockTitle').textContent = reward.title;
             document.getElementById('rewardUnlockDesc').textContent = reward.description || '';
             if (reward.link) {
-                document.getElementById('rewardUnlockDesc').innerHTML += `<br><a href="${escapeHtml(reward.link)}" target="_blank" rel="noopener" style="color:var(--color-accent-blue);">🔗 Open link</a>`;
+                document.getElementById('rewardUnlockDesc').innerHTML += `<br><a href="${escapeHtml(reward.link)}" target="_blank" rel="noopener" style="color:var(--color-accent-blue);">${phIcon('link', { lead: true })}Open link</a>`;
             }
             document.getElementById('rewardUnlockOverlay').style.display = 'flex';
         }
@@ -5735,7 +5971,7 @@
 
         function showDimLevelUpToast(dimName, level) {
             _showToastPill({
-                icon: '🗺️',
+                icon: phIcon('map-trifold', { weight: 'fill' }),
                 label: `${escapeHtml(dimName)} reached Dim Level ${level}!`,
                 tone: 'streak',
             });
@@ -5744,13 +5980,14 @@
         function showDimRewardUnlock(dim, level) {
             const reward = (dim.dimRewards || {})[level];
             if (!reward) return;
-            document.getElementById('dimRewardUnlockIcon').textContent  = reward.icon || '🗺️';
-            document.getElementById('dimRewardUnlockLevel').textContent = `🎉 ${escapeHtml(dim.name)} — Level ${level}!`;
+            document.getElementById('dimRewardUnlockIcon').innerHTML =
+                renderStoredIcon(reward.icon, { weight: 'fill', block: true }) || phIcon('map-trifold', { weight: 'fill', block: true });
+            document.getElementById('dimRewardUnlockLevel').textContent = `${dim.name} — Level ${level}!`;
             document.getElementById('dimRewardUnlockTitle').textContent = reward.title;
             document.getElementById('dimRewardUnlockDesc').textContent  = reward.description || '';
             const descEl = document.getElementById('dimRewardUnlockDesc');
             if (reward.link) {
-                descEl.innerHTML += ` <a href="${escapeHtml(reward.link)}" target="_blank" rel="noopener" style="color:var(--color-accent-blue);">🔗 Open link</a>`;
+                descEl.innerHTML += ` <a href="${escapeHtml(reward.link)}" target="_blank" rel="noopener" style="color:var(--color-accent-blue);">${phIcon('link', { lead: true })}Open link</a>`;
             }
             document.getElementById('dimRewardUnlockOverlay').style.display = 'flex';
         }
@@ -5827,13 +6064,13 @@
                 var isUnlocked = lvl < currentLevel;
                 var isCurrent  = lvl === currentLevel;
                 var nodeClass  = isUnlocked ? 'unlocked' : isCurrent ? 'current' : 'future';
-                var statusLabel = isUnlocked ? '\u2713 Unlocked' : isCurrent ? 'Current' : 'Upcoming';
+                var statusLabel = isUnlocked ? phIcon('check', { lead: true }) + 'Unlocked' : isCurrent ? 'Current' : 'Upcoming';
 
                 var rewardContent;
                 if (reward) {
-                    var iconPart = reward.icon ? escapeHtml(reward.icon) + ' &nbsp;' : '';
+                    var iconPart = reward.icon ? renderStoredIcon(reward.icon) + ' &nbsp;' : '';
                     var descPart = reward.description ? '<div class="pf-reward-desc">' + escapeHtml(reward.description) + '</div>' : '';
-                    var linkPart = (reward.link && isUnlocked) ? '<a href="' + escapeHtml(reward.link) + '" target="_blank" rel="noopener" class="pf-reward-action pf-reward-action-claim">\ud83c\udf81 Claim Reward</a>' : '';
+                    var linkPart = (reward.link && isUnlocked) ? '<a href="' + escapeHtml(reward.link) + '" target="_blank" rel="noopener" class="pf-reward-action pf-reward-action-claim">' + phIcon('gift', { weight: 'fill', lead: true }) + 'Claim Reward</a>' : '';
                     var editPart = '<button class="pf-reward-action" onclick="openDimRewardModal(\'' + escapeHtml(dimId) + '\',' + lvl + ')">Edit</button>'
                         + '<button class="pf-reward-action pf-reward-action-danger" onclick="deleteDimReward(\'' + escapeHtml(dimId) + '\',' + lvl + ')" title="Delete reward">Delete</button>';
                     rewardContent = '<div class="pf-reward-title">' + iconPart + escapeHtml(reward.title) + '</div>'
@@ -5870,7 +6107,8 @@
             document.getElementById('rewardTitle').value       = existing ? existing.title       : '';
             document.getElementById('rewardDescription').value = existing ? existing.description : '';
             document.getElementById('rewardLink').value        = existing ? existing.link        : '';
-            document.getElementById('rewardIcon').value        = existing ? existing.icon        : '';
+            setIconPickerValue('rewardIcon', 'rewardIconBtn',
+                existing ? existing.icon : null, null, 'gift');
             document.getElementById('rewardModal').classList.add('active');
         };
 
@@ -6398,7 +6636,7 @@
                             <span class="history-entry-xp${isPen ? ' history-entry-xp-neg' : ''}">${isPen ? '' : '+'}${e.xp} XP</span>
                             <button class="history-entry-delete"
                                 onclick="confirmRetroDelete('${e.activityId}','${e.entryTimestamp}',${isPen})"
-                                title="${isPen ? 'Remove this penalty' : 'Remove this entry'}">✕</button>
+                                title="${isPen ? 'Remove this penalty' : 'Remove this entry'}"><i class="ph-bold ph-x"></i></button>
                         </div>`;
                     }).join('')
                     : `<div class="history-empty-day">Nothing logged</div>`;
@@ -6473,7 +6711,7 @@
                         </div>
                         <div class="rp-item-right">
                             ${done
-                                ? `<span class="rp-item-done-badge">✓ Done</span>`
+                                ? `<span class="rp-item-done-badge"><i class="ph-bold ph-check mk-ico-lead"></i>Done</span>`
                                 : `<span class="rp-item-xp">+${act.baseXP} XP</span>
                                    <button class="rp-add-btn" onclick="event.stopPropagation();window._retroPickerAdd('${act.id}','${dateStr}')">Add</button>`
                             }
@@ -7461,14 +7699,14 @@
                     ? `<span class="ah-tag" style="background:rgba(160,100,50,0.13);color:#b8804a;border-color:rgba(160,100,50,0.22);">† deleted</span>`
                     : '';
                 const tag = !e.isDeleted && e.isPenalty
-                    ? `<span class="ah-tag ah-tag-penalty">⚡ auto-penalty</span>`
+                    ? `<span class="ah-tag ah-tag-penalty"><i class="ph-bold ph-lightning mk-ico-lead"></i>auto-penalty</span>`
                     : (!e.isDeleted && !isPos ? `<span class="ah-tag ah-tag-negative">−habit</span>` : '');
                 // Delete button: editable if within 7 days, not deleted, not today's non-penalty
                 const canDelete = !e.isDeleted && e.activityId &&
                     e.dateISO >= sevenDaysAgo &&
                     (e.isPenalty || e.dateISO < todayStr);
                 const delBtn = canDelete
-                    ? `<button class="ah-del-btn" onclick="confirmRetroDelete('${e.activityId}','${e.entryTs}',${e.isPenalty})" title="Remove entry">✕</button>`
+                    ? `<button class="ah-del-btn" onclick="confirmRetroDelete('${e.activityId}','${e.entryTs}',${e.isPenalty})" title="Remove entry"><i class="ph-bold ph-x"></i></button>`
                     : '';
                 html += `
                 <div class="ah-row${e.isDeleted ? ' ah-row-deleted' : ''}${canDelete ? ' ah-row-editable' : ''}">
@@ -7866,9 +8104,12 @@
         function checkStreakMilestone(activityName, streak) {
             if (!STREAK_MILESTONES.includes(streak)) return;
             const isShieldTier = SHIELD_MILESTONES.includes(streak);
-            const emojis = { 7:'🔥', 14:'⚡', 25:'🛡', 30:'🌟', 50:'🛡', 60:'💎', 75:'🛡', 100:'👑' };
+            // Each milestone gets its own mark, so a 100-day streak does not
+            // land looking like a 7-day one.
+            const icons = { 7:'fire', 14:'lightning', 25:'shield', 30:'star-four',
+                            50:'shield', 60:'diamond', 75:'shield', 100:'crown' };
             _showToastPill({
-                icon: emojis[streak] || '🔥',
+                icon: phIcon(icons[streak] || 'fire', { weight: 'fill' }),
                 label: isShieldTier
                     ? `${streak}-day streak! +1 shield earned • ${activityName}`
                     : `${streak}-day streak! ${activityName}`,
@@ -7913,7 +8154,7 @@
             if (typeof isTabUnlocked === 'function' && !isTabUnlocked(tabName)) {
                 const meta = (typeof tabUnlockMeta === 'function') ? tabUnlockMeta(tabName) : null;
                 if (meta) {
-                    showToast(`🔒 ${meta.label} unlocks at Level ${meta.level}`, 'olive');
+                    showToast(`${meta.label} unlocks at Level ${meta.level}`, 'olive', null, 'lock');
                 }
                 return;
             }
@@ -8160,7 +8401,7 @@
                 var isToday0 = dateStr === todayStr;
                 var emptyTitle = isToday0 ? 'Plan your day' : 'Nothing scheduled';
                 container.innerHTML = '<div class="planner-empty">'
-                    + '<div class="planner-empty-icon">📋</div>'
+                    + '<div class="planner-empty-icon"><i class="ph-bold ph-clipboard-text mk-ico-block"></i></div>'
                     + '<div class="planner-empty-title">' + emptyTitle + '</div>'
                     + '<div class="planner-empty-body">Sequence your day — drop activities and notes into a timeline, then check them off as you go. Recurring items repeat every day automatically.</div>'
                     + '</div>';
@@ -8294,7 +8535,7 @@
                 + (isActivity ? '<div class="planner-card-accent"></div>' : '')
                 + '<div class="planner-card-body">'
                 + '<div class="planner-card-main">'
-                + (item.completed ? '<span class="planner-check-done">✓</span>' : (isActivity && isToday ? '<span class="planner-check-empty"></span>' : ''))
+                + (item.completed ? '<span class="planner-check-done"><i class="ph-bold ph-check"></i></span>' : (isActivity && isToday ? '<span class="planner-check-empty"></span>' : ''))
                 + '<span class="planner-card-name">' + escapeHtml(displayName) + '</span>'
                 + xpHtml
                 + undoHtml
@@ -8304,7 +8545,7 @@
                 // Recurring badge removed — the "↻" looked like a secondary
                 // undo button and the repeat-daily intent is already implicit
                 // in the data. Surface it elsewhere later if needed.
-                + '<button class="planner-del-btn" onclick="event.stopPropagation();openPlannerDeleteMenu(\'' + item.id + '\',' + item.isRecurring + ')" title="Remove">✕</button>'
+                + '<button class="planner-del-btn" onclick="event.stopPropagation();openPlannerDeleteMenu(\'' + item.id + '\',' + item.isRecurring + ')" title="Remove"><i class="ph-bold ph-x"></i></button>'
                 + '</div>'
                 + '</div>';
         }
@@ -8890,7 +9131,7 @@
             if (window.userData) window.userData.groups = [];
             if (typeof saveUserData === 'function') await saveUserData();
             if (typeof updateDashboard === 'function') updateDashboard();
-            if (typeof showToast === 'function') showToast('✓ All routines cleared', 'olive');
+            if (typeof showToast === 'function') showToast('All routines cleared', 'olive', null, 'check');
         };
 
         window.dedupeGroupsNow = async function() {
@@ -8900,7 +9141,7 @@
             if (after !== before) {
                 if (typeof saveUserData === 'function') await saveUserData();
                 if (typeof updateDashboard === 'function') updateDashboard();
-                if (typeof showToast === 'function') showToast('✓ Merged ' + (before - after) + ' duplicate routine(s)', 'blue');
+                if (typeof showToast === 'function') showToast('Merged ' + (before - after) + ' duplicate routine(s)', 'blue', null, 'check');
             } else if (typeof showToast === 'function') {
                 showToast('No duplicates found', 'olive');
             }
@@ -9143,7 +9384,7 @@
                 if (typeof saveUserData === 'function') await saveUserData();
                 if (typeof updateDashboard === 'function') updateDashboard();
                 if (typeof showToast === 'function') {
-                    showToast(editingId ? '✓ Group updated' : '✓ Group created', 'blue');
+                    showToast(editingId ? 'Group updated' : 'Group created', 'blue', null, 'check');
                 }
             } finally {
                 _groupSaveInFlight = false;
@@ -9165,7 +9406,7 @@
             closeGroupModal();
             if (typeof saveUserData === 'function') await saveUserData();
             if (typeof updateDashboard === 'function') updateDashboard();
-            if (typeof showToast === 'function') showToast('✓ Group deleted', 'olive');
+            if (typeof showToast === 'function') showToast('Group deleted', 'olive', null, 'check');
         };
 
         // ── Slot-aware completion (per-slot, not per-activity) ────────────
@@ -9477,7 +9718,7 @@
             if (!window.userData.settings) window.userData.settings = {};
             window.userData.settings.streakScaling = newE;
             await saveUserData();
-            showToast('\ud83d\udd25 Streak scaling set to ' + newE.toFixed(1), 'olive');
+            showToast('Streak scaling set to ' + newE.toFixed(1), 'olive', null, 'fire');
         };
 
         // Settings functions
@@ -9570,7 +9811,7 @@
 
             await saveUserData();
             updateDashboard();
-            showToast(`✅ Scaling set to ${newK} — now Level ${level}`, 'olive');
+            showToast(`Scaling set to ${newK} — now Level ${level}`, 'olive', null, 'check-circle');
         };
 
         // Keep old saveSettings stub for any legacy calls
@@ -10146,7 +10387,7 @@
             window._pendingTheme = pending;
             window.userData.settings.theme = pending;
             await saveUserData();
-            showToast('🎨 Theme saved!', 'blue');
+            showToast('Theme saved!', 'blue', null, 'palette');
         };
 
         window.resetCustomTheme = function() {
@@ -10172,7 +10413,7 @@
             buildColorGrid();
             buildGradientPresets();
             _restoreGlowSliders(saved);
-            showToast('↺ Reverted to saved theme', 'blue');
+            showToast('Reverted to saved theme', 'blue', null, 'arrow-counter-clockwise');
         };
 
         // Apply radial glow to body (preset mode only — does NOT overwrite custom glows)
@@ -10212,7 +10453,7 @@
             window.userData.settings.savedThemes = slots;
             saveUserData();
             renderSavedThemeSlots();
-            showToast('💾 Template saved!', 'olive');
+            showToast('Template saved!', 'olive', null, 'floppy-disk');
         };
 
         window.deleteSavedThemeSlot = function(idx) {
@@ -10257,7 +10498,7 @@
             if (!window.userData.settings) window.userData.settings = {};
             window.userData.settings.theme = freshCopy;
             saveUserData();
-            showToast('🎨 Theme applied!', 'blue');
+            showToast('Theme applied!', 'blue', null, 'palette');
         };
 
         function renderSavedThemeSlots() {
@@ -10272,7 +10513,7 @@
                     html += '<div class="theme-saved-slot" onclick="loadSavedThemeSlot(' + i + ')">'
                         + '<div class="slot-swatch" style="background:' + swatchColor + ';"></div>'
                         + '<span>' + (slot._savedName || ('Theme ' + (i+1))) + '</span>'
-                        + '<button class="theme-saved-slot-del" onclick="event.stopPropagation();deleteSavedThemeSlot(' + i + ')" title="Delete">✕</button>'
+                        + '<button class="theme-saved-slot-del" onclick="event.stopPropagation();deleteSavedThemeSlot(' + i + ')" title="Delete"><i class="ph-bold ph-x"></i></button>'
                         + '</div>';
                 } else {
                     html += '<div class="theme-saved-slot empty">Slot ' + (i+1) + ' empty</div>';
@@ -10778,7 +11019,7 @@
                 await saveUserData();
                 loadSettings();
                 updateDashboard();
-                showToast('🔄 Restored from ' + (savedDate || when), 'olive');
+                showToast('Restored from ' + (savedDate || when), 'olive', null, 'arrows-clockwise');
             } catch(e) {
                 console.error('Restore error:', e);
                 alert('Restore failed: ' + e.message);
@@ -10795,7 +11036,7 @@
             try {
                 _backupSavedDate = null;
                 await saveUserData();
-                showToast('✅ Backup saved!', 'green');
+                showToast('Backup saved!', 'green', null, 'check-circle');
             } catch(e) {
                 showToast('Backup failed: ' + e.message, 'red');
             } finally {
@@ -10812,7 +11053,7 @@
             a.download = `levelup-backup-${localToday()}.json`;
             a.click();
             URL.revokeObjectURL(url);
-            showToast('⬆️ Data exported!', 'green');
+            showToast('Data exported!', 'green', null, 'upload-simple');
         };
 
         window.importData = async function(event) {
@@ -10833,7 +11074,7 @@
                 _backupSavedDate = null; // force fresh backup snapshot on this save
                 await saveUserData();
                 updateDashboard();
-                showToast('⬇️ Data imported!', 'blue');
+                showToast('Data imported!', 'blue', null, 'download-simple');
             } catch(e) {
                 alert('Failed to import: ' + e.message);
             }
@@ -10841,7 +11082,7 @@
         };
 
         window.confirmResetData = function() {
-            const first = confirm('⚠️ This will permanently delete ALL your data — activities, XP, quests, rewards, everything. This cannot be undone.\n\nAre you absolutely sure?');
+            const first = confirm('This will permanently delete ALL your data — activities, XP, quests, rewards, everything. This cannot be undone.\n\nAre you absolutely sure?');
             if (!first) return;
             const second = confirm('Last chance! Type "RESET" in the next dialog to confirm.');
             const word = prompt('Type RESET to confirm:');
@@ -10853,7 +11094,7 @@
                 settings: window.userData.settings || {},
                 createdAt: new Date().toISOString()
             };
-            saveUserData().then(() => { updateDashboard(); showToast('🗑️ All data cleared.', 'red'); });
+            saveUserData().then(() => { updateDashboard(); showToast('All data cleared.', 'red', null, 'trash'); });
         };
 
         // ── Profile Overlay ───────────────────────────────────────────────
@@ -10949,7 +11190,10 @@
 
             if (levelNum) levelNum.textContent = String(level);
             if (xpLbl)    xpLbl.textContent    = isMax ? 'MAX' : `${xpCurrent.toLocaleString()} / ${xpNeeded.toLocaleString()} XP`;
-            if (xpToNext) xpToNext.textContent = isMax ? '★ Max level' : `${Math.max(0, xpNeeded - xpCurrent).toLocaleString()} to next`;
+            if (xpToNext) {
+                if (isMax) xpToNext.innerHTML = phIcon('star', { weight: 'fill', lead: true }) + 'Max level';
+                else xpToNext.textContent = `${Math.max(0, xpNeeded - xpCurrent).toLocaleString()} to next`;
+            }
             if (levelBar) levelBar.style.width  = pct.toFixed(1) + '%';
 
             // ── Stats grid ────────────────────────────────────────────────
@@ -11028,7 +11272,7 @@
             if (filledCount < 1) {
                 container.innerHTML =
                     '<div class="pf-spider-empty">' +
-                        '<div class="pf-spider-empty-icon">🕸️</div>' +
+                        '<div class="pf-spider-empty-icon"><i class="ph-bold ph-graph mk-ico-block"></i></div>' +
                         '<div class="pf-spider-empty-title">' + escapeHtml(opts.emptyTitle || 'No category data yet') + '</div>' +
                         '<div>' + escapeHtml(opts.emptyHint || 'No activities have been tagged into life categories yet.') + '</div>' +
                     '</div>';
@@ -11045,6 +11289,17 @@
                 return;
             }
             const SIZE = Math.min(rawSize, 340);
+
+            // Canvas silently substitutes a fallback family for a font that has
+            // not loaded, and unlike DOM text it does not repaint when the real
+            // one arrives. So on the first pass queue one redraw for when it
+            // does; _iconFontReady keeps that to a single extra pass.
+            if (!window._iconFontReady) {
+                ensureIconFont().then(function() {
+                    window._iconFontReady = true;
+                    try { renderSpiderChartCanvas(container, legendEl, catXP, opts); } catch (e) {}
+                });
+            }
 
             let canvas = container.querySelector('canvas.pf-spider-canvas');
             if (!canvas) {
@@ -11143,7 +11398,17 @@
                 ctx.fillStyle = xp > 0 ? c.color : textSec;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText(`${c.emoji} ${c.label}`, x, y);
+                // Icon then label, drawn separately: one canvas font run is one
+                // family, and these two live in different ones.
+                const lblW = ctx.measureText(c.label).width;
+                const icoS = SIZE < 260 ? 10 : 11;
+                const runX = x - (lblW + icoS + 3) / 2;
+                ctx.textAlign = 'left';
+                ctx.font = `${icoS}px "Phosphor-Bold"`;
+                ctx.fillText(phGlyph(c.icon), runX, y);
+                ctx.font = `bold ${SIZE < 260 ? 9 : 10}px Inter, sans-serif`;
+                ctx.fillText(c.label, runX + icoS + 3, y);
+                ctx.textAlign = 'center';
             });
 
             // XP label at each data point
@@ -11172,7 +11437,7 @@
                     const isOn = xp > 0;
                     return `<span class="pf-spider-legend-item" style="color:${isOn ? c.color : textSec};opacity:${isOn ? 1 : 0.45};">
                         <span class="pf-spider-legend-dot" style="background:${isOn ? c.color : borderColor};"></span>
-                        ${c.emoji} ${c.label}
+                        ${phIcon(c.icon, { lead: true })}${c.label}
                         ${isOn ? `<span class="pf-spider-legend-num">· ${xp.toLocaleString()} XP · ${pct}%</span>` : `<span class="pf-spider-legend-num">· no data</span>`}
                     </span>`;
                 }).join('');
@@ -11215,7 +11480,7 @@
                             : `background:rgba(${rgb},0.08);border-color:rgba(${rgb},0.22);color:${c.color};`;
                         return `<button class="pf-cfg-pill${isActive ? ' active' : ''}"
                             style="${activeStyle}"
-                            onclick="setSpiderTag('${escapeHtml(act.id)}','${isActive ? '' : c.id}')">${c.emoji} ${c.label}</button>`;
+                            onclick="setSpiderTag('${escapeHtml(act.id)}','${isActive ? '' : c.id}')">${phIcon(c.icon, { lead: true })}${c.label}</button>`;
                     }).join('');
 
                     html += `<div class="pf-cfg-row">
@@ -11285,7 +11550,7 @@
             if (text) text.textContent = val;
             const titleEl = document.getElementById('profileCharTitle');
             if (titleEl) titleEl.textContent = getCharacterTitle(window.userData.level || 1, getProfileCategoryXP());
-            showToast('Username saved ✓', 'olive');
+            showToast('Username saved', 'olive', null, 'check');
         };
 
         // ── Generic Toast ─────────────────────────────────────────────────
@@ -11321,7 +11586,14 @@
 
         // `onTap` is optional. When given, the toast becomes a button: the
         // leaderboard award toast uses it to open that week's final standings.
-        function showToast(message, color = 'blue', onTap = null) {
+        //
+        // `icon` is a Phosphor icon name that replaces the tone's default mark.
+        // Messages used to carry their own emoji inline — a '🛡 Shield added…'
+        // — which no longer works now that the message is set as text: markup
+        // in it would render as literal characters. So the icon travels
+        // alongside the message instead of inside it, which also means the
+        // tone's colour and the toast's layout apply to it like any other.
+        function showToast(message, color = 'blue', onTap = null, icon = null) {
             const cfg = TOAST_CONFIG[color] || TOAST_CONFIG.blue;
             const stack = _ensureToastStack();
             const toast = document.createElement('div');
@@ -11337,7 +11609,7 @@
             // Newer toasts insert at the top of the stack so the most-
             // recent message reads first.
             toast.innerHTML =
-                '<span class="mk-toast-icon">' + cfg.icon + '</span>' +
+                '<span class="mk-toast-icon">' + (icon ? phIcon(icon) : cfg.icon) + '</span>' +
                 '<span class="mk-toast-msg"></span>';
             // Set message via textContent to avoid XSS from caller-supplied
             // strings (some sites pass user-content into toasts).
@@ -11592,7 +11864,7 @@
             if (isIOS) {
                 if (installCard) installCard.innerHTML = `
                     <div class="lp-install-card-title">
-                        <div class="lp-install-card-title-icon">📲</div>
+                        <div class="lp-install-card-title-icon"><i class="ph-bold ph-device-mobile mk-ico-block"></i></div>
                         Add to Home Screen
                     </div>
                     <ul class="lp-steps">
@@ -11617,7 +11889,7 @@
             } else if (isAndroid || isChrome) {
                 if (installCard) installCard.innerHTML = `
                     <div class="lp-install-card-title">
-                        <div class="lp-install-card-title-icon">📲</div>
+                        <div class="lp-install-card-title-icon"><i class="ph-bold ph-device-mobile mk-ico-block"></i></div>
                         Install the App
                     </div>
                     <button class="lp-native-install-btn" id="lpNativeInstallBtn">
@@ -11652,7 +11924,7 @@
             } else {
                 if (installCard) installCard.innerHTML = `
                     <div class="lp-install-card-title">
-                        <div class="lp-install-card-title-icon">💡</div>
+                        <div class="lp-install-card-title-icon"><i class="ph-bold ph-lightbulb mk-ico-block"></i></div>
                         Best experience in Chrome
                     </div>
                     <ul class="lp-steps">
@@ -11824,7 +12096,7 @@
             {
                 id: 'health',
                 label: 'Health',
-                emoji: '💪',
+                icon: 'barbell',
                 subtitle: 'Body, energy, physical longevity',
                 activities: [
                     { name: 'Morning Walk / Run', baseXP: 15, frequency: 'daily',
@@ -11841,7 +12113,7 @@
             {
                 id: 'mind',
                 label: 'Mind',
-                emoji: '🧠',
+                icon: 'brain',
                 subtitle: 'Focus, learning, emotional clarity',
                 activities: [
                     { name: 'Read 20 Minutes', baseXP: 15, frequency: 'daily',
@@ -11857,7 +12129,7 @@
             {
                 id: 'social',
                 label: 'Social',
-                emoji: '🤝',
+                icon: 'handshake',
                 subtitle: 'Relationships and connection',
                 activities: [
                     { name: 'Reach Out to Someone', baseXP: 20, frequency: 'weekly',
@@ -11874,7 +12146,7 @@
             {
                 id: 'craft',
                 label: 'Craft',
-                emoji: '🛠️',
+                icon: 'hammer',
                 subtitle: 'Skill, mastery, the work you make',
                 activities: [
                     { name: 'Deep Work Session', baseXP: 25, frequency: 'daily',
@@ -11924,7 +12196,7 @@
                 grid.innerHTML = FOCUS_AREAS.map(area => `
                     <button type="button" class="ob-area-card" data-area="${area.id}"
                             onclick="obToggleArea('${area.id}')">
-                        <div class="ob-area-emoji">${area.emoji}</div>
+                        <div class="ob-area-emoji">${phIcon(area.icon)}</div>
                         <div class="ob-area-label">${area.label}</div>
                         <div class="ob-area-sub">${escapeHtml(area.subtitle)}</div>
                     </button>
@@ -11996,7 +12268,7 @@
                     return `
                         <div class="ob-activity-group">
                             <div class="ob-activity-group-header">
-                                <span class="ob-activity-group-emoji">${area.emoji}</span>
+                                <span class="ob-activity-group-emoji">${phIcon(area.icon)}</span>
                                 <span class="ob-activity-group-label">${area.label}</span>
                             </div>
                             <div class="ob-activity-list">${items}</div>
@@ -12095,7 +12367,7 @@
 
                 await saveUserData();
                 obCloseOverlay();
-                showToast('🎉 Your space is ready!', 'blue');
+                showToast('Your space is ready!', 'blue', null, 'confetti');
                 if (window.switchTab) switchTab('activities');
                 // Mark the create-first-activity tutorial step as complete since the
                 // user already has activities. Tab unlock spotlights will fire later.
@@ -12138,7 +12410,7 @@
         const TUTORIAL_STEPS = [
             {
                 eyebrow: 'YOUR FIRST ACTIVITY',
-                emoji: '🎯',
+                icon: 'target',
                 title: 'One habit. One tap.',
                 body: 'Activities are the habits you want to track. Walk, read, sleep — whatever moves the needle for <strong>you</strong>. Tap below to make your first one.',
                 preview: [
@@ -12158,11 +12430,11 @@
         // unlocks. On the next app load after crossing the threshold, an unlock
         // popup + spotlight intro fires for that tab.
         const TAB_UNLOCKS = {
-            analytics:  { level: 3, label: 'Analytics',  emoji: '📊',
+            analytics:  { level: 3, label: 'Analytics',  icon: 'chart-bar',
                           body: 'Track XP over time, see which habits are building streaks, and measure progress across every area of your life.' },
-            challenges: { level: 5, label: 'Challenges', emoji: '⚔️',
+            challenges: { level: 5, label: 'Challenges', icon: 'sword',
                           body: 'Challenge a friend head-to-head. Both of you stake Grit, first to finish takes the pot — plus bonus XP and bragging rights.' },
-            friends:    { level: 7, label: 'Friends',    emoji: '👥',
+            friends:    { level: 7, label: 'Friends',    icon: 'users',
                           body: 'Add friends, compare XP on the leaderboard, and keep each other accountable. Share your friend code to get started.' },
         };
 
@@ -12246,7 +12518,7 @@
 
             card.innerHTML = `
                 <div class="spotlight-eyebrow">NEW TAB UNLOCKED</div>
-                <div class="spotlight-emoji">${meta.emoji}</div>
+                <div class="spotlight-emoji">${phIcon(meta.icon, { block: true })}</div>
                 <h3 class="spotlight-title">${escapeHtml(meta.label)} is live</h3>
                 <p class="spotlight-body">${escapeHtml(meta.body)}</p>
                 <div class="spotlight-card-actions">
@@ -12296,7 +12568,7 @@
                 pad: 8,
                 radius: 12,
                 eyebrow: 'YOUR PROGRESS',
-                emoji: '⚡',
+                icon: 'lightning',
                 title: 'This is your XP',
                 body: 'Every habit you complete adds XP here. Fill the bar to level up — that\'s the whole game.',
                 cta: 'Got it',
@@ -12308,7 +12580,7 @@
                 radius: 14,
                 skipIfMissing: true,
                 eyebrow: 'LOG A HABIT',
-                emoji: '👆',
+                icon: 'hand-pointing',
                 title: 'Tap to log it',
                 body: 'One tap marks a habit done and lands the XP. Long-press or swipe for more options later.',
                 cta: 'Next',
@@ -12319,7 +12591,7 @@
                 pad: 8,
                 radius: 100,
                 eyebrow: 'BUILD YOUR LIST',
-                emoji: '✨',
+                icon: 'sparkle',
                 title: 'Add more anytime',
                 body: 'Hit this any time you think of a new habit. Group them into Paths and Dimensions later — when it makes sense.',
                 cta: 'Start tracking',
@@ -12433,7 +12705,7 @@
                     <span>${escapeHtml(step.eyebrow || '')}</span>
                     ${dotsHtml}
                 </div>
-                <div class="spotlight-emoji">${step.emoji || ''}</div>
+                <div class="spotlight-emoji">${step.icon ? phIcon(step.icon, { block: true }) : ''}</div>
                 <h3 class="spotlight-title">${escapeHtml(step.title || '')}</h3>
                 <p class="spotlight-body">${escapeHtml(step.body || '')}</p>
                 <div class="spotlight-card-actions">
@@ -12522,7 +12794,7 @@
             if (!overlay || !card) return;
             card.innerHTML = `
                 <div class="unlock-popup-eyebrow">YOU UNLOCKED</div>
-                <div class="unlock-popup-emoji">${meta.emoji}</div>
+                <div class="unlock-popup-emoji">${phIcon(meta.icon, { block: true })}</div>
                 <h2 class="unlock-popup-title">${meta.label} Tab</h2>
                 <p class="unlock-popup-body">Reached Level ${meta.level}. A new piece of the app is open to you.</p>
                 <button class="unlock-popup-cta" onclick="acknowledgeTabUnlock('${tabName}')">Show me</button>
@@ -12595,7 +12867,7 @@
                     : '');
             card.innerHTML = `
                 ${eyebrowHtml}
-                <div class="tutorial-emoji">${s.emoji}</div>
+                <div class="tutorial-emoji">${phIcon(s.icon, { block: true })}</div>
                 <h2 class="tutorial-title">${s.title}</h2>
                 <p class="tutorial-body">${s.body}</p>
                 ${previewHtml ? `<div class="tutorial-preview">${previewHtml}</div>` : ''}
@@ -12683,7 +12955,7 @@
                     var todayKey = localToday();
                     var lastSent = localStorage.getItem('reminderLastSent');
                     if (lastSent !== todayKey) {
-                        new Notification('Mindkraft ⚔️', {
+                        new Notification('Mindkraft', {
                             body: "Don't forget to check off today's tasks!",
                             icon: './icon-192.svg'
                         });
@@ -12704,9 +12976,8 @@
             if (Notification.permission === 'default') {
                 var perm = await Notification.requestPermission();
                 var statusEl = document.getElementById('reminderPermStatus');
-                if (statusEl) statusEl.textContent = perm === 'granted'
-                    ? '✅ Permission granted'
-                    : '❌ Permission denied — please allow notifications in your browser settings.';
+                if (perm === 'granted') setIconStatus(statusEl, 'check-circle', 'Permission granted');
+                else setIconStatus(statusEl, 'x-circle', 'Permission denied — please allow notifications in your browser settings.');
                 if (perm !== 'granted') return;
             }
             if (Notification.permission === 'denied') {
@@ -12730,7 +13001,7 @@
                     await writeGeneralReminder(time);
                 } catch (err) {
                     console.error('Could not save reminder:', err);
-                    if (statusEl) statusEl.textContent = '⚠️ Could not save your reminder. Please try again.';
+                        setIconStatus(statusEl, 'warning', 'Could not save your reminder. Please try again.');
                     showToast('Could not save reminder — try again', 'red');
                     return;
                 }
@@ -12739,14 +13010,14 @@
                 // reminder time — it exists purely as a fallback for when push
                 // is unavailable.
                 if (_reminderInterval) { clearInterval(_reminderInterval); _reminderInterval = null; }
-                if (statusEl) statusEl.textContent = '✅ Reminder set for ' + time + ' — arrives even when the app is closed.';
-                showToast('Reminder set for ' + time + ' ✅', 'green');
+                setIconStatus(statusEl, 'check-circle', 'Reminder set for ' + time + ' — arrives even when the app is closed.');
+                showToast('Reminder set for ' + time, 'green', null, 'check-circle');
             } else {
                 // Push unavailable on this device (commonly iOS Safari outside
                 // an installed PWA). Fall back to the in-tab timer so the
                 // reminder still does something while the app is open.
                 scheduleReminder();
-                if (statusEl) statusEl.textContent = '⚠️ Reminder set for ' + time + ', but this browser does not support background notifications — it only fires while the app is open.';
+                setIconStatus(statusEl, 'warning', 'Reminder set for ' + time + ', but this browser does not support background notifications — it only fires while the app is open.');
                 showToast('Reminder set for ' + time + ' (app must be open)', 'olive');
             }
         };
@@ -12808,17 +13079,17 @@
                 if (!statusEl) return;
                 var hasPush = window.userData && window.userData.pushSubscription;
                 if (!('Notification' in window)) {
-                    statusEl.textContent = '⚠️ Notifications not supported in this browser.';
+                    setIconStatus(statusEl, 'warning', 'Notifications not supported in this browser.');
                 } else if (Notification.permission === 'denied') {
-                    statusEl.textContent = '❌ Notifications blocked. Allow them in your browser/OS settings.';
+                    setIconStatus(statusEl, 'x-circle', 'Notifications blocked. Allow them in your browser/OS settings.');
                 } else if (hasPush && saved) {
-                    statusEl.textContent = '✅ Push reminder active at ' + saved + ' — fires even when browser is closed.';
+                    setIconStatus(statusEl, 'check-circle', 'Push reminder active at ' + saved + ' — fires even when browser is closed.');
                 } else if (saved) {
-                    statusEl.textContent = '⚠️ In-tab reminder active at ' + saved + '. Re-save after adding VAPID key for push support.';
+                    setIconStatus(statusEl, 'warning', 'In-tab reminder active at ' + saved + '. Re-save after adding VAPID key for push support.');
+                } else if (Notification.permission === 'granted') {
+                    setIconStatus(statusEl, 'check-circle', 'Notifications allowed. Pick a time and save.');
                 } else {
-                    statusEl.textContent = Notification.permission === 'granted'
-                        ? '✅ Notifications allowed. Pick a time and save.'
-                        : "You'll be asked to allow notifications when you save.";
+                    statusEl.textContent = "You'll be asked to allow notifications when you save.";
                 }
             }
         };
@@ -13176,7 +13447,7 @@
                     var detected = mkDetectTimezone();
                     if (detected) patch.timezone = detected;
                     await updateDoc(reminderDocRef(_arEditingId), patch);
-                    showToast('Reminder updated ✅', 'green');
+                    showToast('Reminder updated', 'green', null, 'check-circle');
                 } else {
                     if (!_arSelectedActivityId) {
                         showToast('Pick an activity first', 'red');
@@ -13193,7 +13464,7 @@
                         localTime: localTime,
                         timezone: mkDetectTimezone() || null
                     });
-                    showToast('Reminder set ✅', 'green');
+                    showToast('Reminder set', 'green', null, 'check-circle');
                     try { window.trackEvent && window.trackEvent('activity_reminder_created'); } catch (e) {}
                 }
 
@@ -13731,14 +14002,14 @@
             try {
                 const q    = query(collection(db, 'publicProfiles'), where('friendCode', '==', code));
                 const snap = await getDocs(q);
-                if (snap.empty) { status.textContent = '✗ No user found with that code.'; return; }
+                if (snap.empty) { setIconStatus(status, 'x', 'No user found with that code.'); return; }
 
                 const friendDoc  = snap.docs[0];
                 const friendUID  = friendDoc.id;
                 const friendData = friendDoc.data();
 
                 if (friendUID === window.currentUser.uid) {
-                    status.textContent = "That’s your own code 😄";
+                    setIconStatus(status, 'smiley', 'That’s your own code');
                     return;
                 }
                 if (friends.includes(friendUID)) {
@@ -13771,7 +14042,7 @@
                 }
 
                 input.value = '';
-                status.textContent = `✓ ${friendData.displayName || 'Friend'} added!`;
+                setIconStatus(status, 'check', `${friendData.displayName || 'Friend'} added!`);
                 renderFriendsTab();
             } catch(e) {
                 console.error('addFriendByCode error:', e);
@@ -13819,7 +14090,7 @@
                 { val: (xphr || 0).toLocaleString(),          lbl: 'XP / Hour' },
                 { val: data.bestStreak || 0,                  lbl: 'Best Streak' },
                 { val: data.activeDays || 0,                  lbl: 'Active Days' },
-                { val: '★ ' + level,                          lbl: 'Level' },
+                { val: phIcon('star', { weight: 'fill', lead: true }) + level, lbl: 'Level' },
             ];
 
             const isHidden = (window.userData.leaderboardHidden || []).indexOf(uid) !== -1;
@@ -13846,7 +14117,7 @@
                             <div class="pf-xp-cluster">
                                 <span class="pf-xp-current-line"><strong>${isMax ? 'MAX' : `${xpCurrent.toLocaleString()} / ${xpNeeded.toLocaleString()} XP`}</strong></span>
                                 ${isMax
-                                    ? '<span class="pf-xp-tonext">★ Max level</span>'
+                                    ? '<span class="pf-xp-tonext">' + phIcon('star', { weight: 'fill', lead: true }) + 'Max level</span>'
                                     : `<span class="pf-xp-tonext">${Math.max(0, xpNeeded - xpCurrent).toLocaleString()} to next</span>`}
                             </div>
                         </div>
@@ -14593,7 +14864,7 @@
                 if (prog.count >= prog.target) {
                     act.techTreeMasteredAt = new Date().toISOString();
                     changed = true;
-                    try { showToast('🏅 Mastered: ' + act.name, 'green'); } catch (err) {}
+                    try { showToast('Mastered: ' + act.name, 'green', null, 'medal'); } catch (err) {}
                 }
             });
             // Grit's mastery payout (§4.4) rides this pass. Placed inside the
@@ -14631,7 +14902,7 @@
                     changed = true;
                     justResolved.push(node);
                     ttAwardXP(ttNodeResolveBonus(node));
-                    try { showToast('⭐ Resolved: ' + node.title + ' · +' + ttNodeResolveBonus(node) + ' XP', 'green'); } catch (err) {}
+                    try { showToast('Resolved: ' + node.title + ' · +' + ttNodeResolveBonus(node) + ' XP', 'green', null, 'star'); } catch (err) {}
                 }
             });
 
@@ -14904,9 +15175,9 @@
             saveUserData().catch(function() {});
             if (res.mode === 'generate') {
                 window._ttPendingReveal = true;
-                if (!opts.silent) showToast('🕸️ Your web is ready', 'green');
+                if (!opts.silent) showToast('Your web is ready', 'green', null, 'graph');
             } else {
-                showToast('🕸️ Your web grew — new nodes are in', 'blue');
+                showToast('Your web grew — new nodes are in', 'blue', null, 'graph');
             }
             if (opts.silent) ttRenderIfVisible();
         }
@@ -15180,11 +15451,11 @@
             // Wildcards spark only while on offer; once accepted they live on
             // the web as ordinary tier-one activities.
             if (node.role === 'wildcard' && !accepted) {
-                return '<text x="' + x + '" y="' + (y + 7) + '" text-anchor="middle" font-size="22" fill="' + TT_WILD + '"' + (st === 'available' ? ' class="tt-pulse"' : '') + '>✦</text>';
+                return '<text x="' + x + '" y="' + (y + 7) + '" text-anchor="middle" font-size="22" font-family="' + PH_FONT.bold + '" fill="' + TT_WILD + '"' + (st === 'available' ? ' class="tt-pulse"' : '') + '>' + phGlyph('sparkle') + '</text>';
             }
             if (st === 'locked') {
                 g += '<circle cx="' + x + '" cy="' + y + '" r="8" fill="#161616" stroke="' + color + '" stroke-width="2" opacity="0.4"/>';
-                g += '<text x="' + x + '" y="' + (y + 4) + '" text-anchor="middle" font-size="9" opacity="0.75">🔒</text>';
+                g += '<text x="' + x + '" y="' + (y + 3.5) + '" text-anchor="middle" font-size="10" font-family="' + PH_FONT.bold + '" fill="' + color + '" opacity="0.75">' + phGlyph('lock') + '</text>';
                 return g;
             }
             // Same graduation for fusions: the ✚ diamond marks the offer; an
@@ -15202,7 +15473,7 @@
             g += '<circle cx="' + x + '" cy="' + y + '" r="14" fill="#161616"/>';
             if (st === 'resolved') {
                 g += '<circle cx="' + x + '" cy="' + y + '" r="10" fill="' + TT_GOLD + '"/>'
-                   + '<text x="' + x + '" y="' + (y + 3.5) + '" text-anchor="middle" font-size="10" fill="#161616" font-weight="700">★</text>';
+                   + '<text x="' + x + '" y="' + (y + 3.5) + '" text-anchor="middle" font-size="10" font-family="' + PH_FONT.fill + '" fill="#161616">' + phGlyph('star') + '</text>';
             } else if (st === 'active') {
                 g += ttProgressArc(node, x, y, color);
             } else { // available — hollow ring in goal colour, pulsing
@@ -15273,7 +15544,10 @@
             // Band chrome: separators + labels (emoji-less small caps).
             L.bands.forEach(function(b, i) {
                 if (i > 0) svg += '<line x1="0" y1="' + b.y0 + '" x2="' + L.width + '" y2="' + b.y0 + '" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>';
-                svg += '<text x="12" y="' + (b.y0 + 17) + '" class="tt-band-l" fill="' + ttDimHexRaw(b.dim.id) + '">◈ ' + escapeHtml(String(b.dim.name || 'Other').toUpperCase()) + '</text>';
+                // The band marker is a glyph run of its own so the label beside
+                // it keeps the UI font — one <text> can only carry one family.
+                svg += '<text x="12" y="' + (b.y0 + 17) + '" font-size="9" font-family="' + PH_FONT.fill + '" fill="' + ttDimHexRaw(b.dim.id) + '">' + phGlyph('diamond') + '</text>'
+                     + '<text x="25" y="' + (b.y0 + 17) + '" class="tt-band-l" fill="' + ttDimHexRaw(b.dim.id) + '">' + escapeHtml(String(b.dim.name || 'Other').toUpperCase()) + '</text>';
             });
             // Edges beneath glyphs. Cross-band edges glow — the hero visual.
             L.edges.forEach(function(e) {
@@ -15370,7 +15644,7 @@
                     try { seen = localStorage.getItem(seenKey); } catch (e) {}
                     if (seen !== grewAt) {
                         try { localStorage.setItem(seenKey, grewAt); } catch (e) {}
-                        if (seen) showToast('🕸️ Your web grew while you were away — look for new nodes', 'blue');
+                        if (seen) showToast('Your web grew while you were away — look for new nodes', 'blue', null, 'graph');
                     }
                 }
             }
@@ -15404,7 +15678,13 @@
                 }).join('') + '</div>';
             }
             // State legend strip (one line, tiny).
-            html += '<div class="tt-state-legend"><span class="tt-sl-doing">◐</span> doing · <span class="tt-sl-gold">●</span> mastered · <span class="tt-sl-open">◌</span> open — tap · 🔒 locked · <span class="tt-sl-dark">◍</span> unrevealed</div>';
+            html += '<div class="tt-state-legend">'
+                 +    '<span class="tt-sl-doing">' + phIcon('circle-half', { weight: 'fill' }) + '</span> doing · '
+                 +    '<span class="tt-sl-gold">' + phIcon('circle', { weight: 'fill' }) + '</span> mastered · '
+                 +    '<span class="tt-sl-open">' + phIcon('circle-dashed') + '</span> open — tap · '
+                 +    phIcon('lock') + ' locked · '
+                 +    '<span class="tt-sl-dark">' + phIcon('circle-dashed') + '</span> unrevealed'
+                 +  '</div>';
             // First-run hint only (§5.5) — persisted behind introSeen.
             if (!tt.introSeen) {
                 html += '<div class="tt-first-hint">Tap any node to review it — accept what you want, ignore the rest. Locked nodes show what opens them.</div>';
@@ -15546,13 +15826,13 @@
                 + '<div class="tt-sheet-kicker" style="color:' + color + '">' + escapeHtml(roleLabel) + ' · ' + stateLabel + '</div>'
                 + '<h3 class="tt-sheet-title">' + escapeHtml(node.title) + '</h3>'
                 + (node.description ? '<p class="tt-sheet-desc">' + escapeHtml(node.description) + '</p>' : '');
-            if (node.whyNow) html += '<div class="tt-whynow">💡 ' + escapeHtml(node.whyNow) + '</div>';
+            if (node.whyNow) html += '<div class="tt-whynow">' + phIcon('lightbulb', { lead: true }) + escapeHtml(node.whyNow) + '</div>';
 
             // Duplicate pre-flag (§7.4) — cheap fuzzy match, no AI call.
             var dup = null;
             if (state === 'available' && pl.type === 'activity' && !pl.activityId) {
                 dup = ttDupCandidate(node);
-                if (dup) html += '<div class="tt-dupflag">💡 Looks close to <b>' + escapeHtml(dup.activity.name) + '</b> — already yours? Link it instead of creating a twin.</div>';
+                if (dup) html += '<div class="tt-dupflag">' + phIcon('lightbulb', { lead: true }) + 'Looks close to <b>' + escapeHtml(dup.activity.name) + '</b> — already yours? Link it instead of creating a twin.</div>';
             }
 
             // 3 glanceable stats.
@@ -15566,7 +15846,7 @@
                 actions = '<button class="tt-btn tt-btn-ghost" onclick="ttGotoPayload(\'' + node.id + '\')">Open activity</button>';
             } else if (state === 'available') {
                 if (pl.type === 'activity') {
-                    actions = '<button class="tt-btn tt-btn-primary" onclick="ttOpenAccept(\'' + node.id + '\')">Accept — shape it →</button>'
+                    actions = '<button class="tt-btn tt-btn-primary" onclick="ttOpenAccept(\'' + node.id + '\')">Accept — shape it ' + phIcon('arrow-right') + '</button>'
                         + '<button class="tt-btn tt-btn-ghost' + (dup ? ' tt-btn-glow' : '') + '" onclick="ttOpenLinkPicker(\'' + node.id + '\')">' + ttIcon('link', 13) + '<span>I already do this — link it</span></button>'
                         + '<button class="tt-btn tt-btn-ghost" onclick="ttRejectNode(\'' + node.id + '\')">Not now</button>';
                 }
@@ -15709,7 +15989,7 @@
                 + '<div class="tt-mastery-q"><input type="number" id="ttMastN" class="pl-input" min="1" max="999" value="' + (def.count || 6) + '"> <span>times within</span> '
                 + '<input type="number" id="ttMastD" class="pl-input" min="1" max="3650" value="' + (def.windowDays || '') + '" placeholder="∞"> <span>days</span></div>'
                 + '<p class="tt-mastery-hint">' + escapeHtml(hint) + ' Leave days blank for no window.</p>'
-                + '<div class="tt-acc-actions"><button class="tt-btn tt-btn-ghost" onclick="ttBackToShape()">← Back</button>'
+                + '<div class="tt-acc-actions"><button class="tt-btn tt-btn-ghost" onclick="ttBackToShape()">' + phIcon('arrow-left', { lead: true }) + 'Back</button>'
                 + '<button class="tt-btn tt-btn-primary" onclick="ttSaveMastery()">Set mastery</button></div>'
                 + '</div>');
         };
@@ -15742,7 +16022,7 @@
             evaluateTechTreeMastery();
             saveUserData().catch(function() {});
             ttCloseSheet();
-            showToast('🌱 "' + e.activity.name + '" is on your tracker — its ring is live on the web', 'green');
+            showToast('"' + e.activity.name + '" is on your tracker — its ring is live on the web', 'green', null, 'plant');
             ttRenderIfVisible();
         };
 
@@ -15779,7 +16059,7 @@
                     var a = r.e.activity;
                     var winTxt = r.windowDays ? 'in the last ' + r.windowDays + ' days' : 'lifetime';
                     var verdict = r.resolves
-                        ? '<span class="tt-seg-badge tt-verdict-gold">' + Math.min(r.k, 999) + '/' + r.target + ' ✓ resolves</span>'
+                        ? '<span class="tt-seg-badge tt-verdict-gold">' + Math.min(r.k, 999) + '/' + r.target + ' ' + phIcon('check', { lead: true }) + 'resolves</span>'
                         : '<span class="tt-seg-badge tt-seg-open">' + r.k + '/' + r.target + ' · links</span>';
                     return '<button class="tt-seg-row" style="--rc:' + ttDimHexRaw(r.e.dim.id) + '" onclick="ttDoLinkActivity(\'' + nodeId + '\',\'' + a.id + '\')">'
                         + '<span class="tt-seg-dot" style="background:' + ttDimHexRaw(r.e.dim.id) + '"></span>'
@@ -15837,10 +16117,10 @@
                 window._ttFlashNodeId = node.id;
                 ttGoldFlash();
                 var opened = tt.nodes.filter(function(n) { return lockedBefore[n.id] && n.lifecycle === 'available'; }).map(function(n) { return n.title; });
-                showToast('⭐ The web already knows you — "' + node.title + '" resolved on the spot', 'green');
-                if (opened.length) setTimeout(function() { showToast('🔓 Opened: ' + opened.slice(0, 3).join(', ') + (opened.length > 3 ? ' +' + (opened.length - 3) : ''), 'blue'); }, 1400);
+                showToast('The web already knows you — "' + node.title + '" resolved on the spot', 'green', null, 'star');
+                if (opened.length) setTimeout(function() { showToast('Opened: ' + opened.slice(0, 3).join(', ') + (opened.length > 3 ? ' +' + (opened.length - 3) : ''), 'blue', null, 'lock-open'); }, 1400);
             } else {
-                showToast('🔗 Linked — ' + prog.count + '/' + prog.target + ' toward mastery', 'green');
+                showToast('Linked — ' + prog.count + '/' + prog.target + ' toward mastery', 'green', null, 'link');
             }
             ttRenderIfVisible();
         };
@@ -15924,7 +16204,7 @@
             evaluateTechTreeMastery();
             saveUserData().catch(function() {});
             ttCloseSheet(); renderTechTree();
-            showToast('🧵 Threaded through ' + (goal.shortName || 'the goal'), 'green');
+            showToast('Threaded through ' + (goal.shortName || 'the goal'), 'green', null, 'needle');
         };
 
         // ── User-authored nodes ──────────────────────────────────────────
@@ -15974,7 +16254,7 @@
             if (!e.activity.techTreeMastery) e.activity.techTreeMastery = ttMasteryDefaultFor(e.activity.frequency);
             evaluateTechTreeMastery();
             saveUserData().catch(function() {});
-            showToast('🌱 "' + e.activity.name + '" anchored on your web', 'green');
+            showToast('"' + e.activity.name + '" anchored on your web', 'green', null, 'plant');
             ttRenderIfVisible();
         };
 
@@ -16076,7 +16356,10 @@
            ═══════════════════════════════════════════════════════════════════ */
 
         var QUEST_XP_FRACTION = 0.2;   // real bonus XP paid per linked completion
-        var DEFAULT_QUEST_EMOJI = '🎯';
+        // Stored on the quest as 'ph-<name>'. Quests saved before the icon
+        // swap still carry an emoji in `emoji`; renderStoredIcon maps those, so
+        // nothing has to be migrated in Firestore.
+        var DEFAULT_QUEST_ICON = 'ph-target';
 
         // ── ids / escaping ─────────────────────────────────────────────────
         function prId(prefix) { return (prefix || 'pr') + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
@@ -16112,7 +16395,7 @@
         function migrateProject(p) {
             if (!p) return p;
             if (p.dimensionIds === undefined) p.dimensionIds = p.dimensionId ? [p.dimensionId] : [];
-            if (!p.emoji) p.emoji = DEFAULT_QUEST_EMOJI;
+            if (!p.icon && !p.emoji) p.icon = DEFAULT_QUEST_ICON;
             if (!Array.isArray(p.groups)) {
                 var pipelines = Array.isArray(p.pipelines) ? p.pipelines : legacyStagesToPipelines(p);
                 p.groups = pipelinesToGroups(pipelines);
@@ -16648,7 +16931,7 @@
                 '<span class="pr-strip" style="' + projectStripStyle(p) + '"></span>' +
                 '<div class="pr-card-body">' +
                     '<div class="pr-card-top">' +
-                        '<span class="pr-card-emoji">' + (p.emoji || DEFAULT_QUEST_EMOJI) + '</span>' +
+                        '<span class="pr-card-emoji">' + renderStoredIcon(p.icon || p.emoji || DEFAULT_QUEST_ICON) + '</span>' +
                         '<div class="pr-card-headings">' +
                             '<div class="pr-card-name-row">' +
                                 '<h3 class="pr-card-name">' + escapeHtml(p.name || 'Untitled quest') + '</h3>' +
@@ -16727,7 +17010,7 @@
                     '<span class="pr-strip" style="' + projectStripStyle(p) + '"></span>' +
                     '<button class="pr-icon-btn pr-detail-edit" onclick="openProjectModal(\'' + p.id + '\')" aria-label="Edit quest"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>' +
                     '<div class="pr-detail-top">' +
-                        '<span class="pr-detail-emoji">' + (p.emoji || DEFAULT_QUEST_EMOJI) + '</span>' +
+                        '<span class="pr-detail-emoji">' + renderStoredIcon(p.icon || p.emoji || DEFAULT_QUEST_ICON) + '</span>' +
                         '<div class="pr-detail-titles">' +
                             '<div class="pr-detail-name-row">' +
                                 '<h1 class="pr-detail-name">' + escapeHtml(p.name || 'Untitled quest') + '</h1>' +
@@ -17030,7 +17313,7 @@
             if (!alreadySaved) debouncedSaveUserData();
             if (window._openProjectId === p.id) renderProjectDetail(p.id);
             if (p.status === 'active' && projectCycleReady(p)) {
-                setTimeout(function() { showToast((p.cadence && p.cadence.type === 'recurring') ? '🏁 All done — seal the cycle below' : '🏁 All done — mark the quest complete', 'blue'); }, 280);
+                setTimeout(function() { showToast((p.cadence && p.cadence.type === 'recurring') ? 'All done — seal the cycle below' : 'All done — mark the quest complete', 'blue', null, 'flag-checkered'); }, 280);
             }
         }
         function snapshotReps(p) { return (p.groups || []).map(repsSnapshot); }
@@ -17103,7 +17386,7 @@
             } else if (p.status === 'paused') {
                 out += '<button class="pr-cycle-btn" onclick="resumeProject(\'' + p.id + '\')">Resume quest</button>';
             } else if (p.status === 'completed') {
-                out += '<div class="pr-sealed-note pr-sealed-gold">🏆 Quest completed' + (p.completedAt ? ' · ' + new Date(p.completedAt).toLocaleDateString() : '') + '</div>' +
+                out += '<div class="pr-sealed-note pr-sealed-gold">' + phIcon('trophy', { weight: 'fill', lead: true }) + 'Quest completed' + (p.completedAt ? ' · ' + new Date(p.completedAt).toLocaleDateString() : '') + '</div>' +
                        '<button class="pr-cycle-btn" onclick="reopenProject(\'' + p.id + '\')">Reopen quest</button>';
             } else if (p.status === 'archived') {
                 out += '<div class="pr-sealed-note">Archived</div><button class="pr-cycle-btn" onclick="unarchiveProject(\'' + p.id + '\')">Restore quest</button>';
@@ -17162,10 +17445,10 @@
                 clearRecurringItems(p);
                 p.currentCycle = (p.currentCycle || 1) + 1; p.startedCycleAt = new Date().toISOString();
                 saveUserData();
-                showToast('🏆 Cycle ' + (p.currentCycle - 1) + ' shipped' + bonusMsg + ' — Cycle ' + p.currentCycle + ' begins', 'olive');
+                showToast('Cycle ' + (p.currentCycle - 1) + ' shipped' + bonusMsg + ' — Cycle ' + p.currentCycle + ' begins', 'olive', null, 'trophy');
             } else {
                 p.status = 'completed'; p.completedAt = new Date().toISOString(); saveUserData();
-                showToast('🏆 Quest complete' + bonusMsg + ' — ' + (p.name || ''), 'olive');
+                showToast('Quest complete' + bonusMsg + ' — ' + (p.name || ''), 'olive', null, 'trophy');
             }
             renderProjectDetail(projectId);
         };
@@ -17245,7 +17528,8 @@
             var editing = _projectEditingId ? findProject(_projectEditingId) : null;
             document.getElementById('projectModalTitle').textContent = editing ? 'Edit Quest' : 'New Quest';
             document.getElementById('projectSaveBtn').textContent = editing ? 'Save changes' : 'Create quest';
-            document.getElementById('projectEmoji').value = editing ? (editing.emoji || DEFAULT_QUEST_EMOJI) : DEFAULT_QUEST_EMOJI;
+            setIconPickerValue('projectIcon', 'projectIconBtn',
+                editing ? (editing.icon || editing.emoji) : null, 'target');
             document.getElementById('projectName').value = editing ? (editing.name || '') : '';
             document.getElementById('projectDesc').value = editing ? (editing.description || '') : '';
             var cadType = editing && editing.cadence ? editing.cadence.type : 'oneoff';
@@ -17520,7 +17804,7 @@
                 var isIn = already[a.id];
                 var sel = _prPickerSelection[a.id];
                 return '<div class="pr-pick-row' + (sel ? ' sel' : '') + (isIn ? ' added' : '') + '" ' + (isIn ? '' : 'onclick="toggleProjectPick(\'' + prAttr(a.id) + '\')"') + '>' +
-                    '<span class="pr-pick-check">' + (isIn ? '✓' : (sel ? prCheckSvg() : '')) + '</span>' +
+                    '<span class="pr-pick-check">' + (isIn ? phIcon('check') : (sel ? prCheckSvg() : '')) + '</span>' +
                     '<span class="pr-pick-dot" style="background:' + (a.dimHex || '#8a9099') + '"></span>' +
                     '<span class="pr-pick-main"><span class="pr-pick-name">' + escapeHtml(a.name) + '</span>' +
                     '<span class="pr-pick-sub">' + escapeHtml(a.dimName + ' › ' + a.pathName) + ' · ' + a.baseXP + ' XP</span></span>' +
@@ -17591,7 +17875,7 @@
             if (event && event.preventDefault) event.preventDefault();
             var name = (document.getElementById('projectName').value || '').trim();
             if (!name) { showToast('Give your quest a name', 'red'); return; }
-            var emoji = (document.getElementById('projectEmoji').value || DEFAULT_QUEST_EMOJI).trim() || DEFAULT_QUEST_EMOJI;
+            var icon = (document.getElementById('projectIcon').value || '').trim() || DEFAULT_QUEST_ICON;
             var desc = (document.getElementById('projectDesc').value || '').trim();
             var cadType = document.getElementById('projectCadenceType').value || 'oneoff';
 
@@ -17604,19 +17888,19 @@
             if (_projectEditingId) {
                 var p = findProject(_projectEditingId);
                 if (!p) { showToast('Quest not found', 'red'); return; }
-                p.name = name; p.emoji = emoji; p.description = desc; p.dimensionIds = dims.dimensionIds; p.dimensionId = dims.dimensionId;
+                p.name = name; p.icon = icon; p.description = desc; p.dimensionIds = dims.dimensionIds; p.dimensionId = dims.dimensionId;
                 p.cadence = cadence; p.groups = groups; p.schemaVersion = 2;
                 var savedId = p.id;
-                saveUserData(); closeProjectModal(); showToast('✓ Quest updated', 'green'); openProjectDetail(savedId);
+                saveUserData(); closeProjectModal(); showToast('Quest updated', 'green', null, 'check'); openProjectDetail(savedId);
             } else {
-                var proj = { id: prId('proj'), name: name, emoji: emoji, description: desc, dimensionIds: dims.dimensionIds, dimensionId: dims.dimensionId,
+                var proj = { id: prId('proj'), name: name, icon: icon, description: desc, dimensionIds: dims.dimensionIds, dimensionId: dims.dimensionId,
                     status: 'active', cadence: cadence, groups: groups, schemaVersion: 2, currentCycle: 1, cycleHistory: [],
                     createdAt: new Date().toISOString(), startedCycleAt: new Date().toISOString() };
                 getProjects().push(proj);
                 // A composed or accepted draft materializes its new-activity
                 // leaves now that the builder saved.
                 var _qcCtx = window._qcDraft ? qcFinishDraft(proj) : null;
-                saveUserData(); closeProjectModal(); showToast('✓ Quest created', 'green'); openProjectDetail(proj.id);
+                saveUserData(); closeProjectModal(); showToast('Quest created', 'green', null, 'check'); openProjectDetail(proj.id);
                 // New activities were added to the tracker — show them, let the
                 // user rename, reword, re-price or remove any of them.
                 if (_qcCtx && _qcCtx.created && _qcCtx.created.length) {
@@ -17675,7 +17959,7 @@
             openProjectModal();
             document.getElementById('projectModalTitle').textContent = opts.title || 'Review your quest';
             document.getElementById('projectName').value = spec.name || opts.fallbackName || '';
-            document.getElementById('projectEmoji').value = spec.emoji || '🎯';
+            setIconPickerValue('projectIcon', 'projectIconBtn', spec.icon || spec.emoji, 'target');
             document.getElementById('projectDesc').value = spec.description || opts.fallbackDesc || '';
             try { setProjectCadence((spec.cadence && spec.cadence.type) === 'recurring' ? 'recurring' : 'oneoff'); } catch (e) {}
             var host = document.getElementById('projectBuilder');
@@ -17685,7 +17969,7 @@
             // Badge the rows that become real activities on save.
             Object.keys(newSpecs).forEach(function(leafId) {
                 var row = host.querySelector('[data-id="' + leafId + '"] .pr-b-item-meta');
-                if (row) row.innerHTML = '<span class="qc-newact-badge">→ becomes an activity (' + escapeHtml(newSpecs[leafId].frequency || 'weekly') + ')</span>';
+                if (row) row.innerHTML = '<span class="qc-newact-badge">' + phIcon('arrow-right', { lead: true }) + 'becomes an activity (' + escapeHtml(newSpecs[leafId].frequency || 'weekly') + ')</span>';
             });
             return window._qcDraft;
         }
@@ -19166,8 +19450,8 @@
                 function (g) { g.shieldPool = (g.shieldPool || 0) + 1; },
                 function (g) { g.shieldPool = Math.max(0, (g.shieldPool || 0) - 1); },
                 { item: 'streak_shield' });
-            showToast(res.ok ? '🛡 Shield added to your pool — 40 Grit' : res.message,
-                      res.ok ? 'green' : 'red');
+            showToast(res.ok ? 'Shield added to your pool — 40 Grit' : res.message,
+                      res.ok ? 'green' : 'red', null, res.ok ? 'shield' : null);
             gritRenderRewards();
             return res.ok;
         };
@@ -19203,8 +19487,8 @@
                     }
                 },
                 { item: 'xp_boost', month: mk });
-            showToast(res.ok ? '⚡ Double XP armed — your next completion counts twice' : res.message,
-                      res.ok ? 'green' : 'red');
+            showToast(res.ok ? 'Double XP armed — your next completion counts twice' : res.message,
+                      res.ok ? 'green' : 'red', null, res.ok ? 'lightning' : null);
             gritRenderRewards();
             return res.ok;
         };
@@ -19304,7 +19588,7 @@
             var g = gritState();
             if (!g || !gritIsBoostArmed(activity)) return false;
             g.pendingBoost = null;
-            gritBurstNote('⚡ Double XP spent on ' + (activity.name || 'that completion'));
+            gritBurstNote('Double XP spent on ' + (activity.name || 'that completion'), 'lightning');
             return true;
         }
 
@@ -19322,8 +19606,8 @@
             clearTimeout(_gritBurstTimer);
             _gritBurstTimer = setTimeout(gritFlushBurst, 120);
         }
-        function gritBurstNote(text) {
-            _gritBurstNotes.push(text);
+        function gritBurstNote(text, icon) {
+            _gritBurstNotes.push({ text: text, icon: icon || null });
             clearTimeout(_gritBurstTimer);
             _gritBurstTimer = setTimeout(gritFlushBurst, 120);
         }
@@ -19333,7 +19617,7 @@
             _gritBurstTimer = null;
             var items = _gritBurst; _gritBurst = [];
             var notes = _gritBurstNotes; _gritBurstNotes = [];
-            notes.forEach(function (n) { try { showToast(n, 'blue'); } catch (e) {} });
+            notes.forEach(function (n) { try { showToast(n.text, 'blue', null, n.icon); } catch (e) {} });
             if (!items.length) return;
             var total = items.reduce(function (s, i) { return s + i.amount; }, 0);
             if (total <= 0) return;
@@ -19348,7 +19632,7 @@
                       (rest > 0 ? ' · and ' + rest + ' more' : '') +
                       ' — +' + total + ' Grit';
             }
-            try { showToast('◆ ' + msg, 'green'); } catch (e) {}
+            try { showToast(msg, 'green', null, 'diamond'); } catch (e) {}
         }
 
         // ── UI plumbing ───────────────────────────────────────────────────
@@ -19522,7 +19806,7 @@
             var canGiftShield = g.balance >= GRIT_GIFT_SHIELD_COST;
             html += '<div class="grit-item' + (!canBuyShield && !canGiftShield ? ' is-poor' : '') + '">' +
                       '<div class="grit-item-main">' +
-                        '<div class="grit-item-name">🛡 Streak shield</div>' +
+                        '<div class="grit-item-name">' + phIcon('shield', { weight: 'fill', lead: true }) + 'Streak shield</div>' +
                         '<div class="grit-item-sub">Absorbs one missed window. Buy into your pool, ' +
                           'then place it on an activity.' +
                           '<br><span class="grit-item-gift-note">Gift one for ' +
@@ -19557,7 +19841,7 @@
             var giftBoostBlocked = g.balance < GRIT_GIFT_BOOST_COST || giftBoostsLeft <= 0;
             html += '<div class="grit-item' + (boostBlocked && giftBoostBlocked ? ' is-poor' : '') + '">' +
                       '<div class="grit-item-main">' +
-                        '<div class="grit-item-name">⚡ Double XP</div>' +
+                        '<div class="grit-item-name">' + phIcon('lightning', { weight: 'fill', lead: true }) + 'Double XP</div>' +
                         '<div class="grit-item-sub">' +
                           (g.pendingBoost
                             ? 'Armed — your next completion counts twice.'
@@ -19684,7 +19968,7 @@
                            cap + '/' + SHIELD_ABS_CAP + ' shields' +
                            (used ? ' · ' + used + ' used' : '') +
                          '</span>' +
-                         '<span class="grit-pick-cta">' + (full ? 'Full' : '🛡 +1') + '</span>' +
+                         '<span class="grit-pick-cta">' + (full ? 'Full' : phIcon('shield', { weight: 'fill', lead: true }) + '+1') + '</span>' +
                        '</button>';
             }).join('');
 
@@ -19694,8 +19978,8 @@
                     host.querySelectorAll('.grit-pick-row').forEach(function (b) { b.disabled = true; });
                     var res = await window.gritApplyShield(btn.getAttribute('data-act'));
                     showToast(res.ok
-                        ? '🛡 Shield placed on ' + res.title + ' — now ' + res.cap + ' of ' + SHIELD_ABS_CAP
-                        : res.message, res.ok ? 'green' : 'red');
+                        ? 'Shield placed on ' + res.title + ' — now ' + res.cap + ' of ' + SHIELD_ABS_CAP
+                        : res.message, res.ok ? 'green' : 'red', null, res.ok ? 'shield' : null);
                     gritRenderRewards(true);
                 });
             });
@@ -21226,18 +21510,20 @@
                 changed = true;
                 var opp = vsOther(ch, uid);
                 var mine = vsCappedTotal(ch, uid), theirs = vsCappedTotal(ch, opp);
-                var line;
+                var line, lineIcon = null;
                 if (ch.outcome === 'tie_refund') {
-                    line = '🤝 "' + ch.name + '" ended level — ' + mine + '–' + theirs +
+                    line = '"' + ch.name + '" ended level — ' + mine + '–' + theirs +
                            '. Both stakes returned.';
+                    lineIcon = 'handshake';
                 } else if (ch.winner === uid) {
-                    line = '🏆 You won "' + ch.name + '" ' + mine + '–' + theirs +
+                    line = 'You won "' + ch.name + '" ' + mine + '–' + theirs +
                            ' · +' + ((ch.payout && ch.payout[uid]) || 0) + ' Grit';
+                    lineIcon = 'trophy';
                 } else {
                     line = '"' + ch.name + '" went to ' + vsName(ch, opp) + ' — ' +
                            mine + '–' + theirs + '. Your stake is gone.';
                 }
-                showToast(line, ch.winner === uid ? 'olive' : 'red');
+                showToast(line, ch.winner === uid ? 'olive' : 'red', null, lineIcon);
             });
             if (changed) debouncedSaveUserData();
         }
@@ -21301,7 +21587,7 @@
                     }
                     if (res === 'won') {
                         await vsFetch(true);
-                        showToast('🏆 You finished "' + ch.name + '" first — the pot is yours.', 'olive');
+                        showToast('You finished "' + ch.name + '" first — the pot is yours.', 'olive', null, 'trophy');
                         await vsRunMaintenance();
                     }
                 } catch (e) { console.warn('Versus progress write failed:', e && e.message); }
@@ -21711,7 +21997,7 @@
 
             if (!live && !resolved.length) {
                 html += '<div class="vs-empty">' +
-                            '<div class="vs-empty-icon">⚔️</div>' +
+                            '<div class="vs-empty-icon"><i class="ph-fill ph-sword mk-ico-block"></i></div>' +
                             '<div class="vs-empty-text">Stake Grit against a friend. ' +
                             'First to finish takes the pot.</div>' +
                         '</div>';
@@ -22934,12 +23220,12 @@
             var name = giftFriendName(uid);
             var giftBoostsLeft = gritGiftBoostsLeftThisMonth();
 
-            function card(t, emoji, title, sub, cost, blockedMsg) {
+            function card(t, icon, title, sub, cost, blockedMsg) {
                 var blocked = !!blockedMsg;
                 return '<button type="button" class="gift-item' + (blocked ? ' is-blocked' : '') + '"' +
                          (blocked ? ' disabled' : '') +
                          ' onclick="giftConfirm(\'' + giftEsc(uid) + '\',\'' + t + '\')">' +
-                         '<span class="gift-item-emoji">' + emoji + '</span>' +
+                         '<span class="gift-item-emoji">' + icon + '</span>' +
                          '<span class="gift-item-main">' +
                            '<span class="gift-item-name">' + giftEsc(title) + '</span>' +
                            '<span class="gift-item-sub">' + (blocked ? giftEsc(blockedMsg) : giftEsc(sub)) + '</span>' +
@@ -22958,10 +23244,10 @@
             var body =
                 '<p class="gift-note">Sending to <strong>' + giftEsc(name) + '</strong> · ' +
                   'you have ' + bal.toLocaleString() + ' Grit</p>' +
-                card('shield', '🛡', 'Streak shield',
+                card('shield', phIcon('shield', { weight: 'fill' }), 'Streak shield',
                      'Drops straight into their pool. They are told you sent it.',
                      GRIT_GIFT_SHIELD_COST, shieldBlocked) +
-                card('xp_boost', '⚡', 'Double XP',
+                card('xp_boost', phIcon('lightning', { weight: 'fill' }), 'Double XP',
                      'A surprise. They find out when it lands on a completion. ' +
                      giftBoostsLeft + ' of ' + GRIT_GIFT_BOOST_PER_MONTH + ' left this month.',
                      GRIT_GIFT_BOOST_COST, boostBlocked);
@@ -23005,9 +23291,10 @@
                 giftCloseSheet();
                 showToast(res.ok
                     ? (type === 'shield'
-                        ? '🛡 Shield sent to ' + name
-                        : '⚡ Double XP sent to ' + name + ' — they will not see it coming')
-                    : res.message, res.ok ? 'green' : 'red');
+                        ? 'Shield sent to ' + name
+                        : 'Double XP sent to ' + name + ' — they will not see it coming')
+                    : res.message, res.ok ? 'green' : 'red',
+                    null, res.ok ? (type === 'shield' ? 'shield' : 'lightning') : null);
                 try { gritRenderRewards(); } catch (e) {}
                 try { giftRenderSentList(); } catch (e) {}
             });
@@ -23065,7 +23352,7 @@
             await gritPersist();
             gritFlushLedger();
             gritRefreshUI();
-            showToast('🛡 ' + (gift.senderName || 'A friend') + ' sent you a shield.', 'green');
+            showToast((gift.senderName || 'A friend') + ' sent you a shield.', 'green', null, 'shield');
             giftSyncMirror(gift, { thanked: false, thankedAt: null });
             return true;
         }
@@ -23147,7 +23434,7 @@
                   '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
                 '</button>' +
                 '<div class="level-up-eyebrow">A GIFT</div>' +
-                '<div class="level-up-emoji">⚡</div>' +
+                '<div class="level-up-emoji">' + phIcon('lightning', { weight: 'fill', block: true }) + '</div>' +
                 '<div class="gift-reveal-head">' + giftEsc(gift.senderName || 'A friend') +
                   ' sent you double XP</div>' +
                 '<div class="gift-reveal-act">on ' +
@@ -23294,7 +23581,9 @@
             host.innerHTML =
                 '<div class="fr-section-kicker">Gifts sent</div>' +
                 list.slice(0, GIFT_SENT_SHOWN).map(function (gf) {
-                    var what = gf.type === 'shield' ? '🛡 Shield' : '⚡ Double XP';
+                    var what = gf.type === 'shield'
+                        ? phIcon('shield', { weight: 'fill', lead: true }) + 'Shield'
+                        : phIcon('lightning', { weight: 'fill', lead: true }) + 'Double XP';
                     var state = gf.status === 'consumed'
                         ? (gf.type === 'shield' ? 'Received' :
                             (gf.thanked ? 'Used — they said thanks' : 'Used'))
@@ -24013,19 +24302,19 @@
         // manual — the detail belongs in the setup sheet, where it is being
         // acted on rather than read.
         const MODE_META = {
-            habit:     { name: 'Habit Mode',    icon: '🌱', tag: 'Build',
+            habit:     { name: 'Habit Mode',    icon: 'plant', tag: 'Build',
                          blurb: 'Up to three activities, a daily window each. Counts days achieved.' },
-            berserk:   { name: 'Berserk Mode',  icon: '🔥', tag: 'Extreme',
+            berserk:   { name: 'Berserk Mode',  icon: 'fire', tag: 'Extreme',
                          blurb: 'An XP target inside a 1–5 hour window. Clear it for +30%, miss it for −30%.' },
-            recovery:  { name: 'Recovery Mode', icon: '🩹', tag: 'Return',
+            recovery:  { name: 'Recovery Mode', icon: 'bandaids', tag: 'Return',
                          blurb: 'Up to three streaks climb twice as fast, until each is back at its own peak.' },
-            insurance: { name: 'Insurance Mode',icon: '🛡', tag: 'Shield',
+            insurance: { name: 'Insurance Mode',icon: 'shield', tag: 'Shield',
                          blurb: 'Up to three activities stop losing streak when you miss.' },
-            stake:     { name: 'Stake Mode',    icon: '🎲', tag: 'Wager',
+            stake:     { name: 'Stake Mode',    icon: 'dice-five', tag: 'Wager',
                          blurb: 'Bet Grit on completion targets. Every one lands, or the stake is gone.' },
-            pact:      { name: 'Pact Mode',     icon: '🤝', tag: 'Together',
+            pact:      { name: 'Pact Mode',     icon: 'handshake', tag: 'Together',
                          blurb: 'Two people, two targets, one shared outcome.' },
-            focus:     { name: 'Focus Window',  icon: '🎯', tag: 'Rhythm',
+            focus:     { name: 'Focus Window',  icon: 'target', tag: 'Rhythm',
                          blurb: 'One daily window. Everything logged inside it earns +10% XP.' }
         };
 
@@ -24456,7 +24745,7 @@
         // The bonus is also recorded in xpTodayGhost so "XP today" and the
         // leaderboard see it. Without that, XP that isn't attached to a
         // completionHistory row is invisible to every read that walks history.
-        function modesAwardXP(amount, label) {
+        function modesAwardXP(amount, label, icon) {
             amount = Math.round(amount || 0);
             if (!amount || !window.userData) return 0;
             if (amount > 0) {
@@ -24480,7 +24769,7 @@
                     (window.userData.xpTodayGhost[tk] || 0) - loss;
                 try { if (typeof updateDashboard === 'function') updateDashboard(); } catch (e) {}
             }
-            if (label) { try { showToast(label, amount > 0 ? 'green' : 'red'); } catch (e) {} }
+            if (label) { try { showToast(label, amount > 0 ? 'green' : 'red', null, icon || null); } catch (e) {} }
             return amount;
         }
 
@@ -24785,7 +25074,7 @@
                     headline: '−' + a.wager + ' Grit',
                     lines: (a.items || []).map(function (it) {
                         var done = (it.count || 0) >= it.target;
-                        return (done ? '✓ ' : '✗ ') + it.activityName + ' — ' +
+                        return (done ? phIcon('check', { lead: true }) : phIcon('x', { lead: true })) + it.activityName + ' — ' +
                                Math.min(it.count || 0, it.target) + '/' + it.target;
                     }),
                     note: 'Stake mode is all or nothing. One target short is the same as none.'
@@ -25033,7 +25322,7 @@
 
         function modesRecoveryConclude(a) {
             var names = (a.activities || []).map(function (x) { return x.activityName; }).join(', ');
-            modesLocalNotify('Recovery complete ⚔️',
+            modesLocalNotify('Recovery complete',
                 'Every activity is back at its old peak. Recovery Mode has switched itself off.');
             modesEnd('completed', names + ' back at peak', {
                 resolution: {
@@ -25069,7 +25358,7 @@
                 var basis = last && !last.isPenalty ? Math.abs(last.xp || 0) : 0;
                 var bonus = Math.round(basis * mult);
                 if (bonus > 0) {
-                    modesAwardXP(bonus, '🎯 Inside your focus window — +' + bonus + ' XP');
+                    modesAwardXP(bonus, 'Inside your focus window — +' + bonus + ' XP', 'target');
                     a.bonusXP = (a.bonusXP || 0) + bonus;
                     a.bonusCount = (a.bonusCount || 0) + 1;
                     dirty = true;
@@ -25109,8 +25398,8 @@
                         entry.granted = (entry.granted || 0) + 1;
                         dirty = true;
                         try {
-                            showToast('🩹 Recovery — ' + (activity.name || 'streak') + ' jumps to ' +
-                                      activity.streak + ' of ' + entry.ceiling, 'blue');
+                            showToast('Recovery — ' + (activity.name || 'streak') + ' jumps to ' +
+                                      activity.streak + ' of ' + entry.ceiling, 'blue', null, 'bandaids');
                         } catch (e) {}
                     }
                     if ((activity.streak || 0) >= entry.ceiling && recoveryAllAtCeiling(a)) {
@@ -25825,8 +26114,8 @@
                         var term = pactTerm(live, uid);
                         if (!term) continue;
                         await modesAdoptPact(live, term);
-                        showToast('🤝 ' + pactName(live, pactOther(live, uid)) +
-                                  ' accepted your Pact — it is live.', 'green');
+                        showToast(pactName(live, pactOther(live, uid)) +
+                                  ' accepted your Pact — it is live.', 'green', null, 'handshake');
                         break;
                     }
                 }
@@ -25956,7 +26245,7 @@
             html += '<div class="md-head">' +
                       '<p class="md-sub">One at a time. Each one changes how the app treats you while it runs.</p>' +
                       '<div class="md-grit" title="Your Grit balance">' +
-                        '<span class="md-grit-dot">◆</span>' +
+                        '<span class="md-grit-dot">' + phIcon('diamond', { weight: 'fill' }) + '</span>' +
                         '<span class="md-grit-n">' + (gritBalance() || 0).toLocaleString() + '</span>' +
                       '</div>' +
                     '</div>';
@@ -26012,13 +26301,13 @@
             return '<div class="md-card' + (isActive ? ' is-live' : '') + (blocked ? ' is-blocked' : '') +
                         ' md-card-' + kind + '">' +
                      '<div class="md-card-top">' +
-                       '<span class="md-card-icon">' + meta.icon + '</span>' +
+                       '<span class="md-card-icon">' + phIcon(meta.icon) + '</span>' +
                        '<span class="md-card-tag">' + modeEsc(meta.tag) + '</span>' +
                      '</div>' +
                      '<div class="md-card-name">' + modeEsc(meta.name) + '</div>' +
                      '<p class="md-card-blurb">' + modeEsc(meta.blurb) + '</p>' +
                      '<div class="md-card-foot">' +
-                       '<span class="md-card-cost">◆ ' + modeEsc(modeCostLabel(kind)) + '</span>' +
+                       '<span class="md-card-cost">' + phIcon('diamond', { weight: 'fill', lead: true }) + modeEsc(modeCostLabel(kind)) + '</span>' +
                        (isActive
                          ? '<span class="md-card-live">Running</span>'
                          : '<button type="button" class="md-card-btn' + (blocked ? ' is-off' : '') + '" ' +
@@ -26196,8 +26485,8 @@
                        (left > 0 ? left + ' day' + (left === 1 ? '' : 's') + ' left · ' +
                                    modeDateLabel(stakeEndDay(a))
                                  : 'Window closed') + '</span>' +
-                     '<span class="md-chip">◆ ' + a.wager + ' staked</span>' +
-                     '<span class="md-chip">Win ◆ ' + (a.wager + Math.round(a.wager * MODE_WAGER_RETURN)) + '</span>' +
+                     '<span class="md-chip">' + phIcon('diamond', { weight: 'fill', lead: true }) + a.wager + ' staked</span>' +
+                     '<span class="md-chip">Win ' + phIcon('diamond', { weight: 'fill', lead: true }) + (a.wager + Math.round(a.wager * MODE_WAGER_RETURN)) + '</span>' +
                    '</div>' +
                    '<p class="md-note">All or nothing. One target short is the same as none.</p>';
         }
@@ -26247,7 +26536,7 @@
                    '</div>' +
                    '<div class="md-hrow-meta">' +
                      '<span class="md-chip">' + (notStarted ? 'Starts tomorrow' : left + ' day' + (left === 1 ? '' : 's') + ' left') + '</span>' +
-                     '<span class="md-chip">◆ ' + PACT_WAGER + ' each</span>' +
+                     '<span class="md-chip">' + phIcon('diamond', { weight: 'fill', lead: true }) + PACT_WAGER + ' each</span>' +
                      (notStarted ? '' : modeMarkBtnHtml(a.activityId, !modeCanMark(a.activityId))) +
                    '</div>' +
                    '<p class="md-note">If either of you falls short, it breaks for both.</p>';
@@ -26272,7 +26561,7 @@
                           '<div class="md-invite-body">' +
                             'They are committing to <strong>' + modeEsc(t.activityName || 'an activity') + ' × ' +
                             (t.target || 0) + '</strong> over ' + p.durationDays + ' days. ' +
-                            'Pick your own, and stake ◆ ' + p.stake + '. One short and both stakes go.' +
+                            'Pick your own, and stake ' + phIcon('diamond', { weight: 'fill', lead: true }) + p.stake + '. One short and both stakes go.' +
                           '</div>' +
                           '<div class="md-invite-btns">' +
                             '<button type="button" class="md-btn md-btn-primary" onclick="pactOpenAccept(\'' + modeEsc(p.id) + '\')">Accept</button>' +
@@ -26283,7 +26572,7 @@
             mineOut.forEach(function (p) {
                 html += '<div class="md-invite md-invite-out">' +
                           '<div class="md-invite-top">Waiting on <strong>' + modeEsc(pactName(p, p.partner)) + '</strong></div>' +
-                          '<div class="md-invite-body">Your ◆ ' + p.stake + ' is held until they answer. ' +
+                          '<div class="md-invite-body">Your ' + phIcon('diamond', { weight: 'fill', lead: true }) + p.stake + ' is held until they answer. ' +
                             'It starts the day after they accept.</div>' +
                           '<div class="md-invite-btns">' +
                             '<button type="button" class="md-btn" onclick="pactWithdraw(\'' + modeEsc(p.id) + '\')">Withdraw</button>' +
@@ -26299,9 +26588,9 @@
             var meta = MODE_META[a.kind];
             var msg;
             if (a.kind === 'stake') {
-                msg = 'End Stake Mode now? Your ◆ ' + a.wager + ' stake is forfeited — the wager only pays if every target lands.';
+                msg = 'End Stake Mode now? Your ' + a.wager + ' Grit stake is forfeited — the wager only pays if every target lands.';
             } else if (a.kind === 'pact') {
-                msg = 'Break the pact now? Your ◆ ' + PACT_WAGER + ' is gone, and so is ' +
+                msg = 'Break the pact now? Your ' + PACT_WAGER + ' Grit is gone, and so is ' +
                       a.partnerName + '’s. They will be told you ended it.';
             } else if (a.kind === 'berserk') {
                 msg = 'End Berserk Mode now? Ending early counts as a miss — the 30% XP penalty applies.';
@@ -26619,7 +26908,7 @@
 
         function modeCostLine(cost) {
             var bal = gritBalance() || 0;
-            return '<span class="md-cost-n">◆ ' + cost + '</span>' +
+            return '<span class="md-cost-n">' + phIcon('diamond', { weight: 'fill', lead: true }) + cost + '</span>' +
                    '<span class="md-cost-bal">' + (bal >= cost
                      ? 'you have ' + bal
                      : bal + ' — ' + (cost - bal) + ' short') + '</span>';
@@ -26912,7 +27201,7 @@
                 out.berserkEnds   = 'until ' + modeHourLabel(s.hours);
             }
             if (s.kind === 'stake') {
-                out.stakePayout = '◆ ' + (s.wager + Math.round(s.wager * MODE_WAGER_RETURN));
+                out.stakePayout = String(s.wager + Math.round(s.wager * MODE_WAGER_RETURN));
                 out.stakeEnds   = 'ends ' + modeDateLabel(modeAddDays(modesToday(), s.days));
             }
             if (s.kind === 'focus') {
@@ -27109,7 +27398,7 @@
                                    (h.completions || 0) + ' achieved</div>';
                         }).join('') +
                       '</div>' +
-                      '<p class="md-hint">Resuming is free. Starting fresh archives this run and costs ◆ ' +
+                      '<p class="md-hint">Resuming is free. Starting fresh archives this run and costs ' + phIcon('diamond', { weight: 'fill', lead: true }) +
                         MODE_COST.habit + '.</p>' +
                     '</div>' +
                     '<div class="md-sheet-foot md-sheet-foot-2">' +
@@ -27316,13 +27605,14 @@
                         [25, 50, 75, 100].map(function (w) {
                             return '<button type="button" class="md-wager-btn' + (s.wager === w ? ' is-on' : '') + '" ' +
                                    'aria-pressed="' + (s.wager === w ? 'true' : 'false') + '" ' +
-                                   'onclick="modeSetNum(\'wager\',' + w + ',' + MODE_WAGER_MIN + ',' + MODE_WAGER_MAX + ')">◆ ' + w + '</button>';
+                                   'onclick="modeSetNum(\'wager\',' + w + ',' + MODE_WAGER_MIN + ',' + MODE_WAGER_MAX + ')">' + phIcon('diamond', { weight: 'fill', lead: true }) + w + '</button>';
                         }).join('') +
                       '</div>' +
                       '<div class="md-stakes">' +
                         '<div class="md-stake md-stake-win"><span class="md-stake-k">All targets hit</span>' +
-                          '<span class="md-stake-v" data-md-live="stakePayout">◆ ' + payout + '</span></div>' +
-                        '<div class="md-stake md-stake-lose"><span class="md-stake-k">One short</span><span class="md-stake-v">◆ 0</span></div>' +
+                          '<span class="md-stake-v">' + phIcon('diamond', { weight: 'fill', lead: true }) +
+                            '<span data-md-live="stakePayout">' + payout + '</span></span></div>' +
+                        '<div class="md-stake md-stake-lose"><span class="md-stake-k">One short</span><span class="md-stake-v">' + phIcon('diamond', { weight: 'fill', lead: true }) + '0</span></div>' +
                       '</div>' +
                     '</div>' +
                     modeSheetFoot('Place the stake', 'stakeStart()', modeStartBlocked(),
@@ -27360,7 +27650,7 @@
             }, s.wager, 'mode_stake_wager');
             if (!res.ok) { showToast(res.message, 'red'); return; }
             modeCloseSheet();
-            showToast('Stake placed — ◆ ' + s.wager + ' on ' + total + ' completions in ' + s.days + ' days', 'green');
+            showToast('Stake placed — ' + s.wager + ' Grit on ' + total + ' completions in ' + s.days + ' days', 'green', null, 'diamond');
             modesRenderPage();
         };
 
@@ -27427,7 +27717,7 @@
 
             if (!s.partnerUid) {
                 html += '<div class="modal-body md-body">' +
-                          '<p class="md-lede">Two people, two targets, one outcome. ◆ ' + PACT_WAGER +
+                          '<p class="md-lede">Two people, two targets, one outcome. ' + phIcon('diamond', { weight: 'fill', lead: true }) + PACT_WAGER +
                             ' each — if either falls short, both stakes go.</p>' +
                           '<label class="md-label">Who with?</label>' +
                           '<div class="md-picker">' + friends.map(function (u) {
@@ -27490,7 +27780,7 @@
                 await pactCreate(s.partnerUid, giftFriendName(s.partnerUid), term, s.days);
                 modeCloseSheet();
                 showToast('Request sent to ' + giftFriendName(s.partnerUid) +
-                          ' — your ◆ ' + PACT_WAGER + ' is held until they answer.', 'green');
+                          ' — your ' + PACT_WAGER + ' Grit is held until they answer.', 'green', null, 'handshake');
                 modesRenderPage();
             } catch (e) { showToast(modeErrText(e), 'red'); }
         };
@@ -27534,7 +27824,7 @@
                       '</div>' +
                       '<p class="md-hint">Starts tomorrow and runs ' + p.durationDays + ' days for both of you.</p>' +
                     '</div>' +
-                    modeSheetFoot('Accept and stake ◆ ' + p.stake, 'pactDoAccept()',
+                    modeSheetFoot('Accept and stake ' + p.stake + ' Grit', 'pactDoAccept()',
                                   !s.activityId || !modeAffordable(p.stake), modeCostLine(p.stake));
             modeSheet(html);
             modeSyncLive();
@@ -27575,7 +27865,7 @@
             el.className = 'md-res-scrim md-res-' + (won ? 'win' : 'lose');
             el.innerHTML =
                 '<div class="md-res" role="dialog" aria-modal="true">' +
-                  '<div class="md-res-icon">' + (MODE_META[res.kind] ? MODE_META[res.kind].icon : '◆') + '</div>' +
+                  '<div class="md-res-icon">' + phIcon(MODE_META[res.kind] ? MODE_META[res.kind].icon : 'diamond', { block: true }) + '</div>' +
                   '<div class="md-res-title">' + modeEsc(res.title) + '</div>' +
                   '<div class="md-res-headline">' + modeEsc(res.headline) + '</div>' +
                   (res.lines && res.lines.length

@@ -224,6 +224,42 @@
             box-sizing: border-box;
         }
 
+        /* ── Phosphor Icons ───────────────────────────────────────────────
+           Icons are glyphs in a webfont, so they inherit font-size and colour
+           from whatever holds them. That is the whole reason the swap from
+           emoji was cheap: every container that used to size an emoji with
+           font-size now sizes an icon the same way, and no call site has to
+           pass a pixel width.
+
+           Two adjustments the font needs to sit right in running text:
+           inline-block so transforms and animations apply, and a small
+           negative vertical-align because the glyph box sits on the baseline
+           while the drawn shape is optically centred on the x-height. */
+        i[class*="ph-"] {
+            display: inline-block;
+            vertical-align: -0.125em;
+            line-height: 1;
+            flex-shrink: 0;
+        }
+
+        /* Icons carried by a text run — a badge, a chip, a sentence — need a
+           gap the emoji used to get from its own glyph advance. Only applies
+           when the icon is followed by text, so lone icons stay flush. */
+        .mk-ico-lead { margin-right: 0.4em; }
+
+        /* Standalone display icons (empty states, celebration overlays). The
+           container sets the size; this only stops a stray inherited
+           letter-spacing from shifting the glyph off-centre. */
+        .mk-ico-block {
+            display: block;
+            letter-spacing: 0;
+        }
+
+        /* Dimension / category tint. Set --mk-ico-tint on any ancestor and the
+           icons inside pick it up, which is how the five dimension colours
+           reach their icons without an inline style per call site. */
+        .mk-ico-tint { color: var(--mk-ico-tint, currentColor); }
+
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             background-color: var(--color-bg-primary);
@@ -2259,7 +2295,7 @@
         /* When a collapse-icon contains an inline SVG (newer routine group
            headers use this for sharper rendering), suppress the legacy
            background-image chevron and rotate the SVG itself: 0° collapsed
-           (points right ▶), 90° expanded (points down ▼).
+           (points right), 90° expanded (points down).
            This pattern is preferred for new code; older spots still use the
            bg-image rotation (down → up) for backward compatibility. */
         .collapse-icon:has(svg) {
@@ -2274,6 +2310,23 @@
         .collapse-icon:has(svg).expanded {
             transform: rotate(90deg);
         }
+
+        /* Same idea for a Phosphor caret. The base rule zeroes font-size so the
+           background-image variant can't show stray text, so a glyph chevron
+           has to get a real size back — and the image has to go, or the two
+           chevrons stack. Rotation stays on the span, so .expanded still flips
+           it, and unlike the SVG variant this one already points down when
+           collapsed: 180°, not 90°. */
+        .collapse-icon:has(i) {
+            background-image: none;
+            font-size: 14px;
+        }
+        .collapse-icon:has(i) i {
+            display: block;
+            line-height: inherit;
+            vertical-align: top;
+        }
+        .act-group-header .collapse-icon:has(i) { font-size: 16px; }
 
         /* Path Card */
 
@@ -8179,7 +8232,8 @@
         }
         .nav-tab-locked .nav-icon { filter: grayscale(0.7); }
         .nav-tab-locked::after {
-            content: '🔒';
+            content: "\e2fa";
+            font-family: "Phosphor-Bold";
             position: absolute;
             top: 2px;
             right: 6px;
@@ -8299,6 +8353,9 @@
             margin-top: 1px;
         }
         .mk-toast-icon svg { width: 18px; height: 18px; }
+        /* A Phosphor toast icon is a glyph, so it takes a font-size rather
+           than a width — 17px reads at the same weight as the 18px SVGs. */
+        .mk-toast-icon i { font-size: 17px; }
         .mk-toast-msg {
             flex: 1;
             min-width: 0;
@@ -12395,6 +12452,93 @@
 .pr-act-reset { color: var(--chip-warn-fg); }
 .pr-footer-cad { text-align: center; font-size: 11px; font-weight: 500; color: var(--color-text-secondary); opacity: 0.7; margin-top: 12px; line-height: 1.5; }
 
+/* ── Icon picker ─────────────────────────────────────────────────────────
+   The trigger sits in a form row where a text input used to be, so it borrows
+   that shape; the sheet floats above the modal that opened it. */
+.mk-icon-pick {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--color-input-bg);
+    border: 1px solid var(--color-input-border);
+    border-radius: 10px;
+    color: var(--color-text-primary);
+    font-size: 19px;
+    cursor: pointer;
+    transition: border-color .16s ease, background .16s ease;
+}
+.mk-icon-pick:hover { border-color: var(--color-accent-blue); background: var(--color-input-bg-focus); }
+.mk-icon-pick-wide { width: 100%; padding: 11px 4px; }
+/* Nothing picked yet: the icon shown is a hint, not the value. */
+.mk-icon-pick.is-placeholder { color: var(--color-text-secondary); opacity: 0.45; }
+
+/* Above the modal that opens it (quests sit at 10060), so the sheet is not
+   trapped behind the form it edits. */
+.mk-icon-picker {
+    position: fixed;
+    inset: 0;
+    z-index: 10600;
+    display: none;
+    align-items: flex-end;
+    justify-content: center;
+    background: var(--color-modal-scrim);
+}
+.mk-icon-picker.is-open { display: flex; }
+.mk-icon-picker-sheet {
+    width: 100%;
+    max-width: 460px;
+    max-height: 70vh;
+    overflow-y: auto;
+    background: var(--color-modal-bg);
+    border: 1px solid var(--color-modal-border);
+    border-radius: 18px 18px 0 0;
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+}
+.mk-icon-picker-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--color-text-primary);
+    margin-bottom: 14px;
+}
+.mk-icon-picker-close {
+    background: none;
+    border: none;
+    color: var(--color-text-secondary);
+    font-size: 18px;
+    cursor: pointer;
+    padding: 4px;
+    line-height: 1;
+}
+/* auto-fill, not fixed columns: the same grid has to hold up from a narrow
+   phone to the 460px cap without a media query per step. */
+.mk-icon-picker-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
+    gap: 8px;
+}
+.mk-icon-picker-item {
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--recessed-bg-3);
+    border: 1px solid transparent;
+    border-radius: 10px;
+    color: var(--color-text-secondary);
+    font-size: 22px;
+    cursor: pointer;
+    transition: color .14s ease, border-color .14s ease, background .14s ease;
+}
+.mk-icon-picker-item:hover { color: var(--color-text-primary); background: var(--recessed-bg-4); }
+.mk-icon-picker-item.is-on {
+    color: var(--color-progress);
+    border-color: var(--color-progress);
+    background: rgba(90,159,212,0.10);
+}
+
 /* ═══ BUILDER ═══════════════════════════════════════════════════════════ */
 .pr-b-name-row { display: flex; gap: 8px; }
 .pr-b-emoji-input { width: 52px; flex-shrink: 0; text-align: center; font-size: 19px; padding: 12px 4px; }
@@ -14046,9 +14190,11 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
     transition: background .16s ease, border-color .16s ease;
 }
 .grit-buy::before {
-    content: '◆ ';
+    content: "\e1ec";
+    font-family: "Phosphor-Fill";
     color: #f5c563;
     font-size: 10px;
+    margin-right: 4px;
 }
 .grit-buy:hover:not(:disabled) {
     background: var(--color-hover-overlay-strong);
@@ -14071,7 +14217,8 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 }
 .grit-explain li + li { border-top: 1px solid var(--color-border); }
 .grit-explain li::before {
-    content: '◆';
+    content: "\e1ec";
+    font-family: "Phosphor-Fill";
     position: absolute;
     left: 14px;
     top: 11px;
@@ -14511,7 +14658,7 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .vs-sub-name.is-done { color: #8db866; }
-.vs-sub-name.is-done::before { content: '✓ '; font-weight: 800; }
+.vs-sub-name.is-done::before { content: "\e182"; font-family: "Phosphor-Bold"; margin-right: 4px; }
 .vs-sub-count {
     flex-shrink: 0; font-size: 12px; font-weight: 700;
     font-variant-numeric: tabular-nums; color: var(--color-text-secondary);
@@ -14982,7 +15129,7 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
     background: color-mix(in srgb, #f5c563 9%, transparent);
     white-space: nowrap;
 }
-.grit-gift-buy::before { content: '◆ '; color: #f5c563; font-size: 10px; }
+.grit-gift-buy::before { content: "\e1ec"; font-family: "Phosphor-Fill"; color: #f5c563; font-size: 10px; margin-right: 4px; }
 .grit-gift-buy:hover:not(:disabled) {
     background: color-mix(in srgb, #f5c563 16%, transparent);
     border-color: color-mix(in srgb, #f5c563 55%, transparent);
@@ -15026,7 +15173,7 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
     flex-shrink: 0; font: 700 14px Inter, sans-serif; color: #f5c563;
     font-variant-numeric: tabular-nums;
 }
-.gift-item-cost::before { content: '◆ '; font-size: 10px; }
+.gift-item-cost::before { content: "\e1ec"; font-family: "Phosphor-Fill"; font-size: 10px; margin-right: 4px; }
 
 /* ── Sent list ── */
 .gift-sent-row {
@@ -15198,7 +15345,7 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 }
 .lb-optin-rules li:last-child { margin-bottom: 0; }
 .lb-optin-rules li::before {
-    content: '◆'; position: absolute; left: 0; top: 1px;
+    content: "\e1ec"; font-family: "Phosphor-Fill"; position: absolute; left: 0; top: 1px;
     font-size: 8px; color: #f5c563;
 }
 .lb-optin-rules strong { color: var(--color-text-primary); font-weight: 600; }

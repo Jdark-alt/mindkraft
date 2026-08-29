@@ -96,7 +96,7 @@ test('resolveActivityName treats a blank name as missing', () => {
 
 test('general reminder keeps the existing copy verbatim', () => {
     const payload = buildPayload({ type: 'general' }, null);
-    assert.strictEqual(payload.title, 'Mindkraft ⚔️');
+    assert.strictEqual(payload.title, 'Mindkraft');
     assert.strictEqual(payload.body, "Don't forget to check off today's tasks!");
     assert.strictEqual(payload.tag, 'mindkraft-daily-reminder');
     assert.strictEqual(payload.data.type, 'general');

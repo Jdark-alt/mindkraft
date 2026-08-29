@@ -334,7 +334,7 @@ exports.onGiftReceived = onDocumentCreated(
 
         const sender = gift.senderName || 'A friend';
         await pushToUser(event.params.receiverUid, {
-            title: 'Mindkraft ⚔️',
+            title: 'Mindkraft',
             body: sender + ' sent you a shield.',
             tag: 'mindkraft-gift-' + String(event.params.giftId),
             data: { type: 'gift', activityId: null },
@@ -369,7 +369,7 @@ exports.onGiftConsumed = onDocumentWritten(
             : name + ' used the double XP you sent.';
 
         await pushToUser(event.params.senderUid, {
-            title: 'Mindkraft ⚔️',
+            title: 'Mindkraft',
             body,
             tag: 'mindkraft-gift-used-' + String(event.params.giftId),
             data: { type: 'gift', activityId: null },
@@ -426,7 +426,7 @@ exports.onPactWrite = onDocumentWritten(
             if (after.status !== 'pending' || !after.partner) return;
             const from = pactDisplayName(after, after.createdBy);
             await pushToUser(after.partner, {
-                title: 'Mindkraft ⚔️',
+                title: 'Mindkraft',
                 body: from + ' wants to start a Pact with you.',
                 tag,
                 data: { type: 'pact', activityId: null },
@@ -439,7 +439,7 @@ exports.onPactWrite = onDocumentWritten(
         if (before.status === 'pending' && after.status === 'active') {
             const partnerName = pactDisplayName(after, after.partner);
             await pushToUser(after.createdBy, {
-                title: 'Mindkraft ⚔️',
+                title: 'Mindkraft',
                 body: partnerName + ' accepted your Pact. It starts tomorrow.',
                 tag,
                 data: { type: 'pact', activityId: null },
@@ -450,7 +450,7 @@ exports.onPactWrite = onDocumentWritten(
         if (before.status === 'pending' && after.status === 'declined') {
             const partnerName = pactDisplayName(after, after.partner);
             await pushToUser(after.createdBy, {
-                title: 'Mindkraft ⚔️',
+                title: 'Mindkraft',
                 body: partnerName + ' declined the Pact. Your Grit is on its way back.',
                 tag,
                 data: { type: 'pact', activityId: null },
@@ -474,7 +474,7 @@ exports.onPactWrite = onDocumentWritten(
                     body = 'Pact broken. ' + themName + ' fell short, so both stakes are gone.';
                 }
                 return pushToUser(uid, {
-                    title: 'Mindkraft ⚔️',
+                    title: 'Mindkraft',
                     body,
                     tag,
                     data: { type: 'pact', activityId: null },
