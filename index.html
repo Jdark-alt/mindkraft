@@ -548,7 +548,8 @@
             <!-- A running mode, or a Pact invite waiting, said once and
                  everywhere. Populated by modesRefreshBanner() in app.js and
                  hidden whenever there is nothing to say. -->
-            <div id="modesBanner" class="md-banner" style="display:none" onclick="mkGoModes()"></div>
+            <div id="modesBanner" class="md-banner" style="display:none" onclick="mkGoModes()"
+                 onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();mkGoModes();}"></div>
         </div>
 
         <!-- ══════════════════════════════════════════════════════════════
@@ -3370,20 +3371,26 @@
 
             /* Drag the handle: up to expand, down to settle back. Closing
                stays with each dialog's own close button — a sheet that could
-               be flung away would take unsaved form input with it. */
-            var head = sheet.querySelector('.modal-header');
-            if (!head) return;
+               be flung away would take unsaved form input with it.
+
+               Delegated from the sheet rather than bound to the header node:
+               a dialog that re-renders its own markup replaces that node, and
+               listeners bound directly to it died with it. */
             var startY = null;
-            head.addEventListener('touchstart', function (e) {
-                startY = (isMobile() && e.touches.length === 1) ? e.touches[0].clientY : null;
+            function inHead(e) {
+                var t = e.target;
+                return !!(t && t.closest && t.closest('.modal-header'));
+            }
+            sheet.addEventListener('touchstart', function (e) {
+                startY = (isMobile() && e.touches.length === 1 && inHead(e)) ? e.touches[0].clientY : null;
             }, { passive: true });
-            head.addEventListener('touchmove', function (e) {
+            sheet.addEventListener('touchmove', function (e) {
                 if (startY === null) return;
                 var dy = e.touches[0].clientY - startY;
                 if (dy < -22) { expandSheet(sheet); startY = null; }
                 else if (dy > 22) { sheet.classList.remove(SHEET_FULL); startY = null; }
             }, { passive: true });
-            head.addEventListener('touchend', function () { startY = null; }, { passive: true });
+            sheet.addEventListener('touchend', function () { startY = null; }, { passive: true });
         }
 
         /* Every open starts from the resting height with the body at the top,
@@ -3398,19 +3405,28 @@
             });
         }
 
+        var sheetWatch = null;
+
         function initSheets() {
             var overlays = document.querySelectorAll('.modal-overlay');
             if (!overlays.length) return;
-            var watch = window.MutationObserver ? new MutationObserver(function (recs) {
+            sheetWatch = window.MutationObserver ? new MutationObserver(function (recs) {
                 recs.forEach(function (r) {
                     if (r.target.classList.contains('active')) resetSheet(r.target);
                 });
             }) : null;
-            overlays.forEach(function (overlay) {
-                bindSheet(overlay);
-                if (watch) watch.observe(overlay, { attributes: true, attributeFilter: ['class'] });
-            });
+            overlays.forEach(function (overlay) { window.mkBindSheet(overlay); });
         }
+
+        /* Dialogs built at runtime (the modes setup sheet) are not in the DOM
+           when initSheets() runs, so they used to miss the sheet behaviour
+           entirely — no drag handle, no grow-on-scroll. They register here
+           instead, and the guard inside bindSheet keeps it idempotent. */
+        window.mkBindSheet = function (overlay) {
+            if (!overlay) return;
+            bindSheet(overlay);
+            if (sheetWatch) sheetWatch.observe(overlay, { attributes: true, attributeFilter: ['class'] });
+        };
 
         function boot() {
             document.body.classList.add('mk-nav-' + state.navStyle);

@@ -6082,6 +6082,192 @@
             return activities;
         }
 
+        // ══════════════════════════════════════════════════════════════════
+        //  SEARCHABLE DROPDOWN  (over a native <select>)
+        // ══════════════════════════════════════════════════════════════════
+        //
+        // A native <select> renders differently on every platform, carries no
+        // search, and turns a fifty-activity library into a scroll. This wraps
+        // one rather than replacing it: the <select> stays in the DOM and stays
+        // the value, so every existing read of `.value`, every `innerHTML`
+        // rebuild and every `onchange` handler keeps working untouched. A
+        // MutationObserver keeps the visible control in step with the options
+        // behind it, which is why none of the call sites had to change.
+        //
+        // Same shape as the picker inside the modes sheets: a trigger that
+        // names the choice, a chevron that says it opens, a search field above
+        // the list once the list is long enough to need one.
+
+        const MKS_SEARCH_FROM = 8;   // options before a search field earns its place
+
+        function mksChevron() {
+            return '<svg class="mks-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+                   'stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+                   '<polyline points="6 9 12 15 18 9"/></svg>';
+        }
+
+        function mksOptions(sel) {
+            return Array.prototype.map.call(sel.options, function (o, i) {
+                return { i: i, value: o.value, label: o.textContent,
+                         group: o.parentNode && o.parentNode.tagName === 'OPTGROUP'
+                                ? o.parentNode.label : null,
+                         disabled: o.disabled };
+            });
+        }
+
+        function mksLabel(sel) {
+            // selectedIndex is -1 when the page sets a value no option carries
+            // (a saved activity that has dropped out of scope). A native select
+            // renders blank there; falling back to the first option keeps the
+            // control readable, and the page's own reset then agrees with it.
+            var o = sel.options[sel.selectedIndex] || sel.options[0];
+            return o ? o.textContent : '';
+        }
+
+        function mksClose(box) {
+            box.classList.remove('is-open');
+            var trigger = box.querySelector('.mks-trigger');
+            if (trigger) trigger.setAttribute('aria-expanded', 'false');
+            var panel = box.querySelector('.mks-panel');
+            if (panel) panel.remove();
+        }
+
+        function mksCloseAll(except) {
+            document.querySelectorAll('.mks.is-open').forEach(function (b) {
+                if (b !== except) mksClose(b);
+            });
+        }
+
+        function mksRenderList(box, sel, query) {
+            var list = box.querySelector('.mks-list');
+            if (!list) return;
+            var q = String(query || '').trim().toLowerCase();
+            var items = mksOptions(sel).filter(function (o) {
+                if (!q) return true;
+                return o.label.toLowerCase().indexOf(q) !== -1 ||
+                       (o.group || '').toLowerCase().indexOf(q) !== -1;
+            });
+            if (!items.length) {
+                list.innerHTML = '<div class="mks-none">Nothing matches.</div>';
+                return;
+            }
+            var lastGroup = null, html = '';
+            items.forEach(function (o) {
+                if (o.group && o.group !== lastGroup) {
+                    html += '<div class="mks-group">' + escapeHtml(o.group.replace(/^─+\s*/, '')) + '</div>';
+                    lastGroup = o.group;
+                }
+                if (!o.group) lastGroup = null;
+                html += '<button type="button" class="mks-opt' + (o.i === sel.selectedIndex ? ' is-on' : '') +
+                        '" role="option" aria-selected="' + (o.i === sel.selectedIndex ? 'true' : 'false') + '"' +
+                        (o.disabled ? ' disabled' : '') + ' data-i="' + o.i + '">' +
+                        escapeHtml(o.label) + '</button>';
+            });
+            list.innerHTML = html;
+        }
+
+        function mksOpen(box, sel) {
+            mksCloseAll(box);
+            if (!sel.options.length) return;
+            var searchable = sel.options.length >= MKS_SEARCH_FROM;
+            var panel = document.createElement('div');
+            panel.className = 'mks-panel';
+            panel.innerHTML =
+                (searchable
+                  ? '<input type="search" class="mks-search" placeholder="Search" aria-label="Search options">'
+                  : '') +
+                '<div class="mks-list" role="listbox"></div>';
+            box.appendChild(panel);
+            box.classList.add('is-open');
+            box.querySelector('.mks-trigger').setAttribute('aria-expanded', 'true');
+            mksRenderList(box, sel, '');
+
+            var search = panel.querySelector('.mks-search');
+            if (search) {
+                search.addEventListener('input', function () { mksRenderList(box, sel, search.value); });
+                setTimeout(function () { search.focus(); }, 30);
+            }
+            panel.addEventListener('click', function (e) {
+                var btn = e.target.closest('.mks-opt');
+                if (!btn || btn.disabled) return;
+                sel.selectedIndex = parseInt(btn.getAttribute('data-i'), 10);
+                mksClose(box);
+                box.querySelector('.mks-label').textContent = mksLabel(sel);
+                // The page's own handler runs from the real control, exactly as
+                // it did when the control was the only thing there.
+                sel.dispatchEvent(new Event('change', { bubbles: true }));
+                // Some handlers reset the select (the chart's "+ Add series…"),
+                // so the label is re-read after they have run.
+                setTimeout(function () {
+                    var lab = box.querySelector('.mks-label');
+                    if (lab) lab.textContent = mksLabel(sel);
+                }, 0);
+            });
+        }
+
+        // Wrap one <select>. Idempotent: a second call on the same element is
+        // a no-op, so it is safe to call from every render.
+        function mkEnhanceSelect(sel) {
+            if (!sel || sel._mksBound) return;
+            sel._mksBound = true;
+
+            var box = document.createElement('div');
+            box.className = 'mks';
+            sel.parentNode.insertBefore(box, sel);
+            box.appendChild(sel);
+
+            var trigger = document.createElement('button');
+            trigger.type = 'button';
+            trigger.className = 'mks-trigger';
+            trigger.setAttribute('aria-haspopup', 'listbox');
+            trigger.setAttribute('aria-expanded', 'false');
+            if (sel.id) trigger.setAttribute('aria-label', (sel.getAttribute('aria-label') || sel.id));
+            trigger.innerHTML = '<span class="mks-label"></span>' + mksChevron();
+            box.appendChild(trigger);
+            trigger.querySelector('.mks-label').textContent = mksLabel(sel);
+
+            trigger.addEventListener('click', function (e) {
+                e.stopPropagation();
+                if (box.classList.contains('is-open')) mksClose(box);
+                else mksOpen(box, sel);
+            });
+
+            // The options behind it are rebuilt by the page in several places
+            // (filters, the calendar, the compare list). Watching them is what
+            // lets every one of those call sites stay exactly as it was.
+            if (window.MutationObserver) {
+                new MutationObserver(function () {
+                    var lab = box.querySelector('.mks-label');
+                    if (lab) lab.textContent = mksLabel(sel);
+                    if (box.classList.contains('is-open')) {
+                        var s = box.querySelector('.mks-search');
+                        mksRenderList(box, sel, s ? s.value : '');
+                    }
+                }).observe(sel, { childList: true, subtree: true, attributes: true,
+                                  attributeFilter: ['value'] });
+            }
+            // A programmatic `.value = x` fires no event, so the label is also
+            // refreshed whenever the control is opened.
+            box.addEventListener('mousedown', function () {
+                var lab = box.querySelector('.mks-label');
+                if (lab) lab.textContent = mksLabel(sel);
+            }, true);
+        }
+        window.mkEnhanceSelect = mkEnhanceSelect;
+
+        // Every filter dropdown in Analytics, wrapped once.
+        function mkEnhanceFilterSelects() {
+            document.querySelectorAll('select.filter-select').forEach(mkEnhanceSelect);
+        }
+        window.mkEnhanceFilterSelects = mkEnhanceFilterSelects;
+
+        document.addEventListener('click', function (e) {
+            if (!e.target.closest('.mks')) mksCloseAll(null);
+        });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') mksCloseAll(null);
+        });
+
         // ── Filter UI ─────────────────────────────────────────────────────
 
         window.setAnalyticsFilter = function(key, val, btn) {
@@ -6100,6 +6286,7 @@
         };
 
         function populateFilterDropdowns() {
+            mkEnhanceFilterSelects();
             const dims = window.userData.dimensions || [];
             const dimSel = document.getElementById('filterDimSelect');
             const selectedDim = window.analyticsState.dimId || (dims[0] ? dims[0].id : '');
@@ -6472,6 +6659,7 @@
         function populateChartOverlayDropdown() {
             const sel = document.getElementById('chartOverlayAdd');
             if (!sel) return;
+            mkEnhanceSelect(sel);
             const dims = window.userData.dimensions || [];
             let html = '<option value="">+ Add series…</option>';
             if (dims.length) {
@@ -6928,6 +7116,7 @@
         };
 
         function renderCalendar() {
+            mkEnhanceFilterSelects();
             const allActs   = getAllActivitiesFlat();
             const scopeFiltered = filterByScope(allActs, window.analyticsState);
 
@@ -6941,8 +7130,14 @@
                 calSel.innerHTML = '<option value="">All Activities</option>' +
                     scopeFiltered.map(a => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('');
                 calSel.value = window._calendarSelId;
-                // If previously selected activity no longer exists in scope, reset
-                if (calSel.value !== window._calendarSelId) window._calendarSelId = '';
+                // If previously selected activity no longer exists in scope,
+                // reset both the state AND the control — assigning a value no
+                // option carries leaves selectedIndex at -1, which renders as a
+                // blank dropdown that matches nothing the page thinks is set.
+                if (calSel.value !== window._calendarSelId) {
+                    window._calendarSelId = '';
+                    calSel.value = '';
+                }
             }
 
             // Filter by selected calendar activity
@@ -23814,21 +24009,24 @@
             'You have already done the hard part — you started, and you kept going.'
         ];
 
+        // Blurbs are deliberately one line each. The card is a decision, not a
+        // manual — the detail belongs in the setup sheet, where it is being
+        // acted on rather than read.
         const MODE_META = {
             habit:     { name: 'Habit Mode',    icon: '🌱', tag: 'Build',
-                         blurb: 'Turn one to three activities into real habits — a time window, an anchor, and your own reason. Counts days achieved, never breaks.' },
+                         blurb: 'Up to three activities, a daily window each. Counts days achieved.' },
             berserk:   { name: 'Berserk Mode',  icon: '🔥', tag: 'Extreme',
-                         blurb: 'Pick a window of 1–5 hours and hit an XP target inside it. Beat it for +30% XP. Miss it and you pay 30%.' },
+                         blurb: 'An XP target inside a 1–5 hour window. Clear it for +30%, miss it for −30%.' },
             recovery:  { name: 'Recovery Mode', icon: '🩹', tag: 'Return',
-                         blurb: 'Chase your own past peak. Up to three activities climb twice as fast, until each one reaches the highest streak it has ever had.' },
+                         blurb: 'Up to three streaks climb twice as fast, until each is back at its own peak.' },
             insurance: { name: 'Insurance Mode',icon: '🛡', tag: 'Shield',
-                         blurb: 'Up to three activities stop losing streak when you miss. You can still log and still climb — only the downside is suspended.' },
+                         blurb: 'Up to three activities stop losing streak when you miss.' },
             stake:     { name: 'Stake Mode',    icon: '🎲', tag: 'Wager',
-                         blurb: 'Bet Grit on hitting completion targets across up to three activities. All or nothing — every target, or the stake is gone.' },
+                         blurb: 'Bet Grit on completion targets. Every one lands, or the stake is gone.' },
             pact:      { name: 'Pact Mode',     icon: '🤝', tag: 'Together',
-                         blurb: 'Two people, two separate targets, one shared fate. If either of you falls short, the pact breaks for both.' },
+                         blurb: 'Two people, two targets, one shared outcome.' },
             focus:     { name: 'Focus Window',  icon: '🎯', tag: 'Rhythm',
-                         blurb: 'Set one daily time window. Anything you log inside it earns +10% XP, every day the mode runs.' }
+                         blurb: 'One daily window. Everything logged inside it earns +10% XP.' }
         };
 
         function modeCostLabel(kind) {
@@ -24119,12 +24317,7 @@
         //
         // Every mode document id starts with `mode-`, which is how the sync
         // below knows which reminders are its own to remove.
-        function modeReminderRef(id) {
-            var uid = modesUid();
-            if (!uid) return null;
-            return doc(db, 'users', uid, 'reminders', id);
-        }
-
+        //
         // The full set of reminder documents the active mode wants to exist.
         function modesDesiredReminders() {
             var a = modesActive();
@@ -24849,7 +25042,7 @@
                     lines: (a.activities || []).map(function (x) {
                         return x.activityName + ' — reached ' + x.ceiling;
                     }),
-                    note: 'Every activity under recovery has reached the highest streak it has ever had, so the mode has ended itself. From here they climb at the normal rate.'
+                    note: 'Every one is back at its own peak, so the mode has ended itself. Normal rate from here.'
                 }
             }).catch(function () {});
         }
@@ -25671,6 +25864,84 @@
             pactCheckInvites().then(function () { modesRenderPage(); }).catch(function () {});
         };
 
+        // ── Locating an activity by id ────────────────────────────────────
+        // Modes store activity ids; completing one needs the three indices the
+        // app's own completeActivity() takes. One lookup, used by the habit
+        // panel, the habit overlay and the "take me to it" fallback.
+        function modeActivityPos(activityId) {
+            var dims = (window.userData && window.userData.dimensions) || [];
+            for (var di = 0; di < dims.length; di++) {
+                var paths = dims[di].paths || [];
+                for (var pi = 0; pi < paths.length; pi++) {
+                    var acts = paths[pi].activities || [];
+                    for (var ai = 0; ai < acts.length; ai++) {
+                        if (String(acts[ai].id) === String(activityId)) {
+                            return { di: di, pi: pi, ai: ai, act: acts[ai] };
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
+        // Can this activity be marked right now? Mirrors the app's own gate so
+        // a mode never offers a button that would silently do nothing.
+        function modeCanMark(activityId) {
+            var pos = modeActivityPos(activityId);
+            if (!pos) return false;
+            var act = pos.act;
+            if (typeof canCompleteActivity === 'function' && !canCompleteActivity(act)) return false;
+            var allowMulti = act.allowMultiplePerDay && act.frequency !== 'occasional';
+            if (!allowMulti && isCompletedToday(act)) return false;
+            return true;
+        }
+
+        // Mark an activity straight from a mode surface. The mode's own
+        // completion hook is already wired into completeActivity, so counts,
+        // milestones and resolutions all happen exactly as they would from the
+        // Activities tab — this is the same action, reached from here.
+        let _modeMarking = false;
+        window.modeMark = async function (activityId) {
+            if (_modeMarking) return false;
+            var pos = modeActivityPos(activityId);
+            if (!pos) { showToast('That activity no longer exists.', 'red'); return false; }
+            if (!modeCanMark(activityId)) {
+                showToast('Already marked today.', 'olive');
+                return false;
+            }
+            _modeMarking = true;
+            try {
+                await window.completeActivity(pos.di, pos.pi, pos.ai);
+            } catch (e) {
+                console.warn('Mode mark failed', e && e.message);
+                showToast('That did not go through — try again.', 'red');
+                return false;
+            } finally {
+                _modeMarking = false;
+            }
+            // No confirmation of our own: completeActivity already fires the
+            // app's XP toast, which says more than "done" would.
+            try { modesRenderPage(); } catch (e) {}
+            try { modesRefreshBanner(); } catch (e) {}
+            return true;
+        };
+
+        // The fallback route to an activity. It goes through the v5 nav rather
+        // than switchSubTab alone, so the section strip, the page title and the
+        // nav rings all agree with where you actually landed — reaching in past
+        // the nav was what left the header naming the page you had just left.
+        window.modeGoToActivity = function (activityId) {
+            var pos = modeActivityPos(activityId);
+            if (!pos) {
+                if (window.mkGoSub) window.mkGoSub(2, 0);
+                return;
+            }
+            if (window.mkGoSub) window.mkGoSub(2, 1);        // Activities › Categories
+            setTimeout(function () {
+                try { window.categoriesGoToActivity(pos.di, pos.pi, pos.ai); } catch (e) {}
+            }, 60);
+        };
+
         function modesRenderPage() {
             var host = modesRoot();
             if (!host) return;
@@ -25683,9 +25954,7 @@
             // .mk-page-heading above the content, and every other page hides
             // the heading it used to draw for itself. One name per page.
             html += '<div class="md-head">' +
-                      '<div class="md-head-main">' +
-                        '<p class="md-sub">One mode at a time. Each one changes how the app treats you for as long as it runs.</p>' +
-                      '</div>' +
+                      '<p class="md-sub">One at a time. Each one changes how the app treats you while it runs.</p>' +
                       '<div class="md-grit" title="Your Grit balance">' +
                         '<span class="md-grit-dot">◆</span>' +
                         '<span class="md-grit-n">' + (gritBalance() || 0).toLocaleString() + '</span>' +
@@ -25696,8 +25965,10 @@
 
             if (a) {
                 html += modesActiveCardHtml(a);
-                html += '<div class="md-locked-note">Only one mode runs at a time in this release. ' +
-                        'End ' + MODE_META[a.kind].name + ' to pick another.</div>';
+                // Said once, under the mode it is about — not repeated on every
+                // card it disables.
+                html += '<div class="md-locked-note">One at a time. End ' +
+                        modeEsc(MODE_META[a.kind].name) + ' to pick another.</div>';
             }
 
             html += '<div class="md-grid">';
@@ -25710,9 +25981,8 @@
                 html += '<div class="md-hist">' +
                           '<div class="md-hist-kicker">Past runs</div>' +
                           m.history.slice(0, 6).map(function (h) {
-                              var meta = MODE_META[h.kind] || { name: h.kind, icon: '·' };
+                              var meta = MODE_META[h.kind] || { name: h.kind };
                               return '<div class="md-hist-row md-hist-' + modeEsc(h.outcome) + '">' +
-                                       '<span class="md-hist-icon">' + meta.icon + '</span>' +
                                        '<span class="md-hist-name">' + modeEsc(meta.name) + '</span>' +
                                        '<span class="md-hist-sum">' + modeEsc(h.summary || '') + '</span>' +
                                        '<span class="md-hist-out">' + modeEsc(modeOutcomeWord(h.outcome)) + '</span>' +
@@ -25773,7 +26043,7 @@
 
             return '<div class="md-live md-live-' + a.kind + '">' +
                      '<div class="md-live-head">' +
-                       '<span class="md-live-icon">' + meta.icon + '</span>' +
+                       '<span class="md-live-pulse" aria-hidden="true"></span>' +
                        '<div class="md-live-titles">' +
                          '<div class="md-live-eyebrow">Running now</div>' +
                          '<div class="md-live-name">' + modeEsc(meta.name) + '</div>' +
@@ -25786,32 +26056,52 @@
 
         function modeBarHtml(done, total, cls) {
             var pct = total > 0 ? Math.max(0, Math.min(100, (done / total) * 100)) : 0;
-            return '<div class="md-bar ' + (cls || '') + '">' +
+            return '<div class="md-bar ' + (cls || '') + '" role="progressbar" aria-valuemin="0" ' +
+                     'aria-valuemax="' + (total || 0) + '" aria-valuenow="' + (done || 0) + '">' +
                      '<span class="md-bar-fill" style="width:' + pct.toFixed(1) + '%"></span>' +
                    '</div>';
+        }
+
+        // "in 12 days · 10 Sep" — a day count on its own is hard to picture.
+        function modeDateLabel(dateStr) {
+            try {
+                var d = new Date(dateStr + 'T00:00:00');
+                return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+            } catch (e) { return dateStr; }
+        }
+
+        // The one action a mode panel can offer for an activity: mark it, right
+        // here. Navigation is the fallback, not the first move.
+        function modeMarkBtnHtml(activityId, doneToday) {
+            if (doneToday) return '<span class="md-chip md-chip-done">Done today</span>';
+            if (!modeCanMark(activityId)) {
+                return '<button type="button" class="md-mark md-mark-ghost" ' +
+                       'onclick="modeGoToActivity(\'' + modeEsc(activityId) + '\')">Open</button>';
+            }
+            return '<button type="button" class="md-mark" ' +
+                   'onclick="modeMark(\'' + modeEsc(activityId) + '\')">Mark done</button>';
         }
 
         function habitPanelHtml(a) {
             var today = modesToday();
             var html = '<div class="md-metric">' +
                          '<span class="md-metric-n">' + (a.daysElapsed || 0) + '</span>' +
-                         '<span class="md-metric-of">of ' + a.targetDays + ' days elapsed</span>' +
-                       '</div>';
+                         '<span class="md-metric-of">of ' + a.targetDays + ' days</span>' +
+                       '</div>' +
+                       modeBarHtml(a.daysElapsed || 0, a.targetDays, 'md-bar-blue');
             html += (a.habits || []).map(function (h) {
                 var doneToday = h.lastCompletedDay === today;
                 return '<div class="md-hrow' + (doneToday ? ' is-done' : '') + '">' +
                          '<div class="md-hrow-top">' +
                            '<span class="md-hrow-name">' + modeEsc(h.activityName) + '</span>' +
-                           '<span class="md-hrow-count">' + (h.completions || 0) + ' of ' +
-                             (a.daysElapsed || 0) + ' days achieved</span>' +
+                           '<span class="md-hrow-count">' + (h.completions || 0) + ' / ' + (a.daysElapsed || 0) + '</span>' +
                          '</div>' +
                          modeBarHtml(h.completions || 0, a.targetDays, 'md-bar-green') +
                          '<div class="md-hrow-meta">' +
                            '<span class="md-chip">' + modeTimeLabel(h.windowStart) + ' – ' + modeTimeLabel(h.windowEnd) + '</span>' +
                            (h.anchor ? '<span class="md-chip md-chip-soft">' + modeEsc(h.anchor) + '</span>' : '') +
-                           (doneToday ? '<span class="md-chip md-chip-done">Done today</span>' : '') +
+                           modeMarkBtnHtml(h.activityId, doneToday) +
                          '</div>' +
-                         (h.why ? '<p class="md-why">“' + modeEsc(h.why) + '”</p>' : '') +
                        '</div>';
             }).join('');
             return html;
@@ -25819,22 +26109,17 @@
 
         function berserkPanelHtml(a) {
             var earned = berserkEarned(a);
-            var left = Math.max(0, a.endsAt - modesNow());
-            var mins = Math.floor(left / 60000);
-            var hh = Math.floor(mins / 60), mm = mins % 60;
             return '<div class="md-metric md-metric-hot">' +
                      '<span class="md-metric-n">' + earned.toLocaleString() + '</span>' +
                      '<span class="md-metric-of">of ' + a.targetXP.toLocaleString() + ' XP</span>' +
                    '</div>' +
                    modeBarHtml(earned, a.targetXP, 'md-bar-hot') +
                    '<div class="md-hrow-meta">' +
-                     '<span class="md-chip md-chip-hot">' + (left > 0 ? hh + 'h ' + mm + 'm left' : 'Window closed') + '</span>' +
+                     '<span class="md-chip md-chip-hot" data-md-clock="berserk">' + modeCountdownLabel(a.endsAt) + '</span>' +
                      '<span class="md-chip">' + a.hours + '-hour window</span>' +
                      '<span class="md-chip">Win +30% · Miss −30%</span>' +
                    '</div>' +
-                   '<p class="md-note">Progress recalculates whenever you open this page. ' +
-                     'Log activities anywhere in the app — the mode is running in the background either way.</p>' +
-                   '<button type="button" class="md-refresh" onclick="modesRenderPage()">Refresh</button>';
+                   '<p class="md-note">Log anywhere in the app — the target fills either way.</p>';
         }
 
         function recoveryPanelHtml(a) {
@@ -25842,6 +26127,7 @@
                 var act = gritFindActivity(x.activityId);
                 var cur = act ? (act.streak || 0) : 0;
                 var atCeiling = cur >= x.ceiling;
+                var doneToday = !modeCanMark(x.activityId);
                 return '<div class="md-hrow' + (atCeiling ? ' is-done' : '') + '">' +
                          '<div class="md-hrow-top">' +
                            '<span class="md-hrow-name">' + modeEsc(x.activityName) + '</span>' +
@@ -25851,12 +26137,13 @@
                          '<div class="md-hrow-meta">' +
                            '<span class="md-chip">Peak ' + x.ceiling + '</span>' +
                            (atCeiling
-                             ? '<span class="md-chip md-chip-done">At peak — normal rate</span>'
-                             : '<span class="md-chip md-chip-soft">+1 bonus per completion</span>') +
+                             ? '<span class="md-chip md-chip-done">At peak</span>'
+                             : '<span class="md-chip md-chip-soft">+1 per completion</span>') +
+                           (atCeiling ? '' : modeMarkBtnHtml(x.activityId, doneToday)) +
                          '</div>' +
                        '</div>';
             }).join('') +
-            '<p class="md-note">Recovery ends itself the moment every activity here is back at its own all-time high.</p>';
+            '<p class="md-note">Ends itself once every activity here is back at its own peak.</p>';
         }
 
         function insurancePanelHtml(a) {
@@ -25878,11 +26165,11 @@
                                   '<span class="md-chip md-chip-soft">Downside suspended</span>' +
                                   (held > 0 ? '<span class="md-chip md-chip-done">' + held + ' day' +
                                               (held === 1 ? '' : 's') + ' held</span>' : '') +
+                                  modeMarkBtnHtml(x.activityId, !modeCanMark(x.activityId)) +
                                 '</div>' +
                               '</div>';
                    }).join('') +
-                   '<p class="md-note">Missing a day costs nothing here. Logging still counts normally — ' +
-                     'insurance suspends the downside, it does not pause your progress.</p>';
+                   '<p class="md-note">Missing costs nothing. Logging still counts as it always did.</p>';
         }
 
         function stakePanelHtml(a) {
@@ -25900,15 +26187,19 @@
                                     ' / ' + it.target + '</span>' +
                                 '</div>' +
                                 modeBarHtml(it.count || 0, it.target, done ? 'md-bar-green' : 'md-bar-blue') +
+                                (done ? '' : '<div class="md-hrow-meta">' +
+                                   modeMarkBtnHtml(it.activityId, !modeCanMark(it.activityId)) + '</div>') +
                               '</div>';
                    }).join('') +
                    '<div class="md-hrow-meta">' +
                      '<span class="md-chip' + (left <= 1 ? ' md-chip-hot' : '') + '">' +
-                       (left > 0 ? left + ' day' + (left === 1 ? '' : 's') + ' left' : 'Window closed') + '</span>' +
+                       (left > 0 ? left + ' day' + (left === 1 ? '' : 's') + ' left · ' +
+                                   modeDateLabel(stakeEndDay(a))
+                                 : 'Window closed') + '</span>' +
                      '<span class="md-chip">◆ ' + a.wager + ' staked</span>' +
                      '<span class="md-chip">Win ◆ ' + (a.wager + Math.round(a.wager * MODE_WAGER_RETURN)) + '</span>' +
                    '</div>' +
-                   '<p class="md-note">All or nothing. Every target has to land inside the window — one short is the same as none.</p>';
+                   '<p class="md-note">All or nothing. One target short is the same as none.</p>';
         }
 
         function focusPanelHtml(a) {
@@ -25927,7 +26218,7 @@
                      '<span class="md-chip">+' + Math.round(FOCUS_MULTIPLIER * 100) + '% XP inside</span>' +
                      '<span class="md-chip">' + (a.bonusCount || 0) + ' boosted · +' + (a.bonusXP || 0) + ' XP</span>' +
                    '</div>' +
-                   '<p class="md-note">Anything you log inside the window earns the bonus — it is not tied to one activity.</p>';
+                   '<p class="md-note">Anything logged inside the window earns it — not tied to one activity.</p>';
         }
 
         function pactPanelHtml(a) {
@@ -25946,7 +26237,7 @@
                        '<div class="md-pact-n">' + Math.min(mineDone, a.target) + ' / ' + a.target + '</div>' +
                        modeBarHtml(mineDone, a.target, 'md-bar-blue') +
                      '</div>' +
-                     '<div class="md-pact-link">🤝</div>' +
+                     '<div class="md-pact-link" aria-hidden="true"></div>' +
                      '<div class="md-pact-side">' +
                        '<div class="md-pact-who">' + modeEsc(a.partnerName) + '</div>' +
                        '<div class="md-pact-act">' + modeEsc(theirs ? theirs.activityName : '—') + '</div>' +
@@ -25957,8 +26248,9 @@
                    '<div class="md-hrow-meta">' +
                      '<span class="md-chip">' + (notStarted ? 'Starts tomorrow' : left + ' day' + (left === 1 ? '' : 's') + ' left') + '</span>' +
                      '<span class="md-chip">◆ ' + PACT_WAGER + ' each</span>' +
+                     (notStarted ? '' : modeMarkBtnHtml(a.activityId, !modeCanMark(a.activityId))) +
                    '</div>' +
-                   '<p class="md-note">If either of you falls short, the pact breaks for both. Not a race — two separate targets, one shared outcome.</p>';
+                   '<p class="md-note">If either of you falls short, it breaks for both.</p>';
         }
 
         // ── Pending pact invites ──────────────────────────────────────────
@@ -25976,12 +26268,11 @@
                 var from = pactName(p, p.createdBy);
                 var t = pactTerm(p, p.createdBy) || {};
                 html += '<div class="md-invite">' +
-                          '<div class="md-invite-top">🤝 <strong>' + modeEsc(from) + '</strong> wants to start a Pact with you</div>' +
+                          '<div class="md-invite-top"><strong>' + modeEsc(from) + '</strong> wants a Pact with you</div>' +
                           '<div class="md-invite-body">' +
                             'They are committing to <strong>' + modeEsc(t.activityName || 'an activity') + ' × ' +
                             (t.target || 0) + '</strong> over ' + p.durationDays + ' days. ' +
-                            'You pick your own activity and target — and stake ◆ ' + p.stake + ' as well. ' +
-                            'If either of you falls short, both stakes are gone.' +
+                            'Pick your own, and stake ◆ ' + p.stake + '. One short and both stakes go.' +
                           '</div>' +
                           '<div class="md-invite-btns">' +
                             '<button type="button" class="md-btn md-btn-primary" onclick="pactOpenAccept(\'' + modeEsc(p.id) + '\')">Accept</button>' +
@@ -25991,9 +26282,9 @@
             });
             mineOut.forEach(function (p) {
                 html += '<div class="md-invite md-invite-out">' +
-                          '<div class="md-invite-top">⏳ Waiting on <strong>' + modeEsc(pactName(p, p.partner)) + '</strong></div>' +
-                          '<div class="md-invite-body">Your ◆ ' + p.stake + ' is held until they accept or the invite expires. ' +
-                            'The pact starts the day after they accept.</div>' +
+                          '<div class="md-invite-top">Waiting on <strong>' + modeEsc(pactName(p, p.partner)) + '</strong></div>' +
+                          '<div class="md-invite-body">Your ◆ ' + p.stake + ' is held until they answer. ' +
+                            'It starts the day after they accept.</div>' +
                           '<div class="md-invite-btns">' +
                             '<button type="button" class="md-btn" onclick="pactWithdraw(\'' + modeEsc(p.id) + '\')">Withdraw</button>' +
                           '</div>' +
@@ -26099,8 +26390,95 @@
             return msg;
         }
 
-        // A slim banner the rest of the app can show. Only rendered where the
-        // markup exists; everywhere else this is a no-op.
+        // ── The running-mode banner ───────────────────────────────────────
+        // This is the one thing outside the Modes page that says a mode is on,
+        // so it reads as a live status strip — an indicator that breathes, the
+        // mode's name, what it is doing right now, and a way in — rather than
+        // a system notice. Colour comes from the interactive blue; gold stays
+        // reserved for milestones.
+
+        function modeCountdownLabel(endsAt) {
+            var left = Math.max(0, (endsAt || 0) - modesNow());
+            if (left <= 0) return 'Window closed';
+            var mins = Math.floor(left / 60000);
+            var hh = Math.floor(mins / 60), mm = mins % 60;
+            return (hh > 0 ? hh + 'h ' + mm + 'm' : mm + 'm') + ' left';
+        }
+
+        // What the mode is doing right now, in one short line.
+        function modeBannerStatus(a) {
+            var today = modesToday();
+            if (a.kind === 'habit') {
+                var left = (a.habits || []).filter(function (h) { return h.lastCompletedDay !== today; }).length;
+                return 'Day ' + (a.daysElapsed || 0) + ' of ' + a.targetDays +
+                       (left ? ' · ' + left + ' left today' : ' · done today');
+            }
+            if (a.kind === 'berserk') {
+                return berserkEarned(a).toLocaleString() + ' of ' + a.targetXP.toLocaleString() +
+                       ' XP · ' + modeCountdownLabel(a.endsAt);
+            }
+            if (a.kind === 'recovery') {
+                var climbing = (a.activities || []).filter(function (x) {
+                    var act = gritFindActivity(x.activityId);
+                    return !act || (act.streak || 0) < x.ceiling;
+                }).length;
+                return climbing + ' still climbing';
+            }
+            if (a.kind === 'insurance') {
+                var n = (a.activities || []).length;
+                return n + ' activit' + (n === 1 ? 'y' : 'ies') + ' covered';
+            }
+            if (a.kind === 'stake') {
+                var d = stakeDaysLeft(a);
+                return stakeTotalCount(a) + ' of ' + stakeTotalTarget(a) + ' · ' +
+                       (d > 0 ? d + ' day' + (d === 1 ? '' : 's') + ' left' : 'window closed');
+            }
+            if (a.kind === 'focus') {
+                var s = modeMins(a.windowStart), e = modeMins(a.windowEnd);
+                var open = s !== null && e !== null && modeInWindow(s, e, modeMinutesNow(), 0, 0);
+                return open ? 'Window open until ' + modeTimeLabel(a.windowEnd)
+                            : 'Opens ' + modeTimeLabel(a.windowStart);
+            }
+            if (a.kind === 'pact') {
+                var p = pactGet(a.pactId);
+                var mine = p ? pactProgress(p, modesUid()) : 0;
+                return 'With ' + a.partnerName + ' · ' + Math.min(mine, a.target) + ' of ' + a.target;
+            }
+            return '';
+        }
+
+        var MODE_CHEVRON =
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" ' +
+            'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+            '<polyline points="9 18 15 12 9 6"/></svg>';
+
+        // Berserk is the only mode measured in minutes, so it is the only one
+        // that needs a clock. This replaces the manual "Refresh" button the
+        // panel used to carry: a countdown you have to press to update is not
+        // a countdown. The ticker exists only while Berserk is running and
+        // stops itself the moment it is not — nothing left behind.
+        var _modeClock = null;
+        function modeClockSync(a) {
+            var wants = !!(a && a.kind === 'berserk');
+            if (wants && !_modeClock) {
+                _modeClock = setInterval(function () {
+                    var live = modesActive();
+                    if (!live || live.kind !== 'berserk') { modeClockSync(null); return; }
+                    modesRefreshBanner();
+                    // The panel's own numbers only when someone is looking at
+                    // them; the banner is cheap, a full page render is not.
+                    if (modesPageVisible()) modesRenderPage();
+                    else {
+                        var chip = document.querySelector('[data-md-clock="berserk"]');
+                        if (chip) chip.textContent = modeCountdownLabel(live.endsAt);
+                    }
+                }, 30000);
+            } else if (!wants && _modeClock) {
+                clearInterval(_modeClock);
+                _modeClock = null;
+            }
+        }
+
         function modesRefreshBanner() {
             var el = document.getElementById('modesBanner');
             if (!el) return;
@@ -26109,18 +26487,32 @@
             var invites = (_pactCache.list || []).filter(function (p) {
                 return p.status === 'pending' && p.partner === uid && modesNow() <= p.expiresAt;
             }).length;
-            if (!a && !invites) { el.style.display = 'none'; el.innerHTML = ''; return; }
+            modeClockSync(a);
+            if (!a && !invites) { el.style.display = 'none'; el.innerHTML = ''; el.removeAttribute('role'); return; }
             el.style.display = '';
+            el.setAttribute('role', 'button');
+            el.setAttribute('tabindex', '0');
             if (a) {
                 var meta = MODE_META[a.kind];
                 el.className = 'md-banner md-banner-' + a.kind;
-                el.innerHTML = '<span class="md-banner-icon">' + meta.icon + '</span>' +
-                               '<span class="md-banner-text">' + modeEsc(meta.name) + ' is running</span>';
+                el.setAttribute('aria-label', meta.name + ' is running — open Modes');
+                el.innerHTML =
+                    '<span class="md-banner-pulse" aria-hidden="true"></span>' +
+                    '<span class="md-banner-main">' +
+                      '<span class="md-banner-name">' + modeEsc(meta.name) + '</span>' +
+                      '<span class="md-banner-stat">' + modeEsc(modeBannerStatus(a)) + '</span>' +
+                    '</span>' +
+                    '<span class="md-banner-go">' + MODE_CHEVRON + '</span>';
             } else {
                 el.className = 'md-banner md-banner-invite';
-                el.innerHTML = '<span class="md-banner-icon">🤝</span>' +
-                               '<span class="md-banner-text">' + invites + ' Pact invite' +
-                               (invites === 1 ? '' : 's') + ' waiting</span>';
+                el.setAttribute('aria-label', invites + ' pact invites waiting — open Modes');
+                el.innerHTML =
+                    '<span class="md-banner-pulse" aria-hidden="true"></span>' +
+                    '<span class="md-banner-main">' +
+                      '<span class="md-banner-name">Pact invite' + (invites === 1 ? '' : 's') + '</span>' +
+                      '<span class="md-banner-stat">' + invites + ' waiting on your answer</span>' +
+                    '</span>' +
+                    '<span class="md-banner-go">' + MODE_CHEVRON + '</span>';
             }
         }
         window.modesRefreshBanner = modesRefreshBanner;
@@ -26142,16 +26534,59 @@
         }
         window.modeCloseSheet = modeCloseSheet;
 
+        // The sheet element and its .modal child are created ONCE and then
+        // reused. Re-rendering rewrites the modal's children, never the modal
+        // itself: the phone sheet animation is bound to
+        // `.modal-overlay.active > .modal`, so replacing that node replayed the
+        // rise animation on every pick, keystroke and slider step — the sheet
+        // appeared to close and pop up again on every single touch. Keeping the
+        // node alive also keeps scroll position and lets focus be restored.
         function modeSheet(inner) {
             var el = document.getElementById('modeSheet');
+            var sheet;
             if (!el) {
                 el = document.createElement('div');
                 el.id = 'modeSheet';
                 el.className = 'modal-overlay gift-sheet-scrim md-sheet-scrim active';
                 el.addEventListener('click', function (e) { if (e.target === el) modeCloseSheet(); });
+                // Presentational only: a range's filled track follows its value
+                // without any render, so dragging one stays smooth.
+                el.addEventListener('input', function (e) {
+                    var t = e.target;
+                    if (t && t.classList && t.classList.contains('md-range')) modeRangeFill(t);
+                });
+                sheet = document.createElement('div');
+                sheet.className = 'modal pl-modal gift-sheet md-sheet';
+                el.appendChild(sheet);
                 document.body.appendChild(el);
+                try { window.mkBindSheet && window.mkBindSheet(el); } catch (e) {}
+            } else {
+                sheet = el.querySelector('.md-sheet');
             }
-            el.innerHTML = '<div class="modal pl-modal gift-sheet md-sheet">' + inner + '</div>';
+            if (!sheet) { modeCloseSheet(); return modeSheet(inner); }
+
+            // Carry scroll and focus across the repaint.
+            var oldBody = sheet.querySelector('.md-body');
+            var keepScroll = oldBody ? oldBody.scrollTop : 0;
+            var focused = document.activeElement;
+            var focusKey = (focused && sheet.contains(focused)) ? focused.getAttribute('data-md-focus') : null;
+            var caret = null;
+            if (focusKey) {
+                try { caret = { s: focused.selectionStart, e: focused.selectionEnd }; } catch (e) {}
+            }
+
+            sheet.innerHTML = inner;
+
+            var body = sheet.querySelector('.md-body');
+            if (body && keepScroll) body.scrollTop = keepScroll;
+            if (focusKey) {
+                var again = sheet.querySelector('[data-md-focus="' + focusKey + '"]');
+                if (again) {
+                    again.focus();
+                    if (caret) { try { again.setSelectionRange(caret.s, caret.e); } catch (e) {} }
+                }
+            }
+            sheet.querySelectorAll('.md-range').forEach(modeRangeFill);
             return el;
         }
 
@@ -26165,8 +26600,14 @@
                      '</button></div>';
         }
 
-        function modeSheetFoot(label, onclick, disabled, sub) {
+        // `note` is the reason the commitment is unavailable. It rides the
+        // footer rather than the body, because a disabled button whose reason
+        // is three screens up is a dead end.
+        function modeSheetFoot(label, onclick, disabled, sub, note) {
             return '<div class="md-sheet-foot">' +
+                     (note !== undefined
+                       ? '<div class="md-foot-note" data-md-region="warn">' + note + '</div>'
+                       : '') +
                      (sub ? '<div class="md-sheet-cost">' + sub + '</div>' : '') +
                      '<button type="button" class="md-btn md-btn-primary md-btn-wide"' +
                        (disabled ? ' disabled' : '') + ' onclick="' + onclick + '">' +
@@ -26181,7 +26622,7 @@
             return '<span class="md-cost-n">◆ ' + cost + '</span>' +
                    '<span class="md-cost-bal">' + (bal >= cost
                      ? 'you have ' + bal
-                     : 'you have ' + bal + ' — ' + (cost - bal) + ' short') + '</span>';
+                     : bal + ' — ' + (cost - bal) + ' short') + '</span>';
         }
 
         window.modesOpenSetup = function (kind) {
@@ -26191,7 +26632,7 @@
             }
             var m = modesState();
             if (kind === 'habit' && m && m.suspendedHabit) { habitOpenResume(); return; }
-            _modeSetup = { kind: kind, step: 0, picks: [], detailIndex: 0 };
+            _modeSetup = { kind: kind, step: 0, picks: [], detailIndex: 0, query: '', ddOpen: false };
             if (kind === 'habit')     { _modeSetup.targetDays = HABIT_DEFAULT_DAYS; habitRenderSetup(); }
             if (kind === 'berserk')   { _modeSetup.hours = 2; berserkRenderSetup(); }
             if (kind === 'recovery')  { recoveryRenderSetup(); }
@@ -26202,30 +26643,194 @@
             if (kind === 'pact')      { _modeSetup.days = 7; _modeSetup.target = 5; pactRenderSetup(); }
         };
 
-        // ── Shared activity picker ────────────────────────────────────────
-        function modePickerHtml(max, opts) {
+        // ── Shared controls ───────────────────────────────────────────────
+
+        // A range whose track shows how far along it is. The value writes
+        // through on input and the sheet is rebuilt only on release, because
+        // rebuilding the input mid-drag ends the drag on its first step — which
+        // is why these never felt like sliders before.
+        function modeRangeFill(input) {
+            var lo = parseFloat(input.min || 0), hi = parseFloat(input.max || 100);
+            var v = parseFloat(input.value || 0);
+            var pct = hi > lo ? ((v - lo) / (hi - lo)) * 100 : 0;
+            input.style.setProperty('--md-fill', Math.max(0, Math.min(100, pct)).toFixed(2) + '%');
+        }
+
+        function modeSliderHtml(field, lo, hi, value, opts) {
             opts = opts || {};
-            var acts = modeEligibleActivities({ streakOnly: !!opts.streakOnly });
+            return '<div class="md-slider' + (opts.hot ? ' is-hot' : '') + '">' +
+                     '<div class="md-slider-read">' +
+                       '<span class="md-slider-n" data-md-live="' + field + '">' + value + '</span>' +
+                       '<span class="md-slider-unit">' + modeEsc(opts.unit || '') + '</span>' +
+                       (opts.side ? '<span class="md-slider-side" data-md-live="' + opts.side + '"></span>' : '') +
+                     '</div>' +
+                     '<input type="range" class="md-range' + (opts.hot ? ' md-range-hot' : '') + '" ' +
+                       'min="' + lo + '" max="' + hi + '" step="1" value="' + value + '" ' +
+                       'aria-label="' + modeEsc(opts.label || field) + '" ' +
+                       'data-md-focus="range-' + field + '" ' +
+                       'oninput="modeSlide(\'' + field + '\',this.value,' + lo + ',' + hi + ')" ' +
+                       'onchange="modeSlideEnd()">' +
+                     '<div class="md-slider-ends">' +
+                       '<span>' + modeEsc(opts.loLabel || String(lo)) + '</span>' +
+                       '<span>' + modeEsc(opts.hiLabel || String(hi)) + '</span>' +
+                     '</div>' +
+                   '</div>';
+        }
+
+        function modeStepperHtml(minus, value, plus, opts) {
+            opts = opts || {};
+            return '<div class="md-stepper">' +
+                     '<button type="button" class="md-stepper-btn" aria-label="Less"' +
+                       (opts.atMin ? ' disabled' : '') + ' onclick="' + minus + '">−</button>' +
+                     '<span class="md-stepper-n">' + value + '</span>' +
+                     '<button type="button" class="md-stepper-btn" aria-label="More"' +
+                       (opts.atMax ? ' disabled' : '') + ' onclick="' + plus + '">+</button>' +
+                   '</div>';
+        }
+
+        var MODE_DD_CHEVRON =
+            '<svg class="md-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+            'stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+            '<polyline points="6 9 12 15 18 9"/></svg>';
+
+        // ── The activity picker ───────────────────────────────────────────
+        // A real control rather than a native <select>: a trigger that names
+        // what is chosen, a chevron that says it opens, and a search field, so
+        // a library of fifty activities is a typed word rather than a scroll.
+        // Filtering rewrites only the list, so the search box keeps its caret.
+
+        function modeFilterActs(acts, query) {
+            var q = String(query || '').trim().toLowerCase();
+            if (!q) return acts;
+            return acts.filter(function (a) {
+                return (a.name || '').toLowerCase().indexOf(q) !== -1 ||
+                       (a.dimName || '').toLowerCase().indexOf(q) !== -1;
+            });
+        }
+
+        function modeSearchHtml(count) {
+            if (count < 6) return '';
+            return '<input type="search" class="md-input md-dd-search" data-md-focus="dd-search" ' +
+                   'placeholder="Search activities" value="' + modeEsc(_modeSetup.query || '') + '" ' +
+                   'oninput="modeSearchActs(this.value)">';
+        }
+
+        window.modeSearchActs = function (value) {
+            if (!_modeSetup) return;
+            _modeSetup.query = value;
+            var host = document.getElementById('mdActList');
+            if (host) host.innerHTML = _modeSetup.ddSingle ? modeDDListHtml() : modePickListHtml();
+        };
+
+        // Multi-select: up to `max` activities, each a row that toggles.
+        function modePickListHtml() {
+            var s = _modeSetup;
+            var opts = s.pickOpts || {};
+            var all = modeEligibleActivities({ streakOnly: !!opts.streakOnly });
+            var acts = modeFilterActs(all, s.query);
             if (!acts.length) {
-                return '<p class="md-empty">You have no activities that can carry this mode yet. ' +
-                       'Create one on the Activities tab first.</p>';
+                return '<div class="md-dd-none">' +
+                       (s.query ? 'Nothing matches “' + modeEsc(s.query) + '”.' : 'No activities yet.') +
+                       '</div>';
             }
-            var picked = _modeSetup.picks || [];
-            return '<div class="md-picker">' + acts.map(function (a) {
+            var picked = s.picks || [];
+            return acts.map(function (a) {
                 var on = picked.indexOf(a.id) !== -1;
-                var meta = opts.showPeak
-                    ? 'peak ' + Math.max(a.bestStreak, a.streak)
-                    : (a.dimName || '');
-                var blocked = opts.streakOnly && Math.max(a.bestStreak, a.streak) < 1 && opts.needPeak;
+                var meta = opts.showPeak ? 'peak ' + Math.max(a.bestStreak, a.streak) : (a.dimName || '');
+                var blocked = opts.needPeak && Math.max(a.bestStreak, a.streak) < 1;
                 return '<button type="button" class="md-pick' + (on ? ' is-on' : '') +
                          (blocked ? ' is-off' : '') + '"' + (blocked ? ' disabled' : '') +
-                         ' onclick="modeTogglePick(\'' + modeEsc(a.id) + '\',' + max + ')">' +
+                         ' aria-pressed="' + (on ? 'true' : 'false') + '"' +
+                         ' onclick="modeTogglePick(\'' + modeEsc(a.id) + '\',' + (opts.max || 1) + ')">' +
+                         '<span class="md-pick-box" aria-hidden="true"></span>' +
                          '<span class="md-pick-name">' + modeEsc(a.name) + '</span>' +
                          '<span class="md-pick-meta">' + modeEsc(meta) + '</span>' +
                        '</button>';
-            }).join('') + '</div>' +
-            '<p class="md-hint">Pick up to ' + max + '. ' + (opts.hint || '') + '</p>';
+            }).join('');
         }
+
+        function modePickerHtml(max, opts) {
+            opts = opts || {};
+            var s = _modeSetup;
+            s.pickOpts = { max: max, streakOnly: !!opts.streakOnly, showPeak: !!opts.showPeak,
+                           needPeak: !!opts.needPeak };
+            s.ddSingle = false;
+            var all = modeEligibleActivities({ streakOnly: !!opts.streakOnly });
+            if (!all.length) {
+                return '<p class="md-empty">No activities can carry this mode yet. Create one on the Activities tab first.</p>';
+            }
+            return '<div class="md-dd is-open">' +
+                     '<div class="md-dd-bar">' +
+                       '<span class="md-dd-count" data-md-live="pickCount">' +
+                         (s.picks || []).length + ' of ' + max + ' chosen</span>' +
+                     '</div>' +
+                     modeSearchHtml(all.length) +
+                     '<div class="md-dd-list" id="mdActList">' + modePickListHtml() + '</div>' +
+                   '</div>';
+        }
+
+        // Single-select: the trigger names the choice; the list opens under it.
+        function modeDDListHtml() {
+            var s = _modeSetup;
+            var all = modeEligibleActivities();
+            var acts = modeFilterActs(all, s.query);
+            if (!acts.length) {
+                return '<div class="md-dd-none">' +
+                       (s.query ? 'Nothing matches “' + modeEsc(s.query) + '”.' : 'No activities yet.') +
+                       '</div>';
+            }
+            return acts.map(function (a) {
+                var on = s.activityId === a.id;
+                return '<button type="button" class="md-pick' + (on ? ' is-on' : '') + '" ' +
+                         'onclick="modeDDPick(\'' + modeEsc(a.id) + '\')">' +
+                         '<span class="md-pick-name">' + modeEsc(a.name) + '</span>' +
+                         '<span class="md-pick-meta">' + modeEsc(a.dimName || '') + '</span>' +
+                       '</button>';
+            }).join('');
+        }
+
+        function modeDropdownHtml(placeholder) {
+            var s = _modeSetup;
+            s.ddSingle = true;
+            var all = modeEligibleActivities();
+            if (!all.length) {
+                return '<p class="md-empty">No activities can carry this mode yet. Create one on the Activities tab first.</p>';
+            }
+            var chosen = all.filter(function (a) { return a.id === s.activityId; })[0];
+            var open = !!s.ddOpen;
+            return '<div class="md-dd' + (open ? ' is-open' : '') + '">' +
+                     '<button type="button" class="md-dd-trigger' + (chosen ? ' has-value' : '') + '" ' +
+                       'aria-expanded="' + (open ? 'true' : 'false') + '" onclick="modeDDToggle()">' +
+                       '<span class="md-dd-label">' + modeEsc(chosen ? chosen.name : (placeholder || 'Choose an activity')) + '</span>' +
+                       MODE_DD_CHEVRON +
+                     '</button>' +
+                     (open
+                       ? '<div class="md-dd-panel">' +
+                           modeSearchHtml(all.length) +
+                           '<div class="md-dd-list" id="mdActList">' + modeDDListHtml() + '</div>' +
+                         '</div>'
+                       : '') +
+                   '</div>';
+        }
+
+        window.modeDDToggle = function () {
+            if (!_modeSetup) return;
+            _modeSetup.ddOpen = !_modeSetup.ddOpen;
+            _modeSetup.query = '';
+            modeRerenderSetup();
+            if (_modeSetup.ddOpen) {
+                var el = document.querySelector('#modeSheet .md-dd-search');
+                if (el) setTimeout(function () { el.focus(); }, 40);
+            }
+        };
+
+        window.modeDDPick = function (id) {
+            if (!_modeSetup) return;
+            _modeSetup.activityId = id;
+            _modeSetup.ddOpen = false;
+            _modeSetup.query = '';
+            modeRerenderSetup();
+        };
 
         window.modeTogglePick = function (id, max) {
             if (!_modeSetup) return;
@@ -26244,13 +26849,14 @@
         function modeRerenderSetup() {
             if (!_modeSetup) return;
             var k = _modeSetup.kind;
-            if (k === 'habit')     habitRenderSetup();
-            if (k === 'berserk')   berserkRenderSetup();
-            if (k === 'recovery')  recoveryRenderSetup();
-            if (k === 'insurance') insuranceRenderSetup();
-            if (k === 'stake')     stakeRenderSetup();
-            if (k === 'focus')     focusRenderSetup();
-            if (k === 'pact')      pactRenderSetup();
+            if (k === 'habit')      habitRenderSetup();
+            if (k === 'berserk')    berserkRenderSetup();
+            if (k === 'recovery')   recoveryRenderSetup();
+            if (k === 'insurance')  insuranceRenderSetup();
+            if (k === 'stake')      stakeRenderSetup();
+            if (k === 'focus')      focusRenderSetup();
+            if (k === 'pact')       pactRenderSetup();
+            if (k === 'pactAccept') pactRenderAccept();
         }
 
         window.modeSetField = function (field, value) {
@@ -26265,16 +26871,105 @@
             _modeSetup[field] = Math.max(lo, Math.min(hi, n));
             modeRerenderSetup();
         };
-        // Free-text and time inputs must not re-render on every keystroke —
-        // that would blow away the caret. They write straight through.
-        window.modeWriteField = function (field, value) {
-            if (_modeSetup) _modeSetup[field] = value;
+        // Sliders: the value writes through and only the readouts that depend
+        // on it are patched. The sheet is rebuilt once, on release.
+        window.modeSlide = function (field, value, lo, hi) {
+            if (!_modeSetup) return;
+            var n = parseInt(value, 10);
+            if (isNaN(n)) return;
+            _modeSetup[field] = Math.max(lo, Math.min(hi, n));
+            modeSyncLive();
         };
+        window.modeSlideEnd = function () { if (_modeSetup) modeRerenderSetup(); };
+
+        // Free-text inputs must not re-render on every keystroke — that would
+        // blow away the caret. They write straight through.
         window.modeWriteDetail = function (idx, field, value) {
             if (!_modeSetup || !_modeSetup.details) return;
             if (!_modeSetup.details[idx]) _modeSetup.details[idx] = {};
             _modeSetup.details[idx][field] = value;
         };
+
+        // Everything a slider can change without a rebuild: the numbers that
+        // read out from it, the warning line, and whether the sheet's one
+        // commitment button is allowed to be pressed.
+        function modeLiveMap() {
+            var s = _modeSetup;
+            if (!s) return {};
+            var out = {};
+            Object.keys(s).forEach(function (k) {
+                var v = s[k];
+                if (typeof v === 'number' || typeof v === 'string') out[k] = v;
+            });
+            out.pickCount = (s.picks || []).length + ' of ' + ((s.pickOpts && s.pickOpts.max) || 1) + ' chosen';
+            if (s.kind === 'habit') {
+                out.habitEnds = 'ends ' + modeDateLabel(modeAddDays(modesToday(), s.targetDays));
+            }
+            if (s.kind === 'berserk') {
+                var t = berserkTargetFor(s.hours);
+                out.berserkTarget = t.toLocaleString() + ' XP';
+                out.berserkWin    = '+' + Math.round(t * BERSERK_SWING).toLocaleString() + ' XP';
+                out.berserkEnds   = 'until ' + modeHourLabel(s.hours);
+            }
+            if (s.kind === 'stake') {
+                out.stakePayout = '◆ ' + (s.wager + Math.round(s.wager * MODE_WAGER_RETURN));
+                out.stakeEnds   = 'ends ' + modeDateLabel(modeAddDays(modesToday(), s.days));
+            }
+            if (s.kind === 'focus') {
+                out.focusEnds = 'ends ' + modeDateLabel(modeAddDays(modesToday(), s.days));
+            }
+            if (s.kind === 'pact') {
+                out.pactEnds = 'ends ' + modeDateLabel(modeAddDays(modesToday(), s.days + 1));
+            }
+            return out;
+        }
+
+        function modeHourLabel(hours) {
+            var d = new Date(modesNow() + hours * 3600000);
+            return modeTimeLabel(String(d.getHours()).padStart(2, '0') + ':' +
+                                 String(d.getMinutes()).padStart(2, '0'));
+        }
+
+        // Is the sheet's commitment button blocked right now?
+        function modeStartBlocked() {
+            var s = _modeSetup;
+            if (!s) return true;
+            if (s.kind === 'habit')     return s.step === 0 ? s.picks.length === 0 : !modeAffordable(MODE_COST.habit);
+            if (s.kind === 'berserk')   return !modeAffordable(MODE_COST.berserk);
+            if (s.kind === 'recovery')  return !s.picks.length || !modeAffordable(MODE_COST.recovery);
+            if (s.kind === 'insurance') return !s.picks.length || !modeAffordable(MODE_COST.insurance);
+            if (s.kind === 'focus')     return !modeAffordable(MODE_COST.focus);
+            if (s.kind === 'stake') {
+                var total = s.picks.reduce(function (n, id) { return n + ((s.targets || {})[id] || 1); }, 0);
+                return !s.picks.length || s.days < STAKE_MIN_DAYS || total < STAKE_MIN_TOTAL ||
+                       !modeAffordable(s.wager);
+            }
+            if (s.kind === 'pact') return !s.activityId || !modeAffordable(PACT_WAGER);
+            return false;
+        }
+
+        function modeWarnHtml() {
+            var s = _modeSetup;
+            if (!s || s.kind !== 'stake') return '';
+            var total = s.picks.reduce(function (n, id) { return n + ((s.targets || {})[id] || 1); }, 0);
+            if (s.days >= STAKE_MIN_DAYS && total >= STAKE_MIN_TOTAL) return '';
+            return '<p class="md-warn">A stake needs ' + STAKE_MIN_DAYS + '+ days and ' +
+                   STAKE_MIN_TOTAL + '+ completions. You have ' + s.days + ' and ' + total + '.</p>';
+        }
+
+        function modeSyncLive() {
+            var sheet = document.getElementById('modeSheet');
+            if (!sheet || !_modeSetup) return;
+            var map = modeLiveMap();
+            sheet.querySelectorAll('[data-md-live]').forEach(function (el) {
+                var k = el.getAttribute('data-md-live');
+                if (Object.prototype.hasOwnProperty.call(map, k)) el.textContent = map[k];
+            });
+            var warn = sheet.querySelector('[data-md-region="warn"]');
+            if (warn) warn.innerHTML = modeWarnHtml();
+            var btn = sheet.querySelector('.md-sheet-foot .md-btn-primary');
+            if (btn) btn.disabled = modeStartBlocked();
+        }
 
         // ══ HABIT ═════════════════════════════════════════════════════════
         function habitRenderSetup() {
@@ -26284,12 +26979,10 @@
 
             if (s.step === 0) {
                 html += '<div class="modal-body md-body">' +
-                          '<p class="md-lede">Pick one to three activities to turn into real habits. ' +
-                          'Each one gets a time window, an optional anchor, and your own reason for doing it.</p>' +
-                          modePickerHtml(HABIT_MAX_ACTS, { hint: 'These become the only thing the app asks you about during their windows.' }) +
+                          '<p class="md-lede">Pick up to three activities to turn into habits.</p>' +
+                          modePickerHtml(HABIT_MAX_ACTS, {}) +
                         '</div>' +
-                        modeSheetFoot('Next', 'habitSetupNext()', s.picks.length === 0,
-                                      modeCostLine(cost));
+                        modeSheetFoot('Next', 'habitSetupNext()', s.picks.length === 0, modeCostLine(cost));
             } else if (s.step === 1) {
                 var i = s.detailIndex;
                 var act = modeEligibleActivities().filter(function (a) { return a.id === s.picks[i]; })[0] || { name: 'Activity' };
@@ -26300,37 +26993,35 @@
 
                           '<label class="md-label">Every day, between</label>' +
                           '<div class="md-time-row">' +
-                            '<input type="time" class="md-input md-time" value="' + modeEsc(d.windowStart || '22:00') + '" ' +
+                            '<input type="time" class="md-input md-time" data-md-focus="ws" value="' + modeEsc(d.windowStart || '22:00') + '" ' +
                               'onchange="modeWriteDetail(' + i + ',\'windowStart\',this.value)">' +
                             '<span class="md-time-and">and</span>' +
-                            '<input type="time" class="md-input md-time" value="' + modeEsc(d.windowEnd || '23:00') + '" ' +
+                            '<input type="time" class="md-input md-time" data-md-focus="we" value="' + modeEsc(d.windowEnd || '23:00') + '" ' +
                               'onchange="modeWriteDetail(' + i + ',\'windowEnd\',this.value)">' +
                           '</div>' +
-                          '<p class="md-hint">You will be nudged an hour before it opens, and again half an hour after it closes if it is still unlogged.</p>' +
+                          '<p class="md-hint">Nudged an hour before it opens, and again after it closes.</p>' +
 
                           '<label class="md-label">Anchor <span class="md-label-opt">optional</span></label>' +
-                          '<input type="text" class="md-input" maxlength="80" placeholder="right after brushing my teeth" ' +
+                          '<input type="text" class="md-input" maxlength="80" data-md-focus="anchor" ' +
+                            'placeholder="right after brushing my teeth" ' +
                             'value="' + modeEsc(d.anchor || '') + '" ' +
                             'oninput="modeWriteDetail(' + i + ',\'anchor\',this.value)">' +
-                          '<p class="md-hint">Just words. Nothing is tracked or timed from this — it goes into your reminders so they read like your own life.</p>' +
 
-                          '<label class="md-label">Why is this important to you?</label>' +
-                          '<textarea class="md-input md-textarea" maxlength="240" rows="3" ' +
-                            'placeholder="Say it in your own words." ' +
+                          '<label class="md-label">Why does this matter?</label>' +
+                          '<textarea class="md-input md-textarea" maxlength="240" rows="3" data-md-focus="why" ' +
+                            'placeholder="In your own words." ' +
                             'oninput="modeWriteDetail(' + i + ',\'why\',this.value)">' + modeEsc(d.why || '') + '</textarea>' +
-                          '<p class="md-hint">Saved exactly as you write it. On a day you miss, this comes back to you word for word — never rewritten, never summarised.</p>' +
+                          '<p class="md-hint">Comes back to you word for word on a day you miss.</p>' +
                         '</div>' +
                         modeSheetFoot(i + 1 < s.picks.length ? 'Next habit' : 'Set the length',
                                       'habitDetailNext()', false, '');
             } else {
                 html += '<div class="modal-body md-body">' +
-                          '<p class="md-lede">How long are you running this for?</p>' +
-                          '<div class="md-bignum">' + s.targetDays + '<span>days</span></div>' +
-                          '<input type="range" class="md-range" min="' + HABIT_MIN_DAYS + '" max="' + HABIT_MAX_DAYS + '" ' +
-                            'value="' + s.targetDays + '" oninput="modeSetNum(\'targetDays\',this.value,' +
-                            HABIT_MIN_DAYS + ',' + HABIT_MAX_DAYS + ')">' +
-                          '<p class="md-hint">33 is the default for a reason — long enough to stick, short enough to finish. ' +
-                            'The count only moves while the mode is on.</p>' +
+                          '<label class="md-label">How long for?</label>' +
+                          modeSliderHtml('targetDays', HABIT_MIN_DAYS, HABIT_MAX_DAYS, s.targetDays, {
+                              unit: 'days', side: 'habitEnds', label: 'Days',
+                              loLabel: HABIT_MIN_DAYS + ' days', hiLabel: HABIT_MAX_DAYS + ' days' }) +
+                          '<p class="md-hint">33 is the default: long enough to stick, short enough to finish.</p>' +
                           '<div class="md-summary">' +
                             s.picks.map(function (id, i) {
                                 var a = modeEligibleActivities().filter(function (x) { return x.id === id; })[0] || {};
@@ -26341,10 +27032,10 @@
                             }).join('') +
                           '</div>' +
                         '</div>' +
-                        modeSheetFoot('Start Habit Mode', 'habitStart()', !modeAffordable(cost),
-                                      modeCostLine(cost));
+                        modeSheetFoot('Start Habit Mode', 'habitStart()', !modeAffordable(cost), modeCostLine(cost));
             }
             modeSheet(html);
+            modeSyncLive();
         }
 
         window.habitSetupNext = function () {
@@ -26394,7 +27085,7 @@
             }, MODE_COST.habit, 'mode_habit');
             if (!res.ok) { showToast(res.message, 'red'); return; }
             modeCloseSheet();
-            showToast('🌱 Habit Mode is on — ' + habits.length + ' habit' + (habits.length === 1 ? '' : 's') +
+            showToast('Habit Mode is on — ' + habits.length + ' habit' + (habits.length === 1 ? '' : 's') +
                       ' for ' + s.targetDays + ' days', 'green');
             modesRenderPage();
         };
@@ -26405,10 +27096,12 @@
             if (!sus) { return; }
             var p = sus.payload;
             var offDays = Math.floor((modesNow() - new Date(sus.offAt).getTime()) / 86400000);
+            _modeSetup = { kind: 'habit', step: 0, picks: [], detailIndex: 0,
+                           targetDays: HABIT_DEFAULT_DAYS, query: '', resume: true };
             var html = modeSheetHead('Habit Mode', 'Resume');
             html += '<div class="modal-body md-body">' +
-                      '<p class="md-lede">You paused this ' + (offDays === 0 ? 'today' : offDays + ' day' + (offDays === 1 ? '' : 's') + ' ago') +
-                        '. Pick it back up where you left it, or start over.</p>' +
+                      '<p class="md-lede">Paused ' + (offDays === 0 ? 'today' : offDays + ' day' + (offDays === 1 ? '' : 's') + ' ago') +
+                        '. Pick it up where you left it, or start over.</p>' +
                       '<div class="md-summary">' +
                         '<div class="md-summary-row"><strong>' + (p.daysElapsed || 0) + ' of ' + p.targetDays + ' days</strong> elapsed</div>' +
                         (p.habits || []).map(function (h) {
@@ -26416,8 +27109,8 @@
                                    (h.completions || 0) + ' achieved</div>';
                         }).join('') +
                       '</div>' +
-                      '<p class="md-hint">Resuming costs nothing. Starting fresh archives this run and costs ◆ ' +
-                        MODE_COST.habit + ' like a new activation.</p>' +
+                      '<p class="md-hint">Resuming is free. Starting fresh archives this run and costs ◆ ' +
+                        MODE_COST.habit + '.</p>' +
                     '</div>' +
                     '<div class="md-sheet-foot md-sheet-foot-2">' +
                       '<button type="button" class="md-btn" onclick="habitStartFresh()">Start fresh</button>' +
@@ -26439,8 +27132,9 @@
             try { await saveUserData(); } catch (e) {}
             try { await modesSyncNotifications(); } catch (e) {}
             modeCloseSheet();
-            showToast('🌱 Habit Mode resumed at day ' + (p.daysElapsed || 0), 'green');
+            showToast('Habit Mode resumed at day ' + (p.daysElapsed || 0), 'green');
             modesRenderPage();
+            modesRefreshBanner();
         };
 
         window.habitStartFresh = function () {
@@ -26455,7 +27149,8 @@
                 m.suspendedHabit = null;
             }
             saveUserData().catch(function () {});
-            _modeSetup = { kind: 'habit', step: 0, picks: [], detailIndex: 0, targetDays: HABIT_DEFAULT_DAYS };
+            _modeSetup = { kind: 'habit', step: 0, picks: [], detailIndex: 0,
+                           targetDays: HABIT_DEFAULT_DAYS, query: '' };
             habitRenderSetup();
         };
 
@@ -26464,29 +27159,27 @@
             var s = _modeSetup;
             var cost = MODE_COST.berserk;
             var target = berserkTargetFor(s.hours);
-            var perHour = berserkPerHourTarget();
             var swing = Math.round(target * BERSERK_SWING);
 
             var html = modeSheetHead('Berserk Mode', 'Extreme');
             html += '<div class="modal-body md-body md-body-hot">' +
-                      '<p class="md-lede">Commit to a window. Hit the XP target inside it for a 30% bonus. ' +
-                        'Miss it and 30% comes off. There is no middle.</p>' +
-                      '<div class="md-bignum md-bignum-hot">' + s.hours + '<span>hour' + (s.hours === 1 ? '' : 's') + '</span></div>' +
-                      '<input type="range" class="md-range md-range-hot" min="' + BERSERK_MIN_HOURS + '" max="' + BERSERK_MAX_HOURS + '" ' +
-                        'value="' + s.hours + '" oninput="modeSetNum(\'hours\',this.value,' +
-                        BERSERK_MIN_HOURS + ',' + BERSERK_MAX_HOURS + ')">' +
+                      '<p class="md-lede">Hit the target inside the window for +30% XP. Miss and 30% comes off.</p>' +
+                      modeSliderHtml('hours', BERSERK_MIN_HOURS, BERSERK_MAX_HOURS, s.hours, {
+                          unit: 'hours', side: 'berserkEnds', hot: true, label: 'Hours',
+                          loLabel: BERSERK_MIN_HOURS + ' hour', hiLabel: BERSERK_MAX_HOURS + ' hours' }) +
                       '<div class="md-stakes">' +
-                        '<div class="md-stake"><span class="md-stake-k">Target</span><span class="md-stake-v">' + target.toLocaleString() + ' XP</span></div>' +
-                        '<div class="md-stake md-stake-win"><span class="md-stake-k">If you clear it</span><span class="md-stake-v">+' + swing.toLocaleString() + ' XP</span></div>' +
-                        '<div class="md-stake md-stake-lose"><span class="md-stake-k">If you miss</span><span class="md-stake-v">−30% of what you earned</span></div>' +
+                        '<div class="md-stake"><span class="md-stake-k">Target</span>' +
+                          '<span class="md-stake-v" data-md-live="berserkTarget">' + target.toLocaleString() + ' XP</span></div>' +
+                        '<div class="md-stake md-stake-win"><span class="md-stake-k">Clear it</span>' +
+                          '<span class="md-stake-v" data-md-live="berserkWin">+' + swing.toLocaleString() + ' XP</span></div>' +
+                        '<div class="md-stake md-stake-lose"><span class="md-stake-k">Miss it</span>' +
+                          '<span class="md-stake-v">−30% of what you earned</span></div>' +
                       '</div>' +
-                      '<p class="md-hint">Built from your trailing 7-day average of ' + Math.round(perHour) +
-                        ' XP an hour, damped so a great week raises the bar a little rather than a lot. ' +
-                        'It is meant to be hard and reachable, not either one alone.</p>' +
-                      '<p class="md-hint md-hint-hot">The whole app turns red while this runs. It keeps running whether you stay on this page or close the app entirely — log activities as normal and the target fills.</p>' +
+                      '<p class="md-hint md-hint-hot">The whole app turns red. It keeps running with the app closed.</p>' +
                     '</div>' +
                     modeSheetFoot('Go berserk', 'berserkStart()', !modeAffordable(cost), modeCostLine(cost));
             modeSheet(html);
+            modeSyncLive();
         }
 
         window.berserkStart = async function () {
@@ -26504,7 +27197,7 @@
             }, MODE_COST.berserk, 'mode_berserk');
             if (!res.ok) { showToast(res.message, 'red'); return; }
             modeCloseSheet();
-            showToast('🔥 Berserk — ' + target.toLocaleString() + ' XP in ' + s.hours + 'h', 'red');
+            showToast('Berserk — ' + target.toLocaleString() + ' XP in ' + s.hours + 'h', 'red');
             modesRenderPage();
         };
 
@@ -26518,10 +27211,8 @@
             });
             var html = modeSheetHead('Recovery Mode', 'Return');
             html += '<div class="modal-body md-body">' +
-                      '<p class="md-lede">Pick up to three activities to put into recovery. Each one climbs an extra ' +
-                        'step per completion until it is back at the highest streak it has ever reached — then it goes back to normal.</p>' +
-                      modePickerHtml(RECOVERY_MAX_ACTS, { streakOnly: true, showPeak: true, needPeak: true,
-                        hint: 'Your own past peak is the finish line. Nothing here can push a streak past it.' }) +
+                      '<p class="md-lede">Each pick climbs an extra step per completion until it is back at its own peak.</p>' +
+                      modePickerHtml(RECOVERY_MAX_ACTS, { streakOnly: true, showPeak: true, needPeak: true }) +
                       (picked.length ? '<div class="md-summary">' + picked.map(function (id) {
                           var a = acts.filter(function (x) { return x.id === id; })[0] || {};
                           var ceiling = Math.max(a.bestStreak || 0, a.streak || 0, 1);
@@ -26532,6 +27223,7 @@
                     modeSheetFoot('Start recovering', 'recoveryStart()',
                                   !picked.length || !modeAffordable(cost), modeCostLine(cost));
             modeSheet(html);
+            modeSyncLive();
         }
 
         window.recoveryStart = async function () {
@@ -26552,7 +27244,7 @@
             var res = await modesActivate('recovery', { activities: list }, MODE_COST.recovery, 'mode_recovery');
             if (!res.ok) { showToast(res.message, 'red'); return; }
             modeCloseSheet();
-            showToast('🩹 Recovery Mode is on — chasing your own peak', 'green');
+            showToast('Recovery Mode is on — chasing your own peak', 'green');
             modesRenderPage();
         };
 
@@ -26562,16 +27254,15 @@
             var cost = MODE_COST.insurance;
             var html = modeSheetHead('Insurance Mode', 'Shield');
             html += '<div class="modal-body md-body">' +
-                      '<p class="md-lede">Pick up to three activities to insure. While it runs, missing a day ' +
-                        'costs them nothing — no broken streak, no spent shield. Logging still counts exactly as it always did.</p>' +
-                      modePickerHtml(INSURANCE_MAX_ACTS, { streakOnly: true,
-                        hint: 'Insurance suspends the downside only. It never pauses your progress.' }) +
-                      '<p class="md-hint">There is no end date. It runs until you turn it off, and it checks in with you ' +
-                        'after about ' + INSURANCE_CHECKIN_DAYS + ' days to make sure you still want it.</p>' +
+                      '<p class="md-lede">While it runs, missing a day costs these nothing. Logging still counts.</p>' +
+                      modePickerHtml(INSURANCE_MAX_ACTS, { streakOnly: true }) +
+                      '<p class="md-hint">No end date — it runs until you turn it off, and checks in after ' +
+                        INSURANCE_CHECKIN_DAYS + ' days.</p>' +
                     '</div>' +
                     modeSheetFoot('Insure them', 'insuranceStart()',
                                   !s.picks.length || !modeAffordable(cost), modeCostLine(cost));
             modeSheet(html);
+            modeSyncLive();
         }
 
         window.insuranceStart = async function () {
@@ -26589,7 +27280,7 @@
             }, MODE_COST.insurance, 'mode_insurance');
             if (!res.ok) { showToast(res.message, 'red'); return; }
             modeCloseSheet();
-            showToast('🛡 Insurance is on — ' + list.length + ' activity' + (list.length === 1 ? '' : 's') + ' covered', 'green');
+            showToast('Insurance is on — ' + list.length + ' activity' + (list.length === 1 ? '' : 's') + ' covered', 'green');
             modesRenderPage();
         };
 
@@ -26598,54 +27289,46 @@
             var s = _modeSetup;
             if (!s.targets) s.targets = {};
             var acts = modeEligibleActivities();
-            var total = s.picks.reduce(function (n, id) { return n + (s.targets[id] || 1); }, 0);
-            var okDays = s.days >= STAKE_MIN_DAYS;
-            var okTotal = total >= STAKE_MIN_TOTAL;
             var payout = s.wager + Math.round(s.wager * MODE_WAGER_RETURN);
 
             var html = modeSheetHead('Stake Mode', 'Wager');
             html += '<div class="modal-body md-body">' +
-                      '<p class="md-lede">Bet Grit against your own targets. Hit every one inside the window and you get ' +
-                        'the stake back with 30% on top. Miss one and the whole thing is gone.</p>' +
-                      modePickerHtml(STAKE_MAX_ACTS, { hint: 'Then set how many completions each one needs.' }) +
+                      '<p class="md-lede">Hit every target inside the window and the stake comes back with 30% on top.</p>' +
+                      modePickerHtml(STAKE_MAX_ACTS, {}) +
                       (s.picks.length ? '<div class="md-targets">' + s.picks.map(function (id) {
                           var a = acts.filter(function (x) { return x.id === id; })[0] || {};
                           var v = s.targets[id] || 1;
                           return '<div class="md-target-row">' +
                                    '<span class="md-target-name">' + modeEsc(a.name || '') + '</span>' +
-                                   '<div class="md-stepper">' +
-                                     '<button type="button" onclick="stakeBump(\'' + modeEsc(id) + '\',-1)">−</button>' +
-                                     '<span>' + v + '</span>' +
-                                     '<button type="button" onclick="stakeBump(\'' + modeEsc(id) + '\',1)">+</button>' +
-                                   '</div>' +
+                                   modeStepperHtml('stakeBump(\'' + modeEsc(id) + '\',-1)', v,
+                                                   'stakeBump(\'' + modeEsc(id) + '\',1)',
+                                                   { atMin: v <= 1, atMax: v >= 200 }) +
                                  '</div>';
                       }).join('') + '</div>' : '') +
 
                       '<label class="md-label">Window</label>' +
-                      '<div class="md-bignum">' + s.days + '<span>days</span></div>' +
-                      '<input type="range" class="md-range" min="' + STAKE_MIN_DAYS + '" max="60" value="' + s.days + '" ' +
-                        'oninput="modeSetNum(\'days\',this.value,' + STAKE_MIN_DAYS + ',60)">' +
+                      modeSliderHtml('days', STAKE_MIN_DAYS, 60, s.days, {
+                          unit: 'days', side: 'stakeEnds', label: 'Days',
+                          loLabel: STAKE_MIN_DAYS + ' days', hiLabel: '60 days' }) +
 
                       '<label class="md-label">Stake</label>' +
                       '<div class="md-wager">' +
                         [25, 50, 75, 100].map(function (w) {
                             return '<button type="button" class="md-wager-btn' + (s.wager === w ? ' is-on' : '') + '" ' +
+                                   'aria-pressed="' + (s.wager === w ? 'true' : 'false') + '" ' +
                                    'onclick="modeSetNum(\'wager\',' + w + ',' + MODE_WAGER_MIN + ',' + MODE_WAGER_MAX + ')">◆ ' + w + '</button>';
                         }).join('') +
                       '</div>' +
                       '<div class="md-stakes">' +
-                        '<div class="md-stake md-stake-win"><span class="md-stake-k">All targets hit</span><span class="md-stake-v">◆ ' + payout + '</span></div>' +
+                        '<div class="md-stake md-stake-win"><span class="md-stake-k">All targets hit</span>' +
+                          '<span class="md-stake-v" data-md-live="stakePayout">◆ ' + payout + '</span></div>' +
                         '<div class="md-stake md-stake-lose"><span class="md-stake-k">One short</span><span class="md-stake-v">◆ 0</span></div>' +
                       '</div>' +
-                      (!okDays || !okTotal
-                        ? '<p class="md-warn">A stake needs at least ' + STAKE_MIN_DAYS + ' days and ' +
-                          STAKE_MIN_TOTAL + ' completions in total. Right now: ' + s.days + ' days, ' + total + ' completions.</p>'
-                        : '') +
                     '</div>' +
-                    modeSheetFoot('Place the stake', 'stakeStart()',
-                                  !s.picks.length || !okDays || !okTotal || !modeAffordable(s.wager),
-                                  modeCostLine(s.wager));
+                    modeSheetFoot('Place the stake', 'stakeStart()', modeStartBlocked(),
+                                  modeCostLine(s.wager), modeWarnHtml());
             modeSheet(html);
+            modeSyncLive();
         }
 
         window.stakeBump = function (id, delta) {
@@ -26677,7 +27360,7 @@
             }, s.wager, 'mode_stake_wager');
             if (!res.ok) { showToast(res.message, 'red'); return; }
             modeCloseSheet();
-            showToast('🎲 Stake placed — ◆ ' + s.wager + ' on ' + total + ' completions in ' + s.days + ' days', 'green');
+            showToast('Stake placed — ◆ ' + s.wager + ' on ' + total + ' completions in ' + s.days + ' days', 'green');
             modesRenderPage();
         };
 
@@ -26687,26 +27370,25 @@
             var cost = MODE_COST.focus;
             var html = modeSheetHead('Focus Window', 'Rhythm');
             html += '<div class="modal-body md-body">' +
-                      '<p class="md-lede">One slot in the day, the same slot every day. Anything you log inside it ' +
-                        'earns +' + Math.round(FOCUS_MULTIPLIER * 100) + '% XP — whatever the activity.</p>' +
+                      '<p class="md-lede">One slot a day. Anything logged inside it earns +' +
+                        Math.round(FOCUS_MULTIPLIER * 100) + '% XP.</p>' +
                       '<label class="md-label">Every day, between</label>' +
                       '<div class="md-time-row">' +
-                        '<input type="time" class="md-input md-time" value="' + modeEsc(s.windowStart) + '" ' +
+                        '<input type="time" class="md-input md-time" data-md-focus="ws" value="' + modeEsc(s.windowStart) + '" ' +
                           'onchange="modeSetField(\'windowStart\',this.value)">' +
                         '<span class="md-time-and">and</span>' +
-                        '<input type="time" class="md-input md-time" value="' + modeEsc(s.windowEnd) + '" ' +
+                        '<input type="time" class="md-input md-time" data-md-focus="we" value="' + modeEsc(s.windowEnd) + '" ' +
                           'onchange="modeSetField(\'windowEnd\',this.value)">' +
                       '</div>' +
                       '<label class="md-label">For</label>' +
-                      '<div class="md-bignum">' + s.days + '<span>days</span></div>' +
-                      '<input type="range" class="md-range" min="' + FOCUS_MIN_DAYS + '" max="' + FOCUS_MAX_DAYS + '" ' +
-                        'value="' + s.days + '" oninput="modeSetNum(\'days\',this.value,' +
-                        FOCUS_MIN_DAYS + ',' + FOCUS_MAX_DAYS + ')">' +
-                      '<p class="md-hint">The window does not move day to day — that fixed slot is the whole mechanism. ' +
-                        'Bonuses never stack: if something else could also boost a completion, only the biggest one applies.</p>' +
+                      modeSliderHtml('days', FOCUS_MIN_DAYS, FOCUS_MAX_DAYS, s.days, {
+                          unit: 'days', side: 'focusEnds', label: 'Days',
+                          loLabel: FOCUS_MIN_DAYS + ' days', hiLabel: FOCUS_MAX_DAYS + ' days' }) +
+                      '<p class="md-hint">The slot never moves — that is the mechanism. Bonuses never stack.</p>' +
                     '</div>' +
                     modeSheetFoot('Open the window', 'focusStart()', !modeAffordable(cost), modeCostLine(cost));
             modeSheet(html);
+            modeSyncLive();
         }
 
         window.focusStart = async function () {
@@ -26725,7 +27407,7 @@
             }, MODE_COST.focus, 'mode_focus');
             if (!res.ok) { showToast(res.message, 'red'); return; }
             modeCloseSheet();
-            showToast('🎯 Focus Window open — ' + modeTimeLabel(s.windowStart) + ' to ' +
+            showToast('Focus Window open — ' + modeTimeLabel(s.windowStart) + ' to ' +
                       modeTimeLabel(s.windowEnd), 'green');
             modesRenderPage();
         };
@@ -26741,59 +27423,54 @@
                     '</div>');
                 return;
             }
-            var acts = modeEligibleActivities();
             var html = modeSheetHead('Pact Mode', 'Together');
 
             if (!s.partnerUid) {
                 html += '<div class="modal-body md-body">' +
-                          '<p class="md-lede">Two people, two separate targets, one shared outcome. ' +
-                            'You each stake ◆ ' + PACT_WAGER + '. If either of you falls short, both stakes are gone.</p>' +
-                          '<label class="md-label">Who are you making it with?</label>' +
-                          friends.map(function (u) {
+                          '<p class="md-lede">Two people, two targets, one outcome. ◆ ' + PACT_WAGER +
+                            ' each — if either falls short, both stakes go.</p>' +
+                          '<label class="md-label">Who with?</label>' +
+                          '<div class="md-picker">' + friends.map(function (u) {
                               var p = (window._friendProfileCache || {})[u] || {};
-                              return '<button type="button" class="md-pick md-pick-friend" ' +
+                              return '<button type="button" class="md-pick" ' +
                                        'onclick="pactPickPartner(\'' + modeEsc(u) + '\')">' +
                                        '<span class="md-pick-name">' + modeEsc(p.displayName || 'Adventurer') + '</span>' +
                                        (p.level ? '<span class="md-pick-meta">Lv ' + p.level + '</span>' : '') +
                                      '</button>';
-                          }).join('') +
+                          }).join('') + '</div>' +
                         '</div>';
             } else {
-                var chosen = acts.filter(function (a) { return a.id === s.activityId; })[0];
+                var chosen = modeEligibleActivities().filter(function (a) { return a.id === s.activityId; })[0];
                 html += '<div class="modal-body md-body">' +
-                          '<div class="md-step-name">With ' + modeEsc(giftFriendName(s.partnerUid)) + '</div>' +
+                          '<div class="md-step">With</div>' +
+                          '<div class="md-step-name">' + modeEsc(giftFriendName(s.partnerUid)) + '</div>' +
+
                           '<label class="md-label">Your activity</label>' +
-                          '<div class="md-picker md-picker-short">' + acts.map(function (a) {
-                              return '<button type="button" class="md-pick' + (s.activityId === a.id ? ' is-on' : '') + '" ' +
-                                       'onclick="modeSetField(\'activityId\',\'' + modeEsc(a.id) + '\')">' +
-                                       '<span class="md-pick-name">' + modeEsc(a.name) + '</span>' +
-                                       '<span class="md-pick-meta">' + modeEsc(a.dimName || '') + '</span>' +
-                                     '</button>';
-                          }).join('') + '</div>' +
-                          '<p class="md-hint">They pick their own — it does not have to match yours.</p>' +
+                          modeDropdownHtml('Choose an activity') +
+                          '<p class="md-hint">They pick their own — it does not have to match.</p>' +
 
                           '<label class="md-label">Your target</label>' +
                           '<div class="md-target-row md-target-solo">' +
                             '<span class="md-target-name">' + modeEsc(chosen ? chosen.name : 'completions') + '</span>' +
-                            '<div class="md-stepper">' +
-                              '<button type="button" onclick="modeSetNum(\'target\',' + (s.target - 1) + ',' + PACT_MIN_TARGET + ',200)">−</button>' +
-                              '<span>' + s.target + '</span>' +
-                              '<button type="button" onclick="modeSetNum(\'target\',' + (s.target + 1) + ',' + PACT_MIN_TARGET + ',200)">+</button>' +
-                            '</div>' +
+                            modeStepperHtml('modeSetNum(\'target\',' + (s.target - 1) + ',' + PACT_MIN_TARGET + ',200)',
+                                            s.target,
+                                            'modeSetNum(\'target\',' + (s.target + 1) + ',' + PACT_MIN_TARGET + ',200)',
+                                            { atMin: s.target <= PACT_MIN_TARGET, atMax: s.target >= 200 }) +
                           '</div>' +
-                          '<p class="md-hint">Total completions inside the window — not one a day. Some things cannot be done daily, and the pact does not pretend otherwise.</p>' +
+                          '<p class="md-hint">Total completions inside the window — not one a day.</p>' +
 
                           '<label class="md-label">Window</label>' +
-                          '<div class="md-bignum">' + s.days + '<span>days</span></div>' +
-                          '<input type="range" class="md-range" min="' + PACT_MIN_DAYS + '" max="60" value="' + s.days + '" ' +
-                            'oninput="modeSetNum(\'days\',this.value,' + PACT_MIN_DAYS + ',60)">' +
-                          '<p class="md-hint">It starts the day after they accept, so you both get the same window.</p>' +
+                          modeSliderHtml('days', PACT_MIN_DAYS, 60, s.days, {
+                              unit: 'days', side: 'pactEnds', label: 'Days',
+                              loLabel: PACT_MIN_DAYS + ' days', hiLabel: '60 days' }) +
+                          '<p class="md-hint">Starts the day after they accept, so you get the same window.</p>' +
                         '</div>' +
                         modeSheetFoot('Send the request', 'pactSend()',
                                       !s.activityId || !modeAffordable(PACT_WAGER),
                                       modeCostLine(PACT_WAGER));
             }
             modeSheet(html);
+            modeSyncLive();
         }
 
         window.pactPickPartner = async function (uid) {
@@ -26812,7 +27489,7 @@
             try {
                 await pactCreate(s.partnerUid, giftFriendName(s.partnerUid), term, s.days);
                 modeCloseSheet();
-                showToast('🤝 Request sent to ' + giftFriendName(s.partnerUid) +
+                showToast('Request sent to ' + giftFriendName(s.partnerUid) +
                           ' — your ◆ ' + PACT_WAGER + ' is held until they answer.', 'green');
                 modesRenderPage();
             } catch (e) { showToast(modeErrText(e), 'red'); }
@@ -26822,7 +27499,8 @@
             var p = pactGet(id);
             if (!p) { await pactFetch(true); p = pactGet(id); }
             if (!p) { showToast('That Pact is no longer available.', 'red'); return; }
-            _modeSetup = { kind: 'pactAccept', pactId: id, target: PACT_MIN_TARGET, activityId: null };
+            _modeSetup = { kind: 'pactAccept', pactId: id, target: PACT_MIN_TARGET,
+                           activityId: null, query: '', ddOpen: false, picks: [] };
             pactRenderAccept();
         };
 
@@ -26832,42 +27510,34 @@
             if (!p) { modeCloseSheet(); return; }
             var from = pactName(p, p.createdBy);
             var theirs = pactTerm(p, p.createdBy) || {};
-            var acts = modeEligibleActivities();
-            var chosen = acts.filter(function (a) { return a.id === s.activityId; })[0];
+            var chosen = modeEligibleActivities().filter(function (a) { return a.id === s.activityId; })[0];
 
             var html = modeSheetHead('Pact with ' + from, 'Accept');
             html += '<div class="modal-body md-body">' +
                       '<div class="md-summary">' +
-                        '<div class="md-summary-row"><strong>' + modeEsc(from) + '</strong> is committing to ' +
+                        '<div class="md-summary-row"><strong>' + modeEsc(from) + '</strong> — ' +
                           modeEsc(theirs.activityName || 'an activity') + ' × ' + (theirs.target || 0) +
                           ' over ' + p.durationDays + ' days.</div>' +
                       '</div>' +
-                      '<p class="md-lede">Pick your own activity and your own target. Same window, separate goals. ' +
-                        'If either of you falls short, the pact breaks for both — and both stakes go.</p>' +
+                      '<p class="md-lede">Pick your own activity and target. Same window, separate goals.</p>' +
 
                       '<label class="md-label">Your activity</label>' +
-                      '<div class="md-picker md-picker-short">' + acts.map(function (a) {
-                          return '<button type="button" class="md-pick' + (s.activityId === a.id ? ' is-on' : '') + '" ' +
-                                   'onclick="pactAcceptSet(\'activityId\',\'' + modeEsc(a.id) + '\')">' +
-                                   '<span class="md-pick-name">' + modeEsc(a.name) + '</span>' +
-                                   '<span class="md-pick-meta">' + modeEsc(a.dimName || '') + '</span>' +
-                                 '</button>';
-                      }).join('') + '</div>' +
+                      modeDropdownHtml('Choose an activity') +
 
                       '<label class="md-label">Your target</label>' +
                       '<div class="md-target-row md-target-solo">' +
                         '<span class="md-target-name">' + modeEsc(chosen ? chosen.name : 'completions') + '</span>' +
-                        '<div class="md-stepper">' +
-                          '<button type="button" onclick="pactAcceptSet(\'target\',' + Math.max(PACT_MIN_TARGET, s.target - 1) + ')">−</button>' +
-                          '<span>' + s.target + '</span>' +
-                          '<button type="button" onclick="pactAcceptSet(\'target\',' + Math.min(200, s.target + 1) + ')">+</button>' +
-                        '</div>' +
+                        modeStepperHtml('pactAcceptSet(\'target\',' + Math.max(PACT_MIN_TARGET, s.target - 1) + ')',
+                                        s.target,
+                                        'pactAcceptSet(\'target\',' + Math.min(200, s.target + 1) + ')',
+                                        { atMin: s.target <= PACT_MIN_TARGET, atMax: s.target >= 200 }) +
                       '</div>' +
                       '<p class="md-hint">Starts tomorrow and runs ' + p.durationDays + ' days for both of you.</p>' +
                     '</div>' +
                     modeSheetFoot('Accept and stake ◆ ' + p.stake, 'pactDoAccept()',
                                   !s.activityId || !modeAffordable(p.stake), modeCostLine(p.stake));
             modeSheet(html);
+            modeSyncLive();
         }
 
         window.pactAcceptSet = function (field, value) {
@@ -26885,7 +27555,7 @@
             try {
                 var out = await pactAccept(s.pactId, term);
                 modeCloseSheet();
-                showToast('🤝 Pact set with ' + out.partnerName + ' — it starts tomorrow.', 'green');
+                showToast('Pact set with ' + out.partnerName + ' — it starts tomorrow.', 'green');
                 modesRenderPage();
             } catch (e) { showToast(modeErrText(e), 'red'); }
         };
@@ -26948,7 +27618,9 @@
         // ── The habit focus overlay (spec §1) ─────────────────────────────
         // Around the window, opening the app puts one habit in front of
         // everything else. It is a deliberate moment of friction, not a wall:
-        // one tap clears it for the rest of the day.
+        // one tap clears it for the rest of the day — and one tap MARKS it,
+        // right here. Sending someone off to another page to tick a box was
+        // the long way round to the only thing this screen is asking for.
         function habitMaybeShowOverlay() {
             if (document.getElementById('modeHabitOverlay')) return;
             if (document.getElementById('modeResolveCard')) return;
@@ -26959,39 +27631,55 @@
             var s = modeMins(h.windowStart), e = modeMins(h.windowEnd);
             var before = nowMins < s;
             var after = !before && nowMins > e;
+            var markable = modeCanMark(h.activityId);
 
             var el = document.createElement('div');
             el.id = 'modeHabitOverlay';
             el.className = 'md-ov';
             el.innerHTML =
+                '<button type="button" class="md-ov-close" aria-label="Close">' +
+                  '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+                '</button>' +
                 '<div class="md-ov-inner">' +
-                  '<button type="button" class="md-ov-close" aria-label="Close">' +
-                    '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
-                  '</button>' +
                   '<div class="md-ov-eyebrow">' + (before ? 'Coming up' : after ? 'Window closing' : 'Right now') + '</div>' +
                   '<div class="md-ov-name">' + modeEsc(h.activityName) + '</div>' +
                   '<div class="md-ov-window">' + modeTimeLabel(h.windowStart) + ' – ' + modeTimeLabel(h.windowEnd) + '</div>' +
                   (h.anchor ? '<div class="md-ov-anchor">' + modeEsc(h.anchor) + '</div>' : '') +
                   (h.why ? '<p class="md-ov-why">“' + modeEsc(h.why) + '”</p>' : '') +
                   '<div class="md-ov-count">' + (h.completions || 0) + ' of ' + ((a && a.daysElapsed) || 0) + ' days achieved</div>' +
-                  '<button type="button" class="md-btn md-btn-primary md-btn-wide md-ov-go">Take me to it</button>' +
+                  (markable
+                    ? '<button type="button" class="md-btn md-btn-primary md-btn-wide md-ov-mark">Mark it done</button>'
+                    : '<div class="md-ov-already">Already marked today</div>') +
+                  '<button type="button" class="md-ov-later md-ov-go">Open the activity</button>' +
                   '<button type="button" class="md-ov-later">Not now</button>' +
                 '</div>';
             document.body.appendChild(el);
 
-            function dismiss() {
-                h.overlayDismissedDay = modesToday();
-                saveUserData().catch(function () {});
+            function leave() {
                 el.classList.add('is-leaving');
                 setTimeout(function () { el.remove(); }, 220);
             }
+            function dismiss() {
+                h.overlayDismissedDay = modesToday();
+                saveUserData().catch(function () {});
+                leave();
+            }
             el.querySelector('.md-ov-close').onclick = dismiss;
-            el.querySelector('.md-ov-later').onclick = dismiss;
+            el.querySelector('.md-ov-later:not(.md-ov-go)').onclick = dismiss;
             el.querySelector('.md-ov-go').onclick = function () {
                 dismiss();
-                setTimeout(function () {
-                    try { window.mkOpenActivityFromReminder(h.activityId); } catch (e) {}
-                }, 260);
+                setTimeout(function () { window.modeGoToActivity(h.activityId); }, 260);
+            };
+            var mark = el.querySelector('.md-ov-mark');
+            if (mark) mark.onclick = async function () {
+                mark.disabled = true;
+                var done = await window.modeMark(h.activityId);
+                if (!done) { mark.disabled = false; return; }
+                // Marked: the reason to be here is gone, so the overlay goes
+                // too — and it does not come back today.
+                h.overlayDismissedDay = modesToday();
+                el.querySelector('.md-ov-inner').classList.add('is-marked');
+                setTimeout(leave, 640);
             };
         }
         window.habitMaybeShowOverlay = habitMaybeShowOverlay;
@@ -27001,9 +27689,8 @@
             el.className = 'md-mile-scrim';
             el.innerHTML =
                 '<div class="md-mile">' +
-                  '<div class="md-mile-pct">🛡</div>' +
                   '<div class="md-mile-name">Insurance has been on ' + days + ' days</div>' +
-                  '<p class="md-mile-quote">Still want it? It keeps running either way — this is a check-in, not a shutoff.</p>' +
+                  '<p class="md-mile-quote">Still want it? It keeps running either way.</p>' +
                   '<div class="md-sheet-foot md-sheet-foot-2">' +
                     '<button type="button" class="md-btn" id="mdInsReview">Review it</button>' +
                     '<button type="button" class="md-btn md-btn-primary" id="mdInsKeep">Keep it on</button>' +

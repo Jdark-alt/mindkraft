@@ -3635,6 +3635,76 @@
         .filter-select:focus { outline: none; border-color: var(--color-progress); }
         [data-theme-mode="light"] .filter-select { background: var(--color-input-bg); border-color: var(--color-input-border); }
 
+        /* ── Searchable dropdown (mkEnhanceSelect) ──────────────────────
+           The real <select> stays in the DOM as the value and is taken out
+           of the layout; the button and panel below are what you see. Same
+           shape as the mode sheets' picker, so an activity list looks the
+           same wherever the app asks you to choose one. */
+        .mks { position: relative; display: inline-flex; }
+        .mks > select { position: absolute; width: 1px; height: 1px; opacity: 0;
+                        pointer-events: none; clip: rect(0 0 0 0); }
+        .mks-trigger {
+            display: flex; align-items: center; justify-content: space-between; gap: 8px;
+            min-width: 150px; max-width: 260px; min-height: 32px; padding: 5px 9px;
+            background: var(--recessed-bg-3); border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 8px; cursor: pointer; text-align: left;
+            color: var(--color-text-primary); font-size: 12px; font-family: inherit;
+            transition: border-color .15s ease;
+        }
+        [data-theme-mode="light"] .mks-trigger {
+            background: var(--color-input-bg); border-color: var(--color-input-border);
+        }
+        .mks-trigger:hover, .mks.is-open .mks-trigger { border-color: var(--color-progress); }
+        .mks-trigger:focus-visible {
+            outline: none; border-color: var(--color-progress);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-progress) 25%, transparent);
+        }
+        .mks-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .mks-chev { width: 12px; height: 12px; flex-shrink: 0; opacity: .75; transition: transform .2s ease; }
+        .mks.is-open .mks-chev { transform: rotate(180deg); }
+        .mks-panel {
+            position: absolute; top: calc(100% + 6px); left: 0; z-index: 60;
+            min-width: 100%; width: max-content; max-width: min(320px, 78vw);
+            padding: 8px; border-radius: 10px;
+            background: var(--color-bg-card); border: 1px solid var(--color-border);
+            box-shadow: var(--shadow-lg);
+            animation: mksDrop .15s ease both;
+        }
+        @keyframes mksDrop { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+        .mks-search {
+            width: 100%; padding: 7px 9px; margin-bottom: 7px; border-radius: 7px;
+            background: var(--color-input-bg); border: 1px solid var(--color-input-border);
+            color: var(--color-text-primary); font-size: 12px; font-family: inherit;
+        }
+        .mks-search:focus { outline: none; border-color: var(--color-progress); }
+        .mks-list { max-height: 240px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+        .mks-group {
+            padding: 8px 6px 4px; font-size: 9.5px; font-weight: 700; letter-spacing: 0.1em;
+            text-transform: uppercase; color: var(--color-text-secondary);
+        }
+        .mks-opt {
+            display: block; width: 100%; padding: 8px 9px; margin-bottom: 3px; border-radius: 7px;
+            background: transparent; border: 1px solid transparent; cursor: pointer; text-align: left;
+            color: var(--color-text-primary); font-size: 12.5px; font-family: inherit;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            transition: background .12s ease;
+        }
+        .mks-opt:hover:not(:disabled) { background: var(--color-input-bg); }
+        .mks-opt.is-on {
+            background: var(--color-input-bg-focus);
+            border-color: color-mix(in srgb, var(--color-progress) 45%, transparent);
+            font-weight: 600;
+        }
+        .mks-opt:disabled { opacity: .4; cursor: not-allowed; }
+        .mks-none {
+            padding: 16px 6px; text-align: center;
+            font-size: 12px; color: var(--color-text-secondary);
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .mks-panel { animation: none; }
+            .mks-chev { transition: none; }
+        }
+
         /* ── Stat cards (3×2 grid) ───────────────────────────────────── */
         .an-stat-grid { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
         .an-stat-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -15233,23 +15303,30 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
    MODES  —  Pursuits › Modes
    ══════════════════════════════════════════════════════════════════════════
    Built entirely from the existing tokens (charcoal surfaces, electric blue
-   for anything interactive, muted crimson for stakes, gold for the currency).
-   Nothing here defines a new palette; the modes bend the one that exists.
+   for anything interactive, muted crimson for stakes, gold for the currency
+   and nothing else). Nothing here defines a new palette; the modes bend the
+   one that exists. Gold is milestone money — it never carries state.
+
+   Spacing runs on one scale so the seven modes read as one screen:
+     4 / 8 / 12 / 16 / 22   with 26px between major blocks.
    ══════════════════════════════════════════════════════════════════════════ */
 
-.md-root { padding: 0 0 88px; }
+.md-root {
+    padding: 0 0 88px;
+    max-width: 660px;
+    margin: 0 auto;
+}
 
 /* ── Head ── */
 /* The page's name comes from the nav's .mk-page-heading, like every other
    page — this row carries only the one line of orientation and the balance. */
 .md-head {
-    display: flex; align-items: flex-start; justify-content: space-between;
-    gap: 14px; margin: 0 0 18px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 14px; margin: 0 0 20px;
 }
-.md-head-main { min-width: 0; }
 .md-sub {
     font: 500 12.5px/1.6 Inter, sans-serif; color: var(--color-text-secondary);
-    margin: 2px 0 0; max-width: 44ch;
+    margin: 0; min-width: 0; max-width: 40ch;
 }
 .md-grit {
     flex-shrink: 0; display: flex; align-items: center; gap: 6px;
@@ -15264,20 +15341,27 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 
 /* ── Catalog grid ── */
 .md-grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(238px, 1fr));
     gap: 12px;
 }
 .md-card {
+    position: relative;
     display: flex; flex-direction: column; gap: 8px;
-    padding: 15px 15px 13px;
+    padding: 16px 16px 14px;
     background: var(--surface-card); border: 1px solid var(--card-hairline);
     border-radius: 14px; box-shadow: var(--shadow-card);
-    transition: border-color .18s ease, transform .18s ease;
+    transition: border-color .18s ease, transform .18s ease, box-shadow .18s ease;
 }
-.md-card:hover { border-color: color-mix(in srgb, var(--color-accent-blue) 45%, var(--card-hairline)); }
-.md-card.is-blocked { opacity: 0.45; }
-.md-card.is-blocked:hover { border-color: var(--card-hairline); }
-.md-card.is-live { border-color: color-mix(in srgb, var(--color-accent-blue) 60%, var(--card-hairline)); }
+.md-card:hover {
+    border-color: color-mix(in srgb, var(--color-accent-blue) 45%, var(--card-hairline));
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+}
+.md-card.is-blocked { opacity: 0.5; }
+.md-card.is-blocked:hover { border-color: var(--card-hairline); transform: none; box-shadow: var(--shadow-card); }
+.md-card.is-live {
+    border-color: color-mix(in srgb, var(--color-accent-blue) 60%, var(--card-hairline));
+}
 .md-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .md-card-icon { font-size: 20px; line-height: 1; }
 .md-card-tag {
@@ -15287,12 +15371,12 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 }
 .md-card-name { font: 700 15px/1.3 Inter, sans-serif; color: var(--color-text-primary); }
 .md-card-blurb {
-    font: 500 12px/1.62 Inter, sans-serif; color: var(--color-text-secondary);
+    font: 500 12px/1.6 Inter, sans-serif; color: var(--color-text-secondary);
     margin: 0; flex: 1;
 }
 .md-card-foot {
     display: flex; align-items: center; justify-content: space-between;
-    gap: 10px; margin-top: 4px; padding-top: 11px;
+    gap: 10px; margin-top: 4px; padding-top: 12px;
     border-top: 1px solid var(--card-hairline);
 }
 .md-card-cost {
@@ -15301,13 +15385,22 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 }
 .md-card-live { font: 700 11.5px Inter, sans-serif; color: var(--color-progress); }
 .md-card-btn {
-    padding: 7px 15px; border-radius: 8px; border: none; cursor: pointer;
+    padding: 8px 16px; border-radius: 8px; border: none; cursor: pointer;
     background: var(--color-accent-blue); color: #fff;
     font: 700 12px Inter, sans-serif; font-family: inherit;
+    min-height: 34px;
     transition: filter .16s ease;
 }
 .md-card-btn:hover:not(:disabled) { filter: brightness(1.12); }
 .md-card-btn.is-off, .md-card-btn:disabled { cursor: not-allowed; opacity: 0.5; }
+/* Why a card is unavailable, said on the card rather than in a note further
+   up the page that has to be scrolled back to. */
+/* One line, under the mode it is about. */
+.md-locked-note {
+    margin: -10px 0 18px; padding: 0 2px;
+    font: 500 11.5px/1.5 Inter, sans-serif; color: var(--color-text-secondary);
+    opacity: .85;
+}
 
 /* Each mode gets one identifying edge, not a whole new theme. */
 .md-card-berserk .md-card-icon,
@@ -15317,7 +15410,7 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 
 /* ── The running-mode panel ── */
 .md-live {
-    padding: 16px; margin-bottom: 16px; border-radius: 16px;
+    padding: 18px; margin-bottom: 20px; border-radius: 16px;
     background: var(--surface-card);
     border: 1px solid color-mix(in srgb, var(--color-accent-blue) 40%, var(--card-hairline));
     box-shadow: var(--shadow-md);
@@ -15328,27 +15421,45 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
         color-mix(in srgb, var(--color-accent-red) 12%, var(--surface-card)) 0%,
         var(--surface-card) 60%);
 }
-.md-live-head { display: flex; align-items: center; gap: 11px; margin-bottom: 14px; }
-.md-live-icon { font-size: 22px; line-height: 1; flex-shrink: 0; }
+.md-live-head { display: flex; align-items: center; gap: 11px; margin-bottom: 16px; }
 .md-live-titles { flex: 1; min-width: 0; }
 .md-live-eyebrow {
-    font: 700 9.5px/1 Inter, sans-serif; letter-spacing: 0.1em; text-transform: uppercase;
-    color: var(--color-progress); margin-bottom: 4px;
+    font: 700 9.5px/1 Inter, sans-serif; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--color-progress); margin-bottom: 5px;
 }
 .md-live-name { font: 700 16px/1.2 Inter, sans-serif; color: var(--color-text-primary); }
 .md-live-end {
-    flex-shrink: 0; padding: 6px 13px; border-radius: 8px; cursor: pointer;
-    background: transparent; border: 1px solid var(--color-border);
-    color: var(--color-text-secondary); font: 600 11.5px Inter, sans-serif; font-family: inherit;
+    flex-shrink: 0; padding: 7px 14px; border-radius: 8px; cursor: pointer;
+    background: transparent; border: 1px solid var(--color-input-border);
+    color: var(--color-text-secondary); font: 600 12px Inter, sans-serif; font-family: inherit;
+    min-height: 34px;
+    transition: color .16s, border-color .16s;
 }
 .md-live-end:hover { color: var(--color-accent-red); border-color: var(--color-accent-red); }
 .md-live-body { display: flex; flex-direction: column; gap: 12px; }
 
-/* ── Numbers ── */
+/* The one live indicator on the page. A slow breath, not a blink. */
+.md-live-pulse, .md-banner-pulse {
+    position: relative; flex-shrink: 0;
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--color-progress);
+}
+.md-live-pulse::after, .md-banner-pulse::after {
+    content: ''; position: absolute; inset: 0; border-radius: 50%;
+    background: inherit; animation: mdBreathe 2.6s ease-out infinite;
+}
+.md-live-berserk .md-live-pulse { background: var(--color-accent-red); }
+@keyframes mdBreathe {
+    0%   { opacity: .55; transform: scale(1); }
+    70%  { opacity: 0;   transform: scale(3.1); }
+    100% { opacity: 0;   transform: scale(3.1); }
+}
+
+/* ── Numbers, bars, rows ── */
 .md-metric { display: flex; align-items: baseline; gap: 9px; }
 .md-metric-n {
     font: 700 34px/1 Inter, sans-serif; color: var(--color-text-primary);
-    font-variant-numeric: tabular-nums;
+    font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
 }
 .md-metric-of { font: 500 12.5px Inter, sans-serif; color: var(--color-text-secondary); }
 .md-metric-hot .md-metric-n { color: var(--color-accent-red); }
@@ -15357,96 +15468,109 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
     height: 6px; border-radius: 999px; overflow: hidden;
     background: var(--color-input-bg);
 }
-.md-bar-fill { display: block; height: 100%; border-radius: 999px; background: var(--color-progress);
-    transition: width .35s cubic-bezier(.22,.61,.36,1); }
+.md-bar-fill {
+    display: block; height: 100%; border-radius: 999px; background: var(--color-progress);
+    transition: width .4s cubic-bezier(.2,.8,.2,1);
+}
 .md-bar-green .md-bar-fill { background: var(--chip-xp-fg); }
 .md-bar-blue  .md-bar-fill { background: var(--color-progress); }
 .md-bar-hot   .md-bar-fill { background: linear-gradient(90deg, var(--color-accent-red), #ff6b4a); }
 
-/* ── Rows inside a running mode ── */
 .md-hrow {
-    display: flex; flex-direction: column; gap: 8px;
-    padding: 12px 13px; border-radius: 11px;
+    display: flex; flex-direction: column; gap: 9px;
+    padding: 13px; border-radius: 11px;
     background: var(--color-input-bg); border: 1px solid var(--color-input-border);
 }
 .md-hrow.is-done { border-color: color-mix(in srgb, var(--chip-xp-fg) 40%, var(--color-input-border)); }
 .md-hrow-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .md-hrow-name {
-    font: 600 13.5px Inter, sans-serif; color: var(--color-text-primary);
+    font: 600 13.5px/1.3 Inter, sans-serif; color: var(--color-text-primary);
     min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .md-hrow-count {
     flex-shrink: 0; font: 600 11.5px Inter, sans-serif; color: var(--color-text-secondary);
     font-variant-numeric: tabular-nums;
 }
-.md-hrow-meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.md-hrow-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .md-chip {
-    font: 600 10.5px/1 Inter, sans-serif; padding: 5px 8px; border-radius: 6px;
-    background: var(--color-input-bg); border: 1px solid var(--color-input-border);
-    color: var(--color-text-secondary);
+    font: 600 10.5px/1 Inter, sans-serif; color: var(--color-text-secondary);
+    padding: 6px 9px; border-radius: 999px; border: 1px solid var(--color-input-border);
+    white-space: nowrap;
 }
 .md-chip-soft { font-style: italic; opacity: 0.85; }
 .md-chip-done { color: var(--chip-xp-fg); border-color: color-mix(in srgb, var(--chip-xp-fg) 35%, transparent); }
 .md-chip-hot  { color: var(--color-accent-red); border-color: color-mix(in srgb, var(--color-accent-red) 40%, transparent); }
-.md-why {
-    font: 500 12px/1.6 Inter, sans-serif; font-style: italic;
-    color: var(--color-text-secondary); margin: 0;
-    padding-left: 9px; border-left: 2px solid color-mix(in srgb, var(--color-accent-blue) 45%, transparent);
-}
-.md-note { font: 500 11.5px/1.62 Inter, sans-serif; color: var(--color-text-secondary); margin: 0; }
-.md-refresh {
-    align-self: flex-start; padding: 6px 13px; border-radius: 8px; cursor: pointer;
-    background: transparent; border: 1px dashed var(--color-border);
-    color: var(--color-text-secondary); font: 600 11.5px Inter, sans-serif; font-family: inherit;
-}
-.md-refresh:hover { color: var(--color-accent-blue); border-color: var(--color-accent-blue); }
-.md-locked-note {
-    font: 500 11.5px/1.6 Inter, sans-serif; color: var(--color-text-secondary);
-    margin: -6px 0 16px; opacity: 0.85;
-}
 
-/* ── Pact panel ── */
+/* Marking, from the mode itself. The whole point of §3.1: the action the
+   screen is asking for is on the screen that asks for it. */
+.md-mark {
+    margin-left: auto; flex-shrink: 0;
+    padding: 6px 13px; min-height: 30px; border-radius: 999px; cursor: pointer;
+    background: var(--color-accent-blue); border: 1px solid transparent; color: #fff;
+    font: 700 10.5px/1 Inter, sans-serif; font-family: inherit; letter-spacing: 0.02em;
+    transition: filter .16s ease;
+}
+.md-mark:hover { filter: brightness(1.12); }
+.md-mark-ghost {
+    background: transparent; border-color: var(--color-input-border);
+    color: var(--color-text-secondary);
+}
+.md-mark-ghost:hover { filter: none; color: var(--color-text-primary); border-color: var(--color-accent-blue); }
+
+.md-note { font: 500 11.5px/1.62 Inter, sans-serif; color: var(--color-text-secondary); margin: 0; }
+
+/* ── Pact ── */
 .md-pact { display: flex; align-items: stretch; gap: 10px; }
 .md-pact-side {
-    flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px;
-    padding: 12px 13px; border-radius: 11px;
+    flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px;
+    padding: 13px; border-radius: 11px;
     background: var(--color-input-bg); border: 1px solid var(--color-input-border);
 }
 .md-pact-who {
-    font: 700 9.5px/1 Inter, sans-serif; letter-spacing: 0.09em; text-transform: uppercase;
+    font: 700 9.5px/1 Inter, sans-serif; letter-spacing: 0.1em; text-transform: uppercase;
     color: var(--color-text-secondary);
 }
 .md-pact-act {
-    font: 600 12.5px Inter, sans-serif; color: var(--color-text-primary);
+    font: 600 13px/1.35 Inter, sans-serif; color: var(--color-text-primary);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .md-pact-n {
-    font: 700 19px/1.1 Inter, sans-serif; color: var(--color-text-primary);
-    font-variant-numeric: tabular-nums; margin-bottom: 3px;
+    font: 700 19px/1 Inter, sans-serif; color: var(--color-text-primary);
+    font-variant-numeric: tabular-nums;
 }
-.md-pact-link { align-self: center; font-size: 17px; opacity: 0.6; }
+/* The tie between the two sides, drawn rather than spelled: one hairline
+   with a node in the middle. */
+.md-pact-link {
+    align-self: center; flex-shrink: 0;
+    width: 22px; height: 1px; background: var(--color-input-border);
+    position: relative;
+}
+.md-pact-link::after {
+    content: ''; position: absolute; left: 50%; top: 50%;
+    width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px;
+    border-radius: 50%; background: var(--color-progress); opacity: .8;
+}
 
-/* ── Pact invites ── */
+/* ── Invites ── */
 .md-invite {
-    padding: 14px; margin-bottom: 12px; border-radius: 13px;
+    display: flex; flex-direction: column; gap: 10px;
+    padding: 16px; margin-bottom: 12px; border-radius: 14px;
     background: var(--surface-card);
-    border: 1px solid color-mix(in srgb, var(--color-accent-blue) 45%, var(--card-hairline));
+    border: 1px solid color-mix(in srgb, var(--color-accent-blue) 35%, var(--card-hairline));
 }
 .md-invite-out { border-style: dashed; opacity: 0.9; }
 .md-invite-top { font: 600 13.5px/1.4 Inter, sans-serif; color: var(--color-text-primary); }
 .md-invite-body {
-    font: 500 12px/1.62 Inter, sans-serif; color: var(--color-text-secondary);
-    margin: 7px 0 12px;
+    font: 500 12px/1.65 Inter, sans-serif; color: var(--color-text-secondary);
 }
 .md-invite-btns { display: flex; gap: 8px; }
 
 /* ── Buttons ── */
 .md-btn {
-    padding: 10px 16px; border-radius: 9px; cursor: pointer;
-    background: transparent; border: 1px solid var(--color-border);
-    color: var(--color-text-secondary);
-    font: 600 12.5px Inter, sans-serif; font-family: inherit;
-    transition: filter .16s ease, border-color .16s ease, color .16s ease;
+    padding: 10px 16px; border-radius: 9px; cursor: pointer; min-height: 42px;
+    background: transparent; border: 1px solid var(--color-input-border);
+    color: var(--color-text-secondary); font: 600 13px Inter, sans-serif; font-family: inherit;
+    transition: color .16s, border-color .16s, filter .16s;
 }
 .md-btn:hover:not(:disabled) { color: var(--color-text-primary); border-color: var(--color-accent-blue); }
 .md-btn-primary {
@@ -15457,20 +15581,18 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 .md-btn:disabled { cursor: not-allowed; opacity: 0.45; }
 
 /* ── History ── */
-.md-hist { margin-top: 24px; }
+.md-hist { margin-top: 26px; }
 .md-hist-kicker {
-    font: 700 9.5px/1 Inter, sans-serif; letter-spacing: 0.1em; text-transform: uppercase;
-    color: var(--color-text-secondary); margin-bottom: 9px;
+    font: 700 9.5px/1 Inter, sans-serif; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--color-text-secondary); margin-bottom: 10px;
 }
 .md-hist-row {
     display: flex; align-items: center; gap: 10px;
-    padding: 9px 12px; margin-bottom: 6px; border-radius: 9px;
-    background: var(--color-input-bg); border: 1px solid var(--color-input-border);
+    padding: 10px 2px; border-bottom: 1px solid var(--card-hairline);
 }
-.md-hist-icon { font-size: 14px; flex-shrink: 0; }
 .md-hist-name { font: 600 12px Inter, sans-serif; color: var(--color-text-primary); flex-shrink: 0; }
 .md-hist-sum {
-    flex: 1; min-width: 0; font-size: 11.5px; color: var(--color-text-secondary);
+    flex: 1; min-width: 0; font: 500 11.5px Inter, sans-serif; color: var(--color-text-secondary);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .md-hist-out { flex-shrink: 0; font: 600 11px Inter, sans-serif; color: var(--color-text-secondary); }
@@ -15478,31 +15600,46 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 .md-hist-failed .md-hist-out { color: var(--color-accent-red); }
 
 /* ══ Setup sheet ══════════════════════════════════════════════════════════ */
+/* The body and footer used to zero out .modal-body's horizontal padding, so
+   every control in every mode ran into the sheet's own edge. They keep the
+   app's dialog gutter now, and only the vertical rhythm is theirs. */
 .md-sheet-scrim { display: flex; align-items: flex-end; justify-content: center; }
 .md-sheet { width: 100%; max-width: 540px; max-height: 90vh; display: flex; flex-direction: column; }
-.md-body { overflow-y: auto; padding: 4px 0 8px; }
+.md-body {
+    overflow-y: auto;
+    padding: 18px 24px 20px;
+    gap: 0;                      /* rhythm comes from each control's own margins */
+}
 .md-lede {
     font: 500 13px/1.65 Inter, sans-serif; color: var(--color-text-secondary);
-    margin: 2px 0 16px;
+    margin: 0 0 18px;
 }
 .md-hint {
     font: 500 11.5px/1.6 Inter, sans-serif; color: var(--color-text-secondary);
-    margin: 8px 0 16px; opacity: 0.9;
+    margin: 9px 0 0; opacity: 0.9;
 }
 .md-hint-hot { color: color-mix(in srgb, var(--color-accent-red) 70%, var(--color-text-secondary)); opacity: 1; }
+/* Berserk is the only setup that changes temperature, and it says so with a
+   wash on the body rather than a second palette. */
+.md-body-hot {
+    background: linear-gradient(180deg,
+        color-mix(in srgb, var(--color-accent-red) 7%, transparent) 0%,
+        transparent 140px);
+}
 .md-warn {
     font: 600 11.5px/1.6 Inter, sans-serif; color: var(--color-accent-red);
-    margin: 10px 0 0;
+    margin: 12px 0 0;
 }
 .md-empty {
     font: 500 13px/1.7 Inter, sans-serif; color: var(--color-text-secondary);
-    text-align: center; padding: 28px 12px;
+    text-align: center; padding: 30px 12px;
 }
 .md-label {
     display: block; font: 700 10px/1 Inter, sans-serif; letter-spacing: 0.09em;
     text-transform: uppercase; color: var(--color-text-secondary);
-    margin: 18px 0 8px;
+    margin: 22px 0 10px;
 }
+.md-label:first-child { margin-top: 0; }
 .md-label-opt { text-transform: none; letter-spacing: 0; font-weight: 500; opacity: 0.7; }
 .md-step {
     font: 700 9.5px/1 Inter, sans-serif; letter-spacing: 0.1em; text-transform: uppercase;
@@ -15511,124 +15648,241 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 .md-step-name { font: 700 17px/1.25 Inter, sans-serif; color: var(--color-text-primary); margin-bottom: 4px; }
 
 .md-input {
-    width: 100%; padding: 11px 13px; border-radius: 9px;
+    width: 100%; padding: 12px 13px; border-radius: 9px; min-height: 44px;
     background: var(--color-input-bg); border: 1px solid var(--color-input-border);
     color: var(--color-text-primary); font: 500 14px Inter, sans-serif; font-family: inherit;
+    transition: border-color .15s, background .15s;
 }
 .md-input:focus { outline: none; border-color: var(--color-accent-blue); background: var(--color-input-bg-focus); }
-.md-textarea { resize: vertical; line-height: 1.6; }
+.md-textarea { resize: vertical; line-height: 1.6; min-height: 84px; }
 .md-time-row { display: flex; align-items: center; gap: 10px; }
 .md-time { flex: 1; min-width: 0; text-align: center; font-variant-numeric: tabular-nums; }
 .md-time-and { font: 500 12px Inter, sans-serif; color: var(--color-text-secondary); flex-shrink: 0; }
 
-.md-picker { display: flex; flex-direction: column; gap: 7px; }
-.md-picker-short { max-height: 190px; overflow-y: auto; padding-right: 2px; }
-.md-pick {
+/* ══ The activity picker ══════════════════════════════════════════════════
+   A real control instead of a native <select>: a trigger that names the
+   choice, a chevron that says it opens, and a search field above the list so
+   a library of fifty is a typed word rather than a scroll.
+   ═══════════════════════════════════════════════════════════════════════ */
+.md-dd { position: relative; }
+.md-dd-trigger {
     width: 100%; display: flex; align-items: center; justify-content: space-between;
-    gap: 10px; padding: 11px 13px; border-radius: 9px; cursor: pointer; text-align: left;
+    gap: 8px; padding: 0 13px; height: 46px; border-radius: 9px; cursor: pointer;
+    background: var(--color-input-bg); border: 1px solid var(--color-input-border);
+    color: var(--color-placeholder); font-family: inherit; font-size: 14px; text-align: left;
+    transition: border-color .15s, color .15s;
+}
+.md-dd-trigger.has-value { color: var(--color-text-primary); font-weight: 600; }
+.md-dd-trigger:hover { border-color: var(--color-accent-blue); }
+.md-dd.is-open .md-dd-trigger { border-color: var(--color-accent-blue); }
+.md-dd-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.md-chev { width: 14px; height: 14px; flex-shrink: 0; opacity: .8; transition: transform .22s ease; }
+.md-dd.is-open .md-chev { transform: rotate(180deg); }
+
+.md-dd-panel {
+    margin-top: 8px; padding: 11px; border-radius: 11px;
+    background: var(--color-bg-card);
+    border: 1px solid color-mix(in srgb, var(--color-accent-blue) 30%, var(--color-input-border));
+    box-shadow: var(--shadow-md);
+    animation: mdDrop .16s ease both;
+}
+@keyframes mdDrop { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.md-dd-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 9px;
+}
+.md-dd-count {
+    font: 600 10.5px/1 Inter, sans-serif; letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--color-text-secondary);
+}
+.md-dd-search { margin-bottom: 9px; }
+.md-dd-list {
+    display: flex; flex-direction: column; gap: 7px;
+    max-height: 240px; overflow-y: auto; overscroll-behavior: contain;
+    padding-right: 2px; scrollbar-width: thin;
+}
+.md-dd-none {
+    padding: 22px 4px; text-align: center;
+    font: 500 12.5px Inter, sans-serif; color: var(--color-text-secondary);
+}
+
+.md-picker { display: flex; flex-direction: column; gap: 7px; }
+.md-pick {
+    width: 100%; display: flex; align-items: center; gap: 10px;
+    padding: 12px 13px; border-radius: 9px; cursor: pointer; text-align: left;
+    min-height: 46px;
     background: var(--color-input-bg); border: 1px solid var(--color-input-border);
     color: var(--color-text-primary); font-family: inherit;
+    transition: border-color .15s, background .15s;
 }
 .md-pick:hover:not(:disabled) { border-color: var(--color-accent-blue); }
 .md-pick.is-on {
-    border-color: var(--color-accent-blue);
-    background: var(--color-input-bg-focus);
+    border-color: var(--color-accent-blue); background: var(--color-input-bg-focus);
 }
 .md-pick.is-off, .md-pick:disabled { opacity: 0.4; cursor: not-allowed; }
 .md-pick-name {
-    font: 600 13px Inter, sans-serif; min-width: 0;
+    flex: 1; min-width: 0; font: 600 13.5px Inter, sans-serif;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .md-pick-meta { flex-shrink: 0; font: 500 11px Inter, sans-serif; color: var(--color-text-secondary); }
-.md-pick-friend { margin-bottom: 7px; }
+/* The multi-select box. Present on every row so the list does not reflow
+   when something is chosen. */
+.md-pick-box {
+    flex-shrink: 0; width: 17px; height: 17px; border-radius: 5px;
+    border: 1.5px solid var(--color-input-border);
+    transition: background .15s, border-color .15s;
+    position: relative;
+}
+.md-pick.is-on .md-pick-box {
+    background: var(--color-accent-blue); border-color: var(--color-accent-blue);
+}
+.md-pick.is-on .md-pick-box::after {
+    content: ''; position: absolute; left: 5px; top: 1.5px;
+    width: 4px; height: 8px; border: solid #fff; border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
 
-.md-bignum {
-    display: flex; align-items: baseline; gap: 8px; margin: 4px 0 6px;
+/* ══ Sliders ══════════════════════════════════════════════════════════════
+   The track carries its own fill (--md-fill, written by the page as the
+   value moves) so the control reads as a measurement rather than a bare
+   groove, and the value reads out above it at a size worth looking at. The
+   two ends are labelled: a slider with no scale is a guess.
+   ═══════════════════════════════════════════════════════════════════════ */
+.md-slider { margin: 2px 0 0; }
+.md-slider-read { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+.md-slider-n {
     font: 700 40px/1 Inter, sans-serif; color: var(--color-text-primary);
+    font-variant-numeric: tabular-nums; letter-spacing: -0.03em;
+}
+.md-slider-unit { font: 500 13px Inter, sans-serif; color: var(--color-text-secondary); }
+.md-slider-side {
+    margin-left: auto; font: 600 11.5px Inter, sans-serif; color: var(--color-text-secondary);
     font-variant-numeric: tabular-nums;
 }
-.md-bignum span { font: 500 13px Inter, sans-serif; color: var(--color-text-secondary); }
-.md-bignum-hot { color: var(--color-accent-red); }
+.md-slider.is-hot .md-slider-n { color: var(--color-accent-red); }
+.md-slider-ends {
+    display: flex; justify-content: space-between; margin-top: 9px;
+    font: 500 10.5px Inter, sans-serif; color: var(--color-text-secondary); opacity: .75;
+}
 
 .md-range {
-    width: 100%; height: 4px; border-radius: 999px; appearance: none; -webkit-appearance: none;
-    background: var(--color-input-bg); cursor: pointer; margin: 6px 0 0;
+    --md-fill: 0%;
+    display: block; width: 100%; height: 22px; appearance: none; -webkit-appearance: none;
+    background: transparent; cursor: pointer; margin: 0;
+}
+.md-range:focus { outline: none; }
+.md-range::-webkit-slider-runnable-track {
+    height: 6px; border-radius: 999px;
+    background: linear-gradient(to right,
+        var(--color-accent-blue) 0 var(--md-fill),
+        var(--color-input-bg) var(--md-fill) 100%);
+}
+.md-range::-moz-range-track {
+    height: 6px; border-radius: 999px; background: var(--color-input-bg);
+}
+.md-range::-moz-range-progress {
+    height: 6px; border-radius: 999px; background: var(--color-accent-blue);
 }
 .md-range::-webkit-slider-thumb {
     appearance: none; -webkit-appearance: none;
-    width: 20px; height: 20px; border-radius: 50%;
-    background: var(--color-accent-blue); border: 2px solid var(--color-bg-card);
-    box-shadow: var(--shadow-sm); cursor: pointer;
+    width: 22px; height: 22px; margin-top: -8px; border-radius: 50%;
+    background: var(--color-accent-blue); border: 3px solid var(--surface-card);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.45); cursor: pointer;
+    transition: transform .14s ease;
 }
 .md-range::-moz-range-thumb {
-    width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--color-bg-card);
+    width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--surface-card);
     background: var(--color-accent-blue); cursor: pointer;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.45);
 }
+.md-range:active::-webkit-slider-thumb { transform: scale(1.12); }
+.md-range:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent-blue) 30%, transparent);
+}
+.md-range-hot::-webkit-slider-runnable-track {
+    background: linear-gradient(to right,
+        var(--color-accent-red) 0 var(--md-fill),
+        var(--color-input-bg) var(--md-fill) 100%);
+}
+.md-range-hot::-moz-range-progress { background: var(--color-accent-red); }
 .md-range-hot::-webkit-slider-thumb { background: var(--color-accent-red); }
 .md-range-hot::-moz-range-thumb { background: var(--color-accent-red); }
 
-.md-stakes { display: flex; flex-direction: column; gap: 6px; margin: 16px 0 4px; }
+/* ── Outcome table ── */
+.md-stakes { display: flex; flex-direction: column; gap: 6px; margin: 20px 0 0; }
 .md-stake {
     display: flex; align-items: center; justify-content: space-between; gap: 10px;
-    padding: 10px 13px; border-radius: 9px;
+    padding: 11px 13px; border-radius: 9px;
     background: var(--color-input-bg); border: 1px solid var(--color-input-border);
 }
 .md-stake-k { font: 500 12px Inter, sans-serif; color: var(--color-text-secondary); }
 .md-stake-v {
-    font: 700 13.5px Inter, sans-serif; color: var(--color-text-primary);
+    font: 700 14px Inter, sans-serif; color: var(--color-text-primary);
     font-variant-numeric: tabular-nums;
 }
 .md-stake-win  .md-stake-v { color: var(--chip-xp-fg); }
 .md-stake-lose .md-stake-v { color: var(--color-accent-red); }
 
-.md-targets { display: flex; flex-direction: column; gap: 7px; margin-top: 12px; }
+/* ── Targets and steppers ── */
+.md-targets { display: flex; flex-direction: column; gap: 7px; margin-top: 14px; }
 .md-target-row {
-    display: flex; align-items: center; justify-content: space-between; gap: 10px;
-    padding: 9px 13px; border-radius: 9px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 10px 12px; border-radius: 9px;
     background: var(--color-input-bg); border: 1px solid var(--color-input-border);
 }
-.md-target-solo { margin-top: 2px; }
+.md-target-solo { margin-top: 0; }
 .md-target-name {
-    font: 600 13px Inter, sans-serif; color: var(--color-text-primary);
-    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    flex: 1; min-width: 0; font: 600 13px Inter, sans-serif; color: var(--color-text-primary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.md-stepper { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
-.md-stepper button {
-    width: 28px; height: 28px; border-radius: 7px; cursor: pointer;
-    background: var(--color-bg-card); border: 1px solid var(--color-input-border);
-    color: var(--color-text-primary); font: 700 15px Inter, sans-serif; font-family: inherit;
+.md-stepper { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.md-stepper-btn {
+    width: 34px; height: 34px; border-radius: 8px; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
+    background: var(--surface-card); border: 1px solid var(--color-input-border);
+    color: var(--color-text-primary); font: 600 17px/1 Inter, sans-serif; font-family: inherit;
+    transition: border-color .15s, color .15s, opacity .15s;
 }
-.md-stepper button:hover { border-color: var(--color-accent-blue); }
-.md-stepper span {
-    min-width: 34px; text-align: center;
-    font: 700 14px Inter, sans-serif; color: var(--color-text-primary);
+.md-stepper-btn:hover:not(:disabled) { border-color: var(--color-accent-blue); color: var(--color-accent-blue); }
+.md-stepper-btn:disabled { opacity: .35; cursor: not-allowed; }
+.md-stepper-n {
+    min-width: 42px; text-align: center;
+    font: 700 15px Inter, sans-serif; color: var(--color-text-primary);
     font-variant-numeric: tabular-nums;
 }
 
-.md-wager { display: flex; gap: 7px; }
+/* ── Wager buttons ── */
+.md-wager { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; }
 .md-wager-btn {
-    flex: 1; padding: 10px 4px; border-radius: 9px; cursor: pointer;
+    padding: 11px 4px; border-radius: 9px; cursor: pointer; min-height: 44px;
     background: var(--color-input-bg); border: 1px solid var(--color-input-border);
     color: var(--color-text-secondary); font: 700 12.5px Inter, sans-serif; font-family: inherit;
     font-variant-numeric: tabular-nums;
+    transition: border-color .15s, color .15s, background .15s;
 }
 .md-wager-btn:hover { border-color: #f5c563; color: #f5c563; }
 .md-wager-btn.is-on { border-color: #f5c563; color: #f5c563; background: color-mix(in srgb, #f5c563 10%, transparent); }
 
+/* ── Summary ── */
 .md-summary {
-    display: flex; flex-direction: column; gap: 6px; margin: 14px 0 0;
-    padding: 12px 13px; border-radius: 10px;
+    display: flex; flex-direction: column; gap: 5px;
+    margin-top: 18px; padding: 13px; border-radius: 10px;
     background: var(--color-input-bg); border: 1px solid var(--color-input-border);
 }
 .md-summary-row { font: 500 12px/1.55 Inter, sans-serif; color: var(--color-text-secondary); }
 .md-summary-row strong { color: var(--color-text-primary); font-weight: 700; }
 
+/* ── Sheet footer ── */
 .md-sheet-foot {
     display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-    padding: 13px 0 4px; margin-top: 4px;
+    padding: 14px 24px calc(16px + env(safe-area-inset-bottom));
     border-top: 1px solid var(--color-modal-divider);
+    background: var(--surface-card);
 }
+[data-theme-mode="light"] .md-sheet-foot { background: var(--color-bg-card); }
+.md-foot-note { width: 100%; }
+.md-foot-note:empty { display: none; }
+.md-foot-note .md-warn { margin: 0 0 2px; }
 .md-sheet-foot-2 { gap: 8px; }
 .md-sheet-foot-2 .md-btn { flex: 1; }
 .md-sheet-cost { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; }
@@ -15647,52 +15901,51 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 }
 .md-res-scrim.is-leaving { animation: mdFade .22s ease both reverse; }
 .md-res {
-    width: 100%; max-width: 390px; padding: 26px 22px 20px;
-    border-radius: 18px; text-align: center;
-    background: var(--color-modal-bg);
-    border: 1px solid var(--color-modal-border);
+    width: 100%; max-width: 360px; text-align: center;
+    padding: 30px 24px 24px; border-radius: 20px;
+    background: var(--color-modal-bg); border: 1px solid var(--color-modal-border);
     box-shadow: var(--shadow-xl);
-    animation: mdPop .3s cubic-bezier(.2,.9,.3,1.2) both;
+    animation: mdPop .3s cubic-bezier(.22,.61,.36,1) both;
 }
 .md-res-win  .md-res { border-color: color-mix(in srgb, var(--chip-xp-fg) 45%, var(--color-modal-border)); }
 .md-res-lose .md-res { border-color: color-mix(in srgb, var(--color-accent-red) 50%, var(--color-modal-border)); }
 .md-res-icon { font-size: 34px; line-height: 1; margin-bottom: 12px; }
 .md-res-title { font: 700 19px/1.25 Inter, sans-serif; color: var(--color-text-primary); }
 .md-res-headline {
-    font: 700 30px/1.1 Inter, sans-serif; margin: 10px 0 14px;
-    font-variant-numeric: tabular-nums;
+    font: 700 30px/1.15 Inter, sans-serif; margin: 8px 0 4px;
+    color: var(--color-text-primary); letter-spacing: -0.02em;
 }
 .md-res-win  .md-res-headline { color: var(--chip-xp-fg); }
 .md-res-lose .md-res-headline { color: var(--color-accent-red); }
 .md-res-lines {
-    display: flex; flex-direction: column; gap: 5px;
-    padding: 12px; margin-bottom: 14px; border-radius: 10px;
-    background: var(--color-input-bg);
+    display: flex; flex-direction: column; gap: 4px;
+    margin: 16px 0 0; padding-top: 14px; border-top: 1px solid var(--card-hairline);
 }
 .md-res-line {
-    font: 500 12px/1.5 Inter, sans-serif; color: var(--color-text-secondary);
-    font-variant-numeric: tabular-nums;
+    font: 500 12.5px/1.5 Inter, sans-serif; color: var(--color-text-secondary);
 }
 .md-res-note {
-    font: 500 12.5px/1.65 Inter, sans-serif; color: var(--color-text-secondary);
-    margin: 0 0 18px;
+    font: 500 12.5px/1.7 Inter, sans-serif; color: var(--color-text-secondary);
+    margin: 16px 0 20px;
 }
+.md-res .md-btn-wide { margin-top: 4px; }
 
-/* ══ Milestone / check-in ═════════════════════════════════════════════════ */
+/* ══ Milestone / check-in card ════════════════════════════════════════════ */
 .md-mile-scrim {
-    position: fixed; inset: 0; z-index: 3150;
+    position: fixed; inset: 0; z-index: 3200;
     display: flex; align-items: center; justify-content: center; padding: 22px;
     background: var(--color-modal-scrim); backdrop-filter: blur(3px);
     animation: mdFade .22s ease both;
 }
 .md-mile-scrim.is-leaving { animation: mdFade .22s ease both reverse; }
 .md-mile {
-    width: 100%; max-width: 340px; padding: 26px 22px 20px;
-    border-radius: 18px; text-align: center;
+    width: 100%; max-width: 330px; text-align: center;
+    padding: 30px 24px 24px; border-radius: 20px;
     background: var(--color-modal-bg); border: 1px solid var(--color-modal-border);
     box-shadow: var(--shadow-xl);
-    animation: mdPop .3s cubic-bezier(.2,.9,.3,1.2) both;
+    animation: mdPop .3s cubic-bezier(.22,.61,.36,1) both;
 }
+/* The one place gold belongs: a milestone actually reached. */
 .md-mile-pct { font: 700 38px/1 Inter, sans-serif; color: #f5c563; }
 .md-mile-name { font: 700 15px/1.3 Inter, sans-serif; color: var(--color-text-primary); margin-top: 10px; }
 .md-mile-count { font: 500 12px Inter, sans-serif; color: var(--color-text-secondary); margin-top: 4px; }
@@ -15700,7 +15953,7 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
     font: 500 13.5px/1.7 Inter, sans-serif; font-style: italic;
     color: var(--color-text-primary); margin: 18px 0 20px;
 }
-.md-mile .md-sheet-foot { border-top: none; padding-top: 0; }
+.md-mile .md-sheet-foot { border-top: none; padding: 0; background: transparent; }
 
 /* ══ Habit focus overlay ══════════════════════════════════════════════════ */
 .md-ov {
@@ -15713,10 +15966,12 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 .md-ov-inner {
     position: relative; width: 100%; max-width: 380px; text-align: center;
     animation: mdRise .34s cubic-bezier(.22,.61,.36,1) both;
+    transition: opacity .3s ease, transform .3s ease;
 }
+.md-ov-inner.is-marked { opacity: .35; transform: scale(.98); }
 .md-ov-close {
-    position: absolute; top: -8px; right: -4px;
-    width: 36px; height: 36px; border-radius: 50%; cursor: pointer;
+    position: absolute; top: calc(14px + env(safe-area-inset-top)); right: 14px;
+    width: 40px; height: 40px; border-radius: 50%; cursor: pointer; z-index: 1;
     display: flex; align-items: center; justify-content: center;
     background: transparent; border: none; color: var(--color-text-secondary);
 }
@@ -15743,24 +15998,99 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
     font: 600 12px Inter, sans-serif; color: var(--color-text-secondary);
     margin-bottom: 22px; font-variant-numeric: tabular-nums;
 }
+.md-ov-already {
+    font: 600 13px Inter, sans-serif; color: var(--chip-xp-fg);
+    padding: 12px 0;
+}
+.md-ov-mark { margin-top: 4px; }
 .md-ov-later {
-    display: block; width: 100%; margin-top: 12px; padding: 8px;
-    background: none; border: none; cursor: pointer;
+    display: block; width: 100%; margin-top: 12px; padding: 10px;
+    background: none; border: none; cursor: pointer; min-height: 40px;
     color: var(--color-text-secondary); font: 500 12.5px Inter, sans-serif; font-family: inherit;
+    transition: color .15s;
 }
 .md-ov-later:hover { color: var(--color-text-primary); }
+.md-ov-go { font-weight: 600; }
 
-/* ══ Banner ═══════════════════════════════════════════════════════════════ */
+/* ══ Banner ═══════════════════════════════════════════════════════════════
+   The one thing outside this page that says a mode is on, so it is built to
+   be noticed: the interactive blue as a light wash rather than a plain grey
+   pill, an indicator that breathes, a live status line, and a sheen that
+   passes over it slowly. It has to read as part of the product, not as a
+   system notice — and gold stays out of it, because nothing here is a
+   milestone.
+   ═══════════════════════════════════════════════════════════════════════ */
 .md-banner {
-    display: flex; align-items: center; gap: 8px; cursor: pointer;
-    padding: 7px 12px; border-radius: 999px; margin-bottom: 10px;
-    background: var(--color-input-bg); border: 1px solid var(--color-input-border);
+    position: relative; overflow: hidden;
+    display: flex; align-items: center; gap: 11px; cursor: pointer;
+    padding: 10px 14px; border-radius: 12px; margin-bottom: 10px;
+    background:
+        linear-gradient(100deg,
+            color-mix(in srgb, var(--color-accent-blue) 22%, transparent) 0%,
+            color-mix(in srgb, var(--color-accent-blue) 8%,  transparent) 55%,
+            transparent 100%),
+        var(--color-input-bg);
+    border: 1px solid color-mix(in srgb, var(--color-accent-blue) 40%, transparent);
+    transition: border-color .18s ease, filter .18s ease;
 }
-.md-banner-icon { font-size: 13px; }
-.md-banner-text { font: 600 11.5px Inter, sans-serif; color: var(--color-text-secondary); }
-.md-banner-berserk { border-color: color-mix(in srgb, var(--color-accent-red) 45%, transparent); }
-.md-banner-berserk .md-banner-text { color: var(--color-accent-red); }
+.md-banner:hover { filter: brightness(1.08); }
+.md-banner:focus-visible {
+    outline: none;
+    border-color: var(--color-accent-blue);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent-blue) 25%, transparent);
+}
+/* A slow pass of light, once every eight seconds. Enough to catch the eye on
+   a glance down the page, not enough to sit there flickering. */
+.md-banner::after {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(100deg, transparent 20%,
+        color-mix(in srgb, var(--color-accent-blue) 26%, transparent) 50%, transparent 80%);
+    transform: translateX(-120%);
+    animation: mdSheen 8s ease-in-out infinite;
+    pointer-events: none;
+}
+.md-banner-main {
+    position: relative; z-index: 1;
+    flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;
+}
+.md-banner-name {
+    font: 700 12px/1.2 Inter, sans-serif; color: var(--color-text-primary);
+    letter-spacing: -0.01em;
+}
+.md-banner-stat {
+    font: 500 11px/1.3 Inter, sans-serif; color: var(--color-text-secondary);
+    font-variant-numeric: tabular-nums;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.md-banner-pulse { position: relative; z-index: 1; }
+.md-banner-go {
+    position: relative; z-index: 1; flex-shrink: 0;
+    display: flex; color: var(--color-progress); opacity: .8;
+}
+.md-banner-go svg { width: 15px; height: 15px; }
 
+/* Berserk is the one mode that repaints the app, so its banner follows. */
+.md-banner-berserk {
+    background:
+        linear-gradient(100deg,
+            color-mix(in srgb, var(--color-accent-red) 26%, transparent) 0%,
+            color-mix(in srgb, var(--color-accent-red) 9%,  transparent) 55%,
+            transparent 100%),
+        var(--color-input-bg);
+    border-color: color-mix(in srgb, var(--color-accent-red) 50%, transparent);
+}
+.md-banner-berserk::after {
+    background: linear-gradient(100deg, transparent 20%,
+        color-mix(in srgb, var(--color-accent-red) 30%, transparent) 50%, transparent 80%);
+    animation-duration: 4.5s;
+}
+.md-banner-berserk .md-banner-pulse { background: var(--color-accent-red); }
+.md-banner-berserk .md-banner-go { color: var(--color-accent-red); }
+
+@keyframes mdSheen {
+    0%, 62%  { transform: translateX(-120%); }
+    100%     { transform: translateX(120%); }
+}
 @keyframes mdFade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes mdPop  { from { opacity: 0; transform: scale(.94) translateY(8px); }
                     to   { opacity: 1; transform: none; } }
@@ -15801,19 +16131,25 @@ body.mk-mode-berserk {
 @media (prefers-reduced-motion: reduce) {
     body.mk-mode-berserk { animation: none; }
     .md-res, .md-mile, .md-ov-inner, .md-res-scrim, .md-mile-scrim, .md-ov { animation: none; }
+    .md-banner::after { animation: none; }
+    .md-live-pulse::after, .md-banner-pulse::after { animation: none; opacity: .5; transform: none; }
+    .md-bar-fill { transition: none; }
+    .md-card { transition: none; }
 }
 
 @media (max-width: 560px) {
     .md-grid { grid-template-columns: 1fr; }
-    .md-head { flex-direction: row; align-items: center; }
     .md-metric-n { font-size: 30px; }
+    .md-slider-n { font-size: 34px; }
     .md-pact { flex-direction: column; }
-    .md-pact-link { transform: rotate(90deg); }
+    .md-pact-link { width: 1px; height: 18px; align-self: center; }
     /* Cost first, then the commitment — a stake should never be agreed to
        above the number it costs. */
-    .md-sheet-foot { flex-direction: column; align-items: stretch; }
+    .md-sheet-foot { flex-direction: column; align-items: stretch; padding-left: 18px; padding-right: 18px; }
     .md-sheet-foot .md-btn-wide { width: 100%; min-width: 0; }
     .md-sheet-cost { flex-direction: row; align-items: baseline; gap: 8px; justify-content: center; }
     .md-sheet-foot-2 { flex-direction: row; }
+    .md-body { padding: 16px 18px 18px; }
     .md-ov-name { font-size: 26px; }
+    .md-mark { margin-left: auto; }
 }
