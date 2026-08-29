@@ -2316,15 +2316,25 @@
            has to get a real size back — and the image has to go, or the two
            chevrons stack. Rotation stays on the span, so .expanded still flips
            it, and unlike the SVG variant this one already points down when
-           collapsed: 180°, not 90°. */
+           collapsed: 180°, not 90°.
+
+           The glyph is CENTRED in the span rather than laid out on a text
+           baseline. A baseline puts the caret off-centre inside its box, and
+           the 180° flip mirrors that offset — which is why the chevron used to
+           sit low against the section title when the section was closed and
+           high when it was open. Centred, the rotation happens around the
+           glyph itself and both states line up with the title. */
         .collapse-icon:has(i) {
             background-image: none;
             font-size: 14px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
         }
         .collapse-icon:has(i) i {
             display: block;
-            line-height: inherit;
-            vertical-align: top;
+            line-height: 1;
         }
         .act-group-header .collapse-icon:has(i) { font-size: 16px; }
 
@@ -2966,23 +2976,41 @@
         /* ── (Drag-and-drop styles removed in Phase A; will be rebuilt later) ── */
 
         /* ──────────────────────────────────────────────────────────────────
-           Floating XP — simple rising text label.
+           Floating rewards — simple rising text labels.
            Earlier we tried a chip-style pill that flew to the progress bar.
            It read as too heavy. Reverted to a clean rising number that
            fades up above the activity card.
+
+           A completion pays twice, so there are two labels: XP in the app's
+           bright green, Grit in the gold diamond it wears everywhere else.
+           They never share a line — spawnFloat() stacks Grit 22px below XP —
+           and Grit starts a beat later, so the pair reads as one gesture
+           rather than as two things colliding.
            ────────────────────────────────────────────────────────────── */
-        .act-xp-float {
+        .act-float {
             position: fixed;
             pointer-events: none;
+            z-index: 9999;
             font-size: 15px;
             font-weight: 800;
-            color: var(--chip-xp-fg);
-            z-index: 9999;
-            animation: xpFloatUp 0.9s ease-out forwards;
-            text-shadow: 0 1px 4px rgba(0,0,0,0.5);
             letter-spacing: -0.01em;
             font-variant-numeric: tabular-nums;
+            text-shadow: 0 1px 4px rgba(0,0,0,0.5);
+            white-space: nowrap;
+            animation: xpFloatUp 0.9s ease-out both;
         }
+        .act-xp-float { color: var(--chip-xp-fg); }
+        .act-grit-float {
+            color: #f5c563;
+            font-size: 13.5px;
+            font-weight: 700;
+            /* Its own curve, starting from nothing: the label carries an
+               animation-delay, and `both` fill-mode holds this first frame
+               through it — so Grit waits out of sight instead of sitting on
+               the card at full opacity until its turn comes. */
+            animation-name: gritFloatUp;
+        }
+        .act-grit-float i { font-size: 12px; }
 
         @keyframes xpFloatUp {
             0%   { opacity: 1; transform: translateY(0) scale(1); }
@@ -2990,8 +3018,15 @@
             100% { opacity: 0; transform: translateY(-50px) scale(0.9); }
         }
 
+        @keyframes gritFloatUp {
+            0%   { opacity: 0; transform: translateY(5px) scale(0.9); }
+            18%  { opacity: 1; transform: translateY(0) scale(1.1); }
+            45%  { opacity: 1; transform: translateY(-20px) scale(1); }
+            100% { opacity: 0; transform: translateY(-46px) scale(0.9); }
+        }
+
         @media (prefers-reduced-motion: reduce) {
-            .act-xp-float { animation: none; opacity: 0; }
+            .act-float { animation: none; opacity: 0; }
         }
 
         /* ──────────────────────────────────────────────────────────────────
@@ -5451,7 +5486,13 @@
         .gc-ring-label svg { display: block; margin: auto; }
         /* (Ring no longer shows XP text — only the checkmark on completion) */
 
-        /* ── Grid action menu (long-press) ─────────────────────────────── */
+        /* ── Action sheet (grid long-press, Categories' three-dot) ───────
+           One component, two callers. It used to be built out of the old
+           flat palette — #2d2d2d card, hard grey borders, 18px corners, no
+           light mode — which read as a leftover next to everything the
+           overhaul touched. It is on the app's own sheet recipe now: the
+           card material, its hairline, the 20px top radius and the grab
+           handle every other bottom sheet wears, and the same rise. ── */
         .gc-action-menu {
             position: fixed;
             inset: 0;
@@ -5459,54 +5500,88 @@
             display: none;
             align-items: flex-end;
             justify-content: center;
-            background: rgba(0,0,0,0.55);
-            backdrop-filter: blur(4px);
-            -webkit-backdrop-filter: blur(4px);
+            background: var(--color-modal-scrim);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
         }
         .gc-action-menu-inner {
-            background: var(--color-bg-card);
-            border: 1px solid var(--color-border);
-            border-radius: 18px 18px 0 0;
-            padding: 12px;
-            padding-bottom: max(24px, env(safe-area-inset-bottom, 24px));
+            position: relative;
+            background: var(--surface-card);
+            border: 1px solid var(--card-hairline);
+            border-bottom: none;
+            border-radius: 20px 20px 0 0;
+            padding: 24px 12px max(20px, env(safe-area-inset-bottom, 20px));
             width: 100%;
             max-width: 480px;
             display: flex;
             flex-direction: column;
             gap: 6px;
-            animation: slideUpSheet 0.22s ease;
+            box-shadow:
+                0 1px 0 rgba(255,255,255,0.075) inset,
+                0 -12px 32px rgba(0,0,0,0.5);
+            animation: mkSheetRise 0.3s cubic-bezier(.2,.8,.2,1) both;
+        }
+        [data-theme-mode="light"] .gc-action-menu-inner {
+            background: var(--color-bg-card);
+            border-color: var(--color-border);
+            box-shadow: var(--shadow-xl);
+        }
+        /* Same grab handle the app's other sheets draw in their top padding. */
+        .gc-action-menu-inner::before {
+            content: '';
+            position: absolute;
+            top: 9px; left: 50%;
+            margin-left: -19px;
+            width: 38px; height: 4px;
+            border-radius: 999px;
+            background: var(--color-text-secondary);
+            opacity: 0.3;
         }
         .gc-action-item {
             display: flex;
             align-items: center;
-            gap: 14px;
-            padding: 14px 16px;
+            gap: 13px;
+            padding: 13px 14px;
             background: var(--recessed-bg-2);
-            border: 1px solid var(--color-border);
-            border-radius: 10px;
+            border: none;
+            box-shadow: 0 0 0 1px var(--recessed-ring) inset;
+            border-radius: 12px;
             color: var(--color-text-primary);
-            font-size: 15px;
-            font-weight: 500;
+            font: 500 14.5px Inter, sans-serif;
+            letter-spacing: -0.015em;
             font-family: inherit;
             cursor: pointer;
             text-align: left;
-            transition: background 0.15s;
-            -webkit-tap-highlight-color: rgba(74,124,158,0.3);
+            transition: background 0.15s, box-shadow 0.15s, color 0.15s;
+            -webkit-tap-highlight-color: transparent;
         }
-        .gc-action-item:active { background: rgba(74,124,158,0.18); }
+        [data-theme-mode="light"] .gc-action-item {
+            background: rgba(0,0,0,0.03);
+            box-shadow: 0 0 0 1px var(--color-border) inset;
+        }
+        .gc-action-item:hover {
+            background: var(--recessed-bg-4);
+            box-shadow: 0 0 0 1px rgba(90,159,212,0.32) inset;
+        }
+        .gc-action-item:active { background: rgba(90,159,212,0.16); }
         .gc-action-icon {
             display: inline-flex; align-items: center; justify-content: center;
-            width: 28px; height: 28px;
-            font-size: 16px; line-height: 1;
-            color: var(--color-accent-blue);
+            width: 22px; height: 22px;
+            font-size: 15px; line-height: 1;
+            flex-shrink: 0;
+            color: var(--color-progress);
         }
+        .gc-action-icon svg { display: block; }
         .gc-action-cancel {
             margin-top: 6px;
             justify-content: center;
             font-weight: 600;
             color: var(--color-text-secondary);
-            background: rgba(255,255,255,0.02);
+            background: transparent;
+            box-shadow: 0 0 0 1px var(--recessed-ring) inset;
         }
+        [data-theme-mode="light"] .gc-action-cancel { background: transparent; }
+        .gc-action-cancel:hover { color: var(--color-text-primary); }
 
         /* ── Card states ──────────────────────────────────────────────── */
         /* Completed — darker surface, dimmed type. Matches .activity-item.completed. */
@@ -5529,11 +5604,16 @@
         }
         .grid-card.gc-disabled { opacity: 0.42; cursor: not-allowed; }
 
-        /* ── Grid card expand overlay ─────────────────────────────────── */
+        /* ── Grid card "View details" overlay ─────────────────────────────
+           Same overhaul as the action sheet above: it was still on the old
+           flat #2d2d2d card with a grey rim and a text "×" for a close
+           button. It now uses the card material and the .pl-modal shadow
+           recipe, and it docks to the bottom edge on a phone the way every
+           other dialog in the app does. ── */
         .grid-card-overlay {
             position: fixed;
             inset: 0;
-            background: rgba(0,0,0,0.7);
+            background: var(--color-modal-scrim);
             z-index: 6000;
             display: flex;
             align-items: center;
@@ -5543,42 +5623,63 @@
             -webkit-backdrop-filter: blur(6px);
         }
         .grid-card-overlay-inner {
-            background: var(--color-bg-card);
-            border: 1px solid var(--color-border);
+            background: var(--surface-card);
+            border: 1px solid var(--card-hairline);
             border-radius: 16px;
             padding: 20px;
             width: 100%;
             max-width: 380px;
             position: relative;
+            box-shadow:
+                0 1px 0 rgba(255,255,255,0.075) inset,
+                0 -1px 0 rgba(0,0,0,0.35) inset,
+                0 24px 56px rgba(0,0,0,0.5),
+                0 8px 20px rgba(0,0,0,0.3);
+            animation: overlaySlideUp 0.22s cubic-bezier(.2,.8,.2,1);
+        }
+        [data-theme-mode="light"] .grid-card-overlay-inner {
+            background: var(--color-bg-card);
+            border-color: var(--color-border);
             box-shadow: var(--shadow-xl);
-            animation: overlaySlideUp 0.22s ease;
         }
         @keyframes overlaySlideUp {
             from { opacity: 0; transform: translateY(20px) scale(0.97); }
             to   { opacity: 1; transform: translateY(0) scale(1); }
         }
+        /* Close: the .pl-modal-close treatment every other dialog uses. */
         .grid-overlay-close {
             position: absolute;
-            top: 12px; right: 14px;
-            background: rgba(255,255,255,0.08);
-            border: none; border-radius: 6px;
+            top: 14px; right: 14px;
+            background: transparent;
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 7px;
             color: var(--color-text-secondary);
-            font-size: 18px; line-height: 1;
+            font: 400 15px Inter, sans-serif;
+            font-family: inherit;
+            line-height: 1;
             width: 28px; height: 28px;
-            cursor: pointer; font-family: inherit;
-            display: flex; align-items: center; justify-content: center;
+            cursor: pointer;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
         }
-        .grid-overlay-close:hover { background: rgba(255,255,255,0.14); color: var(--color-text-primary); }
+        [data-theme-mode="light"] .grid-overlay-close { border-color: var(--color-border); }
+        .grid-overlay-close:hover {
+            background: var(--recessed-bg-3);
+            color: var(--color-text-primary);
+            border-color: rgba(255,255,255,0.14);
+        }
         .grid-overlay-ring-row {
             display: flex;
             align-items: center;
             gap: 14px;
             margin-bottom: 14px;
+            padding-right: 34px;   /* clear of the close button */
         }
         .grid-overlay-meta {
             display: flex;
             flex-direction: column;
             gap: 5px;
+            min-width: 0;
         }
         .grid-overlay-badges {
             display: flex;
@@ -5589,29 +5690,74 @@
         .grid-overlay-actions {
             display: flex;
             gap: 8px;
-            margin-top: 14px;
+            margin-top: 16px;
         }
         .grid-overlay-btn {
             flex: 1;
-            padding: 9px 12px;
-            border-radius: 9px;
-            border: 1px solid var(--color-border);
-            background: var(--color-bg-secondary);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 11px 12px;
+            border-radius: 10px;
+            border: none;
+            box-shadow: 0 0 0 1px var(--recessed-ring) inset;
+            background: var(--recessed-bg-2);
             color: var(--color-text-primary);
-            font-size: 13px; font-weight: 600;
-            cursor: pointer; font-family: inherit;
-            transition: background-color 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s, opacity 0.15s, width 0.15s, height 0.15s, border-radius 0.15s;
+            font: 600 13px Inter, sans-serif;
+            font-family: inherit;
+            letter-spacing: -0.01em;
+            cursor: pointer;
+            transition: background 0.15s, box-shadow 0.15s, color 0.15s, opacity 0.15s;
         }
-        .grid-overlay-btn:hover { background: rgba(74,124,158,0.15); border-color: var(--color-accent-blue); }
+        [data-theme-mode="light"] .grid-overlay-btn {
+            background: rgba(0,0,0,0.03);
+            box-shadow: 0 0 0 1px var(--color-border) inset;
+        }
+        .grid-overlay-btn:hover {
+            background: var(--recessed-bg-4);
+            box-shadow: 0 0 0 1px rgba(90,159,212,0.4) inset;
+        }
+        /* The one CTA exception to bare buttons — same treatment as the
+           app's other primary pills. */
         .grid-overlay-btn.complete {
-            background: var(--dim-color, var(--color-accent-blue));
-            border-color: transparent; color: #fff;
+            background: var(--dim-color, var(--color-progress));
+            color: #fff;
+            box-shadow:
+                0 1px 0 rgba(255,255,255,0.2) inset,
+                0 2px 8px rgba(0,0,0,0.3);
         }
-        .grid-overlay-btn.complete:hover { opacity: 0.88; }
+        .grid-overlay-btn.complete:hover { opacity: 0.9; }
         .grid-overlay-btn.undo {
-            background: rgba(122,123,77,0.15);
-            border-color: rgba(122,123,77,0.3);
             color: var(--color-accent-olive);
+            box-shadow: 0 0 0 1px rgba(122,123,77,0.32) inset;
+        }
+        .grid-overlay-btn.undo:hover {
+            background: rgba(122,123,77,0.16);
+            box-shadow: 0 0 0 1px rgba(122,123,77,0.5) inset;
+        }
+
+        /* On a phone it docks to the bottom edge like every other dialog. */
+        @media (max-width: 768px) {
+            .grid-card-overlay { align-items: flex-end; padding: 0; }
+            .grid-card-overlay-inner {
+                max-width: none;
+                border-radius: 20px 20px 0 0;
+                border-left: none; border-right: none; border-bottom: none;
+                padding: 24px 18px max(20px, env(safe-area-inset-bottom, 20px));
+                animation: mkSheetRise 0.3s cubic-bezier(.2,.8,.2,1) both;
+            }
+            .grid-card-overlay-inner::before {
+                content: '';
+                position: absolute;
+                top: 9px; left: 50%;
+                margin-left: -19px;
+                width: 38px; height: 4px;
+                border-radius: 999px;
+                background: var(--color-text-secondary);
+                opacity: 0.3;
+            }
+            .grid-overlay-close { top: 18px; }
+            .grid-overlay-ring-row { margin-top: 4px; }
         }
 
         /* ══════════════════════════════════════════════════════════════ */
@@ -10007,21 +10153,20 @@
 
 /* ── Action menu — sheet title + danger item variant ─────────────────── */
 .cat-action-title {
-    font-size: 11px;
-    font-weight: 700;
+    font: 700 9.5px Inter, sans-serif;
     text-transform: uppercase;
-    letter-spacing: 0.14em;
+    letter-spacing: 0.18em;
     color: var(--color-text-secondary);
-    padding: 8px 12px 12px;
+    padding: 0 4px 12px;
     text-align: left;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
-    margin: 0 -4px 8px;
+    border-bottom: 1px solid var(--card-hairline);
+    margin: 0 0 8px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 [data-theme-mode="light"] .cat-action-title {
-    border-bottom-color: rgba(15,17,21,0.05);
+    border-bottom-color: var(--color-border);
 }
 .gc-action-item.cat-action-danger {
     color: var(--color-accent-red);
@@ -12681,8 +12826,9 @@
    glyphs, three-screen accept flow. Mobile-first (S23 ~380px).
    ═══════════════════════════════════════════════════════════════════════ */
 .tt-web{display:flex;flex-direction:column;gap:10px;}
-.tt-web-head{display:flex;align-items:center;gap:10px;}
-.tt-head-chips{display:flex;gap:6px;flex-shrink:0;}
+/* The Map's "+ Goal" button is lifted onto the page title row by the nav, so
+   its host row here is only a parking space to put it back into. */
+.tt-page-header{display:none;}
 .tt-chip-btn{font-family:inherit;font-size:11.5px;font-weight:700;color:#c8c8c8;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:16px;padding:6px 11px;cursor:pointer;white-space:nowrap;}
 .tt-chip-btn:active{background:rgba(255,255,255,0.09);}
 .tt-reading{padding:11px 13px;border-radius:11px;background:rgba(168,68,110,0.06);border:1px solid rgba(168,68,110,0.2);}
@@ -13302,11 +13448,6 @@
    title truncates before it does, since a clipped button label is worse than
    a clipped page name. */
 .mk-page-actions .act-tb-add-main { padding: 0 11px 0 9px; }
-
-/* "Your web" is what the tech tree used to call itself; the app calls that
-   page Map, and the page title already says so, so the heading is gone from
-   the markup. The chips it shared a row with right-align in the space. */
-.tt-web-head { justify-content: flex-end; }
 
 /* ── Page-transition animation ── */
 @keyframes mkNavFwd { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
@@ -14999,7 +15140,10 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
    on the recessed surface, electric blue for the selected half. One pattern
    for this kind of switch across the app, not one per screen.            */
 .tt-viewtoggle {
-    display: inline-flex; gap: 1px; padding: 2px; margin-bottom: 10px;
+    /* Full width with the two halves splitting it evenly. Sitting at its
+       content width the strip hugged the left edge of the page and read as
+       skewed; as a symmetric two-up switch it reads as one control. */
+    display: flex; width: 100%; gap: 1px; padding: 2px; margin-bottom: 10px;
     background: var(--recessed-bg-2); border: 1px solid rgba(255,255,255,0.07);
     border-radius: 999px;
 }
@@ -15007,10 +15151,11 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
     background: rgba(0,0,0,0.04); border-color: var(--color-border);
 }
 .tt-vt-btn {
-    display: inline-flex; align-items: center; gap: 5px;
+    flex: 1 1 0; min-width: 0;
+    display: inline-flex; align-items: center; justify-content: center; gap: 5px;
     font-family: inherit; font-size: 11.5px; font-weight: 600;
     letter-spacing: 0.02em; white-space: nowrap;
-    padding: 5px 13px; border-radius: 999px; border: none;
+    padding: 6px 13px; border-radius: 999px; border: none;
     background: transparent; color: var(--color-text-secondary); cursor: pointer;
     transition: background .15s ease, color .15s ease;
 }
@@ -15242,18 +15387,21 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
     border-color: color-mix(in srgb, var(--color-accent-rose) 45%, transparent);
 }
 
-/* ── The board editor's trigger, riding the metric tab row ── */
+/* ── The board editor's trigger, riding the metric tab row ──
+   No border: its box sat directly on the row's divider line, which read as
+   cramped. It is a bare icon like the rest of the app's toolbar buttons, and
+   the tap target stays 32px whether or not anything is drawn around it. */
 .fr-lb-edit {
     flex-shrink: 0; margin-left: auto; align-self: center;
     width: 32px; height: 32px; padding: 0;
     display: inline-flex; align-items: center; justify-content: center;
-    border: 1px solid var(--color-border); border-radius: 9px;
+    border: none; border-radius: 9px;
     background: transparent; color: var(--color-text-secondary);
     cursor: pointer; -webkit-tap-highlight-color: transparent;
-    transition: color .15s ease, border-color .15s ease, background .15s ease;
+    transition: color .15s ease, background .15s ease;
 }
 .fr-lb-edit svg { width: 14px; height: 14px; }
-.fr-lb-edit:hover { color: var(--color-text-primary); border-color: var(--color-accent-blue); }
+.fr-lb-edit:hover { color: var(--color-text-primary); background: var(--color-hover-overlay); }
 .lb-board-count-row { margin-bottom: 12px; }
 
 /* ── "Someone added you" — the sheet on app open ── */
@@ -15465,16 +15613,12 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 }
 
 /* ── Head ── */
-/* The page's name comes from the nav's .mk-page-heading, like every other
-   page — this row carries only the one line of orientation and the balance. */
-.md-head {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 14px; margin: 0 0 20px;
-}
-.md-sub {
-    font: 500 12.5px/1.6 Inter, sans-serif; color: var(--color-text-secondary);
-    margin: 0; min-width: 0; max-width: 40ch;
-}
+/* The page's name comes from the nav's .mk-page-heading, and the balance chip
+   is lifted onto that same line, so "Modes" and the counter read as one row.
+   The explanatory paragraph that used to sit under them is gone: the cards
+   below say what each mode does, and this page does not need a second voice
+   saying it again. What is left here is only a parking space for the chip. */
+.md-head { display: none; }
 .md-grit {
     flex-shrink: 0; display: flex; align-items: center; gap: 6px;
     padding: 7px 12px; border-radius: 999px;
@@ -15509,14 +15653,26 @@ body.mk-ledger-collapsed .mk-ledger-band:not(.active) {
 .md-card.is-live {
     border-color: color-mix(in srgb, var(--color-accent-blue) 60%, var(--card-hairline));
 }
-.md-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.md-card-icon { font-size: 20px; line-height: 1; }
+/* Icon and name on one line, tag pushed to the end of it — the name used to
+   sit on a line of its own under the icon, which cost a row per card for no
+   more information. */
+.md-card-top { display: flex; align-items: center; gap: 9px; }
+.md-card-icon {
+    font-size: 19px; line-height: 1; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+}
 .md-card-tag {
+    flex-shrink: 0; margin-left: auto;
     font: 700 9.5px/1 Inter, sans-serif; letter-spacing: 0.09em; text-transform: uppercase;
     color: var(--color-text-secondary); padding: 4px 7px; border-radius: 5px;
     background: var(--color-input-bg);
 }
-.md-card-name { font: 700 15px/1.3 Inter, sans-serif; color: var(--color-text-primary); }
+.md-card-name {
+    flex: 1 1 auto; min-width: 0;
+    font: 700 15px/1.25 Inter, sans-serif; color: var(--color-text-primary);
+    letter-spacing: -0.015em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .md-card-blurb {
     font: 500 12px/1.6 Inter, sans-serif; color: var(--color-text-secondary);
     margin: 0; flex: 1;

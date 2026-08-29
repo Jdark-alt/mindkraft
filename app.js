@@ -1843,27 +1843,70 @@
         }
         function getDefaultActivitySort() { return _smartDefaultSort(); }
 
+        // ── Sort panel placement ──────────────────────────────────────────
+        // The panel hangs off the funnel that opened it — right edges lined
+        // up, so it reads as belonging to that icon rather than arriving from
+        // nowhere in the middle of the screen. It flips above the button when
+        // there is no room below, and is clamped to stay on screen either way.
+        //
+        // It is position:fixed, so it does not travel with the toolbar: while
+        // it is open we re-anchor it on scroll and resize, and close it if the
+        // funnel scrolls out of view. Anchoring off the button rather than the
+        // raw tap point keeps the two the same thing — the button IS where the
+        // tap landed — while surviving a keyboard-triggered open.
+        function positionFilterPanel() {
+            const panel = document.getElementById('filterPanel');
+            const btn = document.getElementById('filterBtn');
+            if (!panel || !btn || panel.style.display === 'none') return;
+            const rect = btn.getBoundingClientRect();
+            // A button with no box is off-layout — nothing to anchor to.
+            if (!rect.width && !rect.height) { closeFilterPanel(); return; }
+            const vw = window.innerWidth, vh = window.innerHeight;
+            if (rect.bottom < 0 || rect.top > vh) { closeFilterPanel(); return; }
+
+            const pW = panel.offsetWidth || 240;
+            const pH = panel.offsetHeight || 0;
+            const GAP = 6, EDGE = 8;
+
+            // Hang off the funnel: right edges lined up when there is room to
+            // the left of it, otherwise left edges lined up. Either way one of
+            // the panel's edges meets the icon, so the tap and the panel read
+            // as the same gesture. Clamped last so it can never leave screen.
+            let left = rect.right - pW;
+            if (left < EDGE) left = rect.left;
+            if (left + pW > vw - EDGE) left = vw - pW - EDGE;
+            if (left < EDGE) left = EDGE;
+
+            // Below by default; above when below would run off the bottom.
+            let top = rect.bottom + GAP;
+            if (top + pH > vh - EDGE && rect.top - GAP - pH > EDGE) top = rect.top - GAP - pH;
+            if (top < EDGE) top = EDGE;
+
+            panel.style.top = top + 'px';
+            panel.style.left = left + 'px';
+        }
+
+        function closeFilterPanel() {
+            const panel = document.getElementById('filterPanel');
+            const btn = document.getElementById('filterBtn');
+            if (panel) panel.style.display = 'none';
+            if (btn) btn.classList.remove('active');
+            window.removeEventListener('resize', positionFilterPanel);
+            window.removeEventListener('scroll', positionFilterPanel, true);
+        }
+
         window.toggleFilterPanel = function() {
             const panel = document.getElementById('filterPanel');
             const btn = document.getElementById('filterBtn');
-            const isOpen = panel.style.display !== 'none';
-            if (isOpen) {
-                panel.style.display = 'none';
-                btn.classList.remove('active');
-            } else {
-                renderFilterOptions();
-                // Position panel below the button using fixed coords
-                const rect = btn.getBoundingClientRect();
-                panel.style.display = 'block';
-                const pW = panel.offsetWidth || 220;
-                let left = rect.left;
-                // Clamp so panel doesn't bleed off screen edges
-                if (left + pW > window.innerWidth - 8) left = window.innerWidth - pW - 8;
-                if (left < 8) left = 8;
-                panel.style.top = (rect.bottom + 6) + 'px';
-                panel.style.left = left + 'px';
-                btn.classList.add('active');
-            }
+            if (!panel || !btn) return;
+            if (panel.style.display !== 'none') { closeFilterPanel(); return; }
+            renderFilterOptions();
+            panel.style.display = 'block';
+            btn.classList.add('active');
+            positionFilterPanel();
+            // Capture phase: the toolbar's own scroll container never bubbles.
+            window.addEventListener('resize', positionFilterPanel);
+            window.addEventListener('scroll', positionFilterPanel, true);
         };
 
         function renderFilterOptions() {
@@ -1893,11 +1936,7 @@
             if (!window.userData.settings) window.userData.settings = {};
             window.userData.settings.activitySort = sort;
             saveUserData();
-            // Close panel
-            const panel = document.getElementById('filterPanel');
-            const btn = document.getElementById('filterBtn');
-            if (panel) panel.style.display = 'none';
-            if (btn) btn.classList.remove('active');
+            closeFilterPanel();
             showToast(`"${SORT_OPTIONS.find(o=>o.id===sort)?.label}" set as default`, 'olive', null, 'check');
         };
 
@@ -1905,10 +1944,8 @@
         document.addEventListener('click', function(e) {
             const btn = document.getElementById('filterBtn');
             const panel = document.getElementById('filterPanel');
-            if (btn && panel && !btn.contains(e.target) && !panel.contains(e.target)) {
-                panel.style.display = 'none';
-                btn.classList.remove('active');
-            }
+            if (!btn || !panel || panel.style.display === 'none') return;
+            if (!btn.contains(e.target) && !panel.contains(e.target)) closeFilterPanel();
         });
 
         // Render Activities List (flat view)
@@ -2682,8 +2719,8 @@
             }
             el.innerHTML =
                 '<div class="gc-action-menu-inner">'
-                + '<button class="gc-action-item" id="gcaSize"><span class="gc-action-icon">⊞</span><span>Change card size</span></button>'
-                + '<button class="gc-action-item" id="gcaDetails"><span class="gc-action-icon">⋯</span><span>View details</span></button>'
+                + '<button class="gc-action-item" id="gcaSize"><span class="gc-action-icon">' + phIcon('frame-corners') + '</span><span>Change card size</span></button>'
+                + '<button class="gc-action-item" id="gcaDetails"><span class="gc-action-icon">' + phIcon('info') + '</span><span>View details</span></button>'
                 + '<button class="gc-action-item gc-action-cancel" id="gcaCancel">Cancel</button>'
                 + '</div>';
             el.querySelector('.gc-action-menu-inner').addEventListener('click', function(e) { e.stopPropagation(); });
@@ -3171,7 +3208,7 @@
 
             content.style.setProperty('--dim-color', dimHex);
             content.innerHTML =
-                '<button class="grid-overlay-close" onclick="closeGridCardOverlay()">×</button>'
+                '<button class="grid-overlay-close" type="button" onclick="closeGridCardOverlay()" aria-label="Close">' + phIcon('x') + '</button>'
                 // Ring + name row
                 + '<div class="grid-overlay-ring-row">'
                 + '  <div style="flex-shrink:0;position:relative;width:64px;height:64px;">'
@@ -3213,27 +3250,56 @@
             if (el) el.style.display = 'none';
         };
 
-        // Spawn a floating "+XP" element from a card on completion.
-        // Simple rising-text label — no chip surface, no flight path. Just
-        // the XP delta floating up briefly above the activity that
-        // triggered it. (Earlier we tried flying it to the progress bar,
-        // but the visual ended up reading as a heavy pill rather than a
-        // light "score popped" cue.)
-        function spawnFloatingXP(activityId, xpAmount) {
+        // Spawn a floating reward label from a card on completion.
+        // Simple rising text — no chip surface, no flight path. Just the
+        // reward floating up briefly above the activity that triggered it.
+        // (Earlier we tried flying it to the progress bar, but the visual
+        // ended up reading as a heavy pill rather than a light "score
+        // popped" cue.)
+        //
+        // `slot` stacks a second label under the first: the XP label rides
+        // slot 0 and Grit rides slot 1, 22px lower and a beat later, so the
+        // two never share a line and never cross paths on the way up.
+        function spawnFloat(activityId, className, text, slot, delayMs) {
             try {
                 var card = document.querySelector('.activity-item[data-aid="' + activityId + '"]')
                         || document.querySelector('.grid-card[data-aid="' + activityId + '"]');
-                if (!card) return;
+                if (!card) return null;
                 var rect = card.getBoundingClientRect();
                 var el = document.createElement('div');
-                el.className = 'act-xp-float';
-                el.textContent = (xpAmount >= 0 ? '+' : '−') + Math.abs(xpAmount) + ' XP';
-                if (xpAmount < 0) el.style.color = 'var(--color-accent-red)';
+                el.className = 'act-float ' + className;
+                el.innerHTML = text;
                 el.style.left = (rect.right - 60) + 'px';
-                el.style.top  = (rect.top + rect.height / 2 - 8) + 'px';
+                el.style.top  = (rect.top + rect.height / 2 - 8 + (slot || 0) * 22) + 'px';
+                if (delayMs) el.style.animationDelay = delayMs + 'ms';
                 document.body.appendChild(el);
-                setTimeout(function() { el.remove(); }, 950);
-            } catch (e) { /* non-critical */ }
+                setTimeout(function() { el.remove(); }, 950 + (delayMs || 0));
+                return el;
+            } catch (e) { return null; /* non-critical */ }
+        }
+
+        function spawnFloatingXP(activityId, xpAmount) {
+            var el = spawnFloat(activityId, 'act-xp-float',
+                (xpAmount >= 0 ? '+' : '−') + Math.abs(xpAmount) + ' XP', 0, 0);
+            if (el && xpAmount < 0) el.style.color = 'var(--color-accent-red)';
+        }
+
+        // Long enough that the two labels read as one beat after another
+        // rather than as a collision, short enough to still feel like one
+        // gesture.
+        var GRIT_FLOAT_DELAY_MS = 220;
+
+        // Grit earned on a completion is said here and nowhere else. It used
+        // to arrive as its own toast on every single tap, which at one
+        // notification per click read as nagging rather than as a reward. The
+        // drip's toast is suppressed in gritFlushBurst(); the bigger Grit beats
+        // (cadence, streak milestones, mastery, the weekly bonus) still get
+        // one, because those are actual news.
+        function spawnFloatingGrit(activityId, amount) {
+            if (!amount) return;
+            spawnFloat(activityId, 'act-grit-float',
+                phIcon('diamond', { weight: 'fill', lead: true }) + '+' + amount + ' Grit',
+                1, GRIT_FLOAT_DELAY_MS);
         }
 
         // Complete activity by ID (mirrors undoActivityById)
@@ -3256,6 +3322,7 @@
                         var _predEarned = predictCompletionXP(_act).earnedXP;
                         var _xpPreview  = (_act.isNegative && !_act.isSkipNegative) ? -_predEarned : _predEarned;
                         spawnFloatingXP(activityId, _xpPreview);
+                        spawnFloatingGrit(activityId, gritDripPreview(_act));
                         await completeActivity(dimIndex, pathIndex, actIndex);
                         return;
                     }
@@ -15596,6 +15663,15 @@
         function ttShort(s, n) { s = s || ''; return s.length > n ? s.slice(0, n - 1) + '…' : s; }
 
         // ── Main render (§4.4) ───────────────────────────────────────────
+        // The "+ Goal" button lives on the page title row, so it is not part of
+        // the markup this function writes — it is only shown or hidden here.
+        // Weaving has nothing to add to yet, and the empty state's own form is
+        // where the first goals get typed, so it appears once a web exists.
+        function ttShowAddGoalBtn(on) {
+            var btn = document.getElementById('ttAddGoalBtn');
+            if (btn) btn.style.display = on ? '' : 'none';
+        }
+
         function renderTechTree() {
             var container = document.getElementById('techTreeContainer');
             if (!container || !window.userData) return;
@@ -15605,6 +15681,7 @@
             // Weaving — seconds, not minutes, so it is a held breath rather
             // than a place you leave and come back to.
             if (_ttWeaving) {
+                ttShowAddGoalBtn(false);
                 container.innerHTML = '<div class="tt-gen">'
                     + '<div class="tt-gen-orbit"><div class="tt-gen-dot"></div></div>'
                     + '<h2 class="tt-gen-title">Weaving your web</h2>'
@@ -15616,6 +15693,7 @@
             // Empty — the goal form. No standing requirement badges: the one
             // rule that can block you says so when it blocks you, not before.
             if (tt.status === 'empty' || !tt.nodes.filter(function(n) { return n.lifecycle !== 'archived'; }).length) {
+                ttShowAddGoalBtn(false);
                 var goals = (tt.goals || []).filter(function(g) { return !g.retiredAt; });
                 var rows = (goals.length ? goals.map(function(g, i) { return ttGoalRowHtml(g.rawText, i); }) : [ttGoalRowHtml('', 0)]).join('');
                 container.innerHTML = '<div class="tt-intro">'
@@ -15632,6 +15710,7 @@
             }
 
             // Ready — the web. One SVG canvas inside the scroll container.
+            ttShowAddGoalBtn(true);
             var reveal = !!window._ttPendingReveal;
             window._ttPendingReveal = null;
             // Growth that landed while the app was closed still gets noticed:
@@ -15649,13 +15728,11 @@
                 }
             }
             var activeGoals = ttActiveGoals();
-            var html = '<div class="tt-web' + (reveal ? ' tt-reveal' : '') + '">'
-                // No heading here: the page is called Map and its title already
-                // says so, so a second "Your web" title only doubled up.
-                + '<div class="tt-web-head">'
-                + '<div class="tt-head-chips">'
-                + '<button class="tt-chip-btn" onclick="ttAddGoal()">＋ Goal</button>'
-                + '</div></div>';
+            // No heading and no chip row here: the page is called Map and its
+            // title already says so, and "+ Goal" now rides that same title
+            // line (index.html hoists #ttAddGoalBtn onto it). The row this
+            // used to draw is gone with it, so the web starts straight away.
+            var html = '<div class="tt-web' + (reveal ? ' tt-reveal' : '') + '">';
             if (tt.lastError) html += '<div class="tt-error">' + escapeHtml(tt.lastError) + '</div>';
             // "We read your goals as" — ONLY in the post-generation reveal
             // state, then never again as a header (§4.4).
@@ -18919,6 +18996,15 @@
             return !!a && !a.archived && !a.deleted && !gritIsPunitive(a);
         }
 
+        // What the "+N Grit" float will say for a completion that is about to
+        // land. Read by the float BEFORE the award runs, so it goes through
+        // the same countability rule the award itself uses — the two can never
+        // disagree, and a punitive activity that earns nothing shows nothing.
+        function gritDripPreview(activity) {
+            return (gritState() && gritIsCountable(activity)) ? GRIT_DRIP : 0;
+        }
+        window.gritDripPreview = gritDripPreview;
+
         // §3.2 — lookback window for liveness, in days.
         //   daily / weekly → 7; anything longer → its own cycle length.
         function gritLookbackDays(a) {
@@ -19291,7 +19377,10 @@
             gritApplyDelta(GRIT_DRIP, 'completion',
                 { activityId: activity.id, activityTitle: activity.name });
             gritBumpNumerator(g, activity, +1);
-            gritBurstAdd(activity.name || 'Completion', GRIT_DRIP);
+            // Floated from the card by spawnFloatingGrit(), not toasted — see
+            // the `floated` flag in gritFlushBurst(). A backdated completion
+            // has no card to float from, so gritOnRetroComplete() still toasts.
+            gritBurstAdd(activity.name || 'Completion', GRIT_DRIP, true);
 
             var tail = (activity.completionHistory || [])
                 .filter(function (e) { return e && !e.isPenalty && (e.xp || 0) > 0; }).slice(-1)[0];
@@ -19601,8 +19690,11 @@
         let _gritBurstNotes = [];
         let _gritBurstTimer = null;
 
-        function gritBurstAdd(label, amount) {
-            _gritBurst.push({ label: label, amount: amount });
+        // `floated` marks an award the card already showed as a rising
+        // "+N Grit" label. It still counts in the ledger and the week — it
+        // just does not get a toast of its own, because the float said it.
+        function gritBurstAdd(label, amount, floated) {
+            _gritBurst.push({ label: label, amount: amount, floated: !!floated });
             clearTimeout(_gritBurstTimer);
             _gritBurstTimer = setTimeout(gritFlushBurst, 120);
         }
@@ -19618,6 +19710,9 @@
             var items = _gritBurst; _gritBurst = [];
             var notes = _gritBurstNotes; _gritBurstNotes = [];
             notes.forEach(function (n) { try { showToast(n.text, 'blue', null, n.icon); } catch (e) {} });
+            // A tap that earned nothing but its drip has already said so on
+            // the card. Only the beats the float cannot carry reach a toast.
+            items = items.filter(function (i) { return !i.floated; });
             if (!items.length) return;
             var total = items.reduce(function (s, i) { return s + i.amount; }, 0);
             if (total <= 0) return;
@@ -19638,6 +19733,10 @@
         // ── UI plumbing ───────────────────────────────────────────────────
         function gritRefreshUI() {
             try { if (typeof window.mkRenderGrit === 'function') window.mkRenderGrit(); } catch (e) {}
+            // The Modes page's balance chip is persistent DOM now (the nav
+            // borrows it for the title row), so it is refreshed here rather
+            // than only when that page re-renders.
+            try { modesRenderGritChip(); } catch (e) {}
             gritRenderRewards();
         }
         window.gritRefreshUI = gritRefreshUI;
@@ -26231,6 +26330,16 @@
             }, 60);
         };
 
+        // The balance chip lives in a fixed host outside #modesRoot: the nav
+        // borrows that node for the page title row, and #modesRoot is rewritten
+        // wholesale on every render — writing the chip into it would either
+        // destroy the borrowed node or leave a second copy behind. Only the
+        // number is rewritten here.
+        function modesRenderGritChip() {
+            var n = document.getElementById('modesGritVal');
+            if (n) n.textContent = (gritBalance() || 0).toLocaleString();
+        }
+
         function modesRenderPage() {
             var host = modesRoot();
             if (!host) return;
@@ -26239,16 +26348,14 @@
             var a = m ? m.active : null;
 
             var html = '';
-            // No title of its own: the v5 nav renders every page's name as
-            // .mk-page-heading above the content, and every other page hides
-            // the heading it used to draw for itself. One name per page.
-            html += '<div class="md-head">' +
-                      '<p class="md-sub">One at a time. Each one changes how the app treats you while it runs.</p>' +
-                      '<div class="md-grit" title="Your Grit balance">' +
-                        '<span class="md-grit-dot">' + phIcon('diamond', { weight: 'fill' }) + '</span>' +
-                        '<span class="md-grit-n">' + (gritBalance() || 0).toLocaleString() + '</span>' +
-                      '</div>' +
-                    '</div>';
+            // No title and no blurb of its own. The v5 nav renders every page's
+            // name as .mk-page-heading above the content, and the balance chip
+            // is lifted onto that same line, so "Modes" and the counter share a
+            // row. The line of explanation that used to sit under them is gone
+            // — each card already says what its mode does, and the page reads
+            // quieter without a paragraph repeating it. The chip's markup lives
+            // in index.html; only its number is written here.
+            modesRenderGritChip();
 
             html += modesInviteCardsHtml();
 
@@ -26300,11 +26407,13 @@
 
             return '<div class="md-card' + (isActive ? ' is-live' : '') + (blocked ? ' is-blocked' : '') +
                         ' md-card-' + kind + '">' +
+                     // Icon, then the name beside it, then the tag at the end
+                     // of the same line — one row instead of two.
                      '<div class="md-card-top">' +
                        '<span class="md-card-icon">' + phIcon(meta.icon) + '</span>' +
+                       '<span class="md-card-name">' + modeEsc(meta.name) + '</span>' +
                        '<span class="md-card-tag">' + modeEsc(meta.tag) + '</span>' +
                      '</div>' +
-                     '<div class="md-card-name">' + modeEsc(meta.name) + '</div>' +
                      '<p class="md-card-blurb">' + modeEsc(meta.blurb) + '</p>' +
                      '<div class="md-card-foot">' +
                        '<span class="md-card-cost">' + phIcon('diamond', { weight: 'fill', lead: true }) + modeEsc(modeCostLabel(kind)) + '</span>' +

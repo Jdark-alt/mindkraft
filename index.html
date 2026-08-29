@@ -995,6 +995,17 @@
 
                 <!-- Tech Tree sub-tab — content rendered entirely by renderTechTree() -->
                 <div id="activitiesSubTechTree" class="sub-tab-content" style="display:none;">
+                    <!-- The Map's one control, hoisted onto the page title row
+                         by the nav's placeAction() so "Map" and "+ Goal" share
+                         a line. It lives out here rather than inside
+                         #techTreeContainer because that container is rewritten
+                         wholesale on every render, which would either destroy
+                         the borrowed node or leave a second copy behind. The
+                         row itself is display:none — the button is only ever
+                         seen on the title row. -->
+                    <div class="tt-page-header">
+                        <button class="tt-chip-btn" id="ttAddGoalBtn" type="button" onclick="ttAddGoal()">＋ Goal</button>
+                    </div>
                     <div id="techTreeContainer"></div>
                 </div>
             </div>
@@ -1744,6 +1755,16 @@
                  Pursuits›Narratives, More›Rewards). Real content is future work.
                  ══════════════════════════════════════════════════════════════ -->
             <div id="mkEmptyPursuitsModes" class="tab-content">
+                <!-- The Grit balance chip, hoisted onto the page title row by
+                     placeAction() so "Modes" and the counter share a line. It
+                     sits outside #modesRoot because that node is rewritten on
+                     every render; app.js only rewrites the number inside it. -->
+                <div class="md-head">
+                    <div class="md-grit" id="modesGrit" title="Your Grit balance">
+                        <span class="md-grit-dot"><i class="ph-fill ph-diamond" aria-hidden="true"></i></span>
+                        <span class="md-grit-n" id="modesGritVal">0</span>
+                    </div>
+                </div>
                 <!-- Rendered by modesRenderPage() in app.js, so there is
                      exactly one source of truth for the markup. -->
                 <div id="modesRoot" class="md-root"></div>
@@ -1751,7 +1772,7 @@
             <div id="mkEmptyPursuitsNarratives" class="tab-content">
                 <div class="empty-state mk-empty-page">
                     <div class="empty-state-icon"><i class="ph-bold ph-book-open mk-ico-block" aria-hidden="true"></i></div>
-                    <p>Narratives live here. Nothing to show yet.</p>
+                    <p>Coming soon</p>
                 </div>
             </div>
             <div id="mkEmptyMoreRewards" class="tab-content">
@@ -2889,7 +2910,8 @@
                     lead:  '#projectsListView .pr-toolbar .act-tb-btn',
                     trail: ['#projectsListView .pr-toolbar .qc-plan-btn',
                             '#projectsListView .pr-toolbar .act-tb-add-main'] } },
-                { label: 'Modes',      kind: 'empty',  el: 'mkEmptyPursuitsModes' },
+                { label: 'Modes',      kind: 'empty',  el: 'mkEmptyPursuitsModes', action: {
+                    trail: '#modesGrit' } },
                 { label: 'Narratives', kind: 'empty',  el: 'mkEmptyPursuitsNarratives' }
             ] },
             { key: 'activities', name: 'Activities', subs: [
@@ -2898,7 +2920,8 @@
                     lead:  '.cat-page-header .cat-info-btn',
                     trail: ['#activitiesSubCategories .cat-toolbar .act-tb-btn',
                             '#activitiesSubCategories .cat-toolbar .act-tb-add-main'] } },
-                { label: 'Map',           kind: 'legacySub', tab: 'activities', sub: 'techTree' }
+                { label: 'Map',           kind: 'legacySub', tab: 'activities', sub: 'techTree', action: {
+                    trail: '#ttAddGoalBtn' } }
             ] },
             { key: 'more', name: 'More', subs: [
                 { label: 'Analytics', kind: 'legacy', tab: 'analytics', action: { trail: '#analyticsFilterToggle' } },
@@ -3243,6 +3266,62 @@
         function cycleTab(d) { window.mkGo((((state.t + d) % 4) + 4) % 4); }
         function cycleSection(d) { window.mkGoSub(state.t, (((state.s + d) % 3) + 3) % 3); }
 
+        /* ── One horizontal-drag tracker, shared by the page swipe and the
+           Arc dials ────────────────────────────────────────────────────
+           Both used to hold their start point in a pair of variables that
+           only a pointerup could clear, which is where the ghost clicks came
+           from: when the browser took the pointer over for a scroll, or the
+           press landed on a control and the handler returned early, that
+           start point stayed behind — and the NEXT pointerup in range was
+           measured against it. A plain tap near a screen edge then read as a
+           300px swipe and the page changed under the user, nowhere near any
+           nav control.
+
+           So a gesture lives in exactly one object, every path that ends it
+           clears it (a cancel, a second finger, leaving the window, a press
+           that was never a candidate), and the up that resolves it has to be
+           the same pointer that started it, inside a time bound. A tap can
+           now only ever be measured against its own pointerdown, which puts
+           its dx at ~0. ── */
+        var DRAG_MAX_MS = 1200;
+
+        function trackDrag(el, opts) {
+            var g = null;                       // the live gesture, or nothing
+            function drop() { g = null; }
+
+            el.addEventListener('pointerdown', function (e) {
+                drop();                         // whatever came before is over
+                if (!e.isPrimary) return;       // a second finger is not a swipe
+                if (e.pointerType === 'mouse') return;   // a mouse drag is selection
+                if (opts.accept && !opts.accept(e)) return;
+                g = { id: e.pointerId, x: e.clientX, y: e.clientY, at: Date.now(),
+                      data: opts.start ? opts.start(e) : null };
+            });
+
+            /* A drag that wanders far vertically is a scroll. Drop it the
+               moment that is clear rather than judging it only at the end. */
+            el.addEventListener('pointermove', function (e) {
+                if (!g || e.pointerId !== g.id) return;
+                if (Math.abs(e.clientY - g.y) > opts.maxDy) drop();
+            }, { passive: true });
+
+            el.addEventListener('pointerup', function (e) {
+                var s = g;
+                drop();
+                if (!s || e.pointerId !== s.id) return;
+                if (Date.now() - s.at > DRAG_MAX_MS) return;
+                var dx = e.clientX - s.x, dy = e.clientY - s.y;
+                if (Math.abs(dx) < opts.minDx) return;
+                if (Math.abs(dx) < Math.abs(dy) * opts.slope) return;
+                opts.done(dx < 0 ? 1 : -1, s.data);
+            });
+
+            el.addEventListener('pointercancel', drop);
+            el.addEventListener('lostpointercapture', drop);
+            window.addEventListener('blur', drop);
+            document.addEventListener('visibilitychange', drop);
+        }
+
         /* ── Arc dials: swipe to rotate, tap an edge label to bring it round.
            Which dial responds depends on where the gesture starts: the upper
            part of the band is the section dial, the lower part the tab dial. ── */
@@ -3263,23 +3342,17 @@
                 })(j);
             }
 
-            var x0 = 0, y0 = 0, onSectionDial = false, tracking = false;
-            nav.addEventListener('pointerdown', function (e) {
-                var r = nav.getBoundingClientRect();
-                x0 = e.clientX; y0 = e.clientY; tracking = true;
-                // The tab disc's top edge sits ~64px down the band.
-                onSectionDial = (e.clientY - r.top) < 64;
-            });
-            nav.addEventListener('pointerup', function (e) {
-                if (!tracking) return;
-                tracking = false;
-                var dx = e.clientX - x0, dy = e.clientY - y0;
-                if (Math.abs(dx) < 34 || Math.abs(dx) < Math.abs(dy) * 1.2) return;
+            trackDrag(nav, {
+                minDx: 34, maxDy: 70, slope: 1.2,
+                start: function (e) {
+                    // The tab disc's top edge sits ~64px down the band.
+                    return (e.clientY - nav.getBoundingClientRect().top) < 64;
+                },
                 // Dragging left pulls the next slot toward the apex.
-                var d = dx < 0 ? 1 : -1;
-                if (onSectionDial) cycleSection(d); else cycleTab(d);
+                done: function (d, onSectionDial) {
+                    if (onSectionDial) cycleSection(d); else cycleTab(d);
+                }
             });
-            nav.addEventListener('pointercancel', function () { tracking = false; });
         }
 
         /* ── Swipe: mobile-only, bails out of anything with its own
@@ -3299,20 +3372,20 @@
         function initSwipe() {
             var content = document.querySelector('.main-content');
             if (!content) return;
-            var x0 = 0, y0 = 0, tracking = false;
-            content.addEventListener('pointerdown', function (e) {
-                if (window.innerWidth > 768) return;
-                if (e.target.closest('input,textarea,select,button,label,a')) return;
-                if (hasHScrollAncestor(e.target, content)) return;
-                x0 = e.clientX; y0 = e.clientY; tracking = true;
-            });
-            content.addEventListener('pointerup', function (e) {
-                if (!tracking) return;
-                tracking = false;
-                if (window.innerWidth > 768) return;
-                var dx = e.clientX - x0, dy = e.clientY - y0;
-                if (Math.abs(dx) < 58 || Math.abs(dx) < Math.abs(dy) * 1.4) return;
-                window.mkStep(dx < 0 ? 1 : -1);
+            trackDrag(content, {
+                minDx: 58, maxDy: 80, slope: 1.4,
+                accept: function (e) {
+                    if (window.innerWidth > 768) return false;
+                    /* A dialog on top owns the gesture — the page behind it
+                       must not slide out from under an open sheet. */
+                    if (document.querySelector('.modal-overlay.active')) return false;
+                    if (e.target.closest('input,textarea,select,button,label,a')) return false;
+                    return !hasHScrollAncestor(e.target, content);
+                },
+                done: function (d) {
+                    if (window.innerWidth > 768) return;
+                    window.mkStep(d);
+                }
             });
         }
 
@@ -3565,7 +3638,7 @@
     <!-- Grid card expand overlay -->
     <div id="gridCardOverlay" class="grid-card-overlay" style="display:none;" onclick="closeGridCardOverlay()">
         <div class="grid-card-overlay-inner" id="gridCardOverlayContent" onclick="event.stopPropagation()">
-            <button class="grid-overlay-close" onclick="closeGridCardOverlay()">×</button>
+            <button class="grid-overlay-close" type="button" onclick="closeGridCardOverlay()" aria-label="Close"><i class="ph-bold ph-x" aria-hidden="true"></i></button>
         </div>
     </div>
 
