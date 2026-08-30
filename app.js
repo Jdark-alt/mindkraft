@@ -1160,6 +1160,19 @@
             document.body.appendChild(overlay);
         }
 
+        // The share button's face, in one place. It is built by the two
+        // celebration surfaces and rebuilt by shareLevelUpCard when it restores
+        // the label after a share — three copies of the same eight lines, which
+        // is three chances for the glyph to drift apart.
+        const SHARE_BTN_HTML =
+            '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+            'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' +
+            '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/>' +
+            '<circle cx="18" cy="19" r="3"/>' +
+            '<line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>' +
+            '<line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>' +
+            '<span>Share progress</span>';
+
         window.shareLevelUpCard = async function(level) {
             const btn = document.getElementById('shareLevelUpBtn');
             if (btn) {
@@ -1187,14 +1200,7 @@
                     // Preserve the SVG glyph — assignment to textContent would
                     // wipe the icon. We rebuild the same innerHTML used at
                     // creation time so the button looks identical to before.
-                    btn.innerHTML =
-                        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
-                        'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' +
-                        '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/>' +
-                        '<circle cx="18" cy="19" r="3"/>' +
-                        '<line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>' +
-                        '<line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>' +
-                        '<span>Share progress</span>';
+                    btn.innerHTML = SHARE_BTN_HTML;
                 }
             }
         };
@@ -1524,7 +1530,6 @@
                 if (isOffline || true) {
                     try {
                         userDoc = await getDocFromCache(userDocRef);
-                        console.log('Loaded user data from local Firestore cache');
                         showToast('Offline — showing saved data', 'olive', null, 'warning');
                     } catch (cacheErr) {
                         // Neither the network nor the local cache could answer.
@@ -1593,7 +1598,6 @@
                     createdAt: new Date().toISOString()
                 };
             }
-            console.log('User data ready');
 
             // Apply theme mode (light/dark) as early as possible — BEFORE the app
             // container becomes visible — so light-theme users don't see a flash
@@ -4687,15 +4691,6 @@
                 window.userData.deletedActivityLog.shift();
         }
 
-        // Collect all activity IDs in a dimension for bulk cleanup
-        function getActivityIdsInDimension(dim) {
-            const ids = [];
-            (dim.paths || []).forEach(path => {
-                (path.activities || []).forEach(act => ids.push(act.id));
-            });
-            return ids;
-        }
-
         // ── Fast local-day comparison ─────────────────────────────────────
         // Date.prototype.toDateString() runs the full locale date formatter
         // and allocates a string on every call. It was being invoked once per
@@ -5573,6 +5568,27 @@
             }, 2400);
         }
 
+        // Both celebration surfaces — the reward overlay and the plain level-up
+        // card — end with the same "Share progress" button, and each used to
+        // build it inline. There was a fourth copy too, in a helper nobody
+        // called. One builder, one SHARE_BTN_HTML.
+        function buildShareLevelUpBtn(level, opts) {
+            opts = opts || {};
+            const btn = document.createElement('button');
+            btn.id = 'shareLevelUpBtn';
+            btn.type = 'button';
+            btn.className = 'level-up-share-btn';
+            if (opts.marginTop) btn.style.marginTop = opts.marginTop;
+            btn.innerHTML = SHARE_BTN_HTML;
+            btn.onclick = function (e) {
+                // The card is click-to-dismiss; the overlay is not, and stopping
+                // propagation there would be harmless but pointless.
+                if (opts.stopPropagation && e) e.stopPropagation();
+                shareLevelUpCard(level);
+            };
+            return btn;
+        }
+
         function showLevelUpAnimation() {
             const confettiContainer = document.getElementById('confettiContainer');
             const colors = ['#4a7c9e', '#8e3b5f', '#6b7c3f', '#7a7b4d', '#5a9fd4'];
@@ -5593,32 +5609,6 @@
             const newLevel = window.userData.level;
             const reward = (window.userData.rewards || {})[newLevel];
 
-            // Share button injector — called after the overlay/toast is in the DOM
-            function _injectShareBtn() {
-                if (document.getElementById('shareLevelUpBtn')) return;
-                const btn = document.createElement('button');
-                btn.id = 'shareLevelUpBtn';
-                btn.className = 'level-up-share-btn';
-                btn.innerHTML =
-                    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
-                    'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' +
-                    '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/>' +
-                    '<circle cx="18" cy="19" r="3"/>' +
-                    '<line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>' +
-                    '<line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>' +
-                    '<span>Share progress</span>';
-                btn.onclick = () => shareLevelUpCard(newLevel);
-                // Reward overlay card takes precedence — it's the richer
-                // celebration surface when a real-world reward is configured.
-                const card = document.querySelector('#rewardUnlockOverlay .reward-unlock-card');
-                if (card) { card.appendChild(btn); return; }
-                // Otherwise, drop into the new level-up card if it's open.
-                const luCard = document.querySelector('.level-up-card');
-                if (luCard && !luCard.querySelector('.level-up-share-btn')) {
-                    luCard.appendChild(btn);
-                }
-            }
-
             if (reward || newLevel === 100) {
                 setTimeout(() => {
                     showRewardUnlock(newLevel);
@@ -5629,20 +5619,7 @@
                         if (document.getElementById('shareLevelUpBtn')) return;
                         const card = document.querySelector('#rewardUnlockOverlay .reward-unlock-card');
                         if (!card) return;
-                        const btn = document.createElement('button');
-                        btn.id = 'shareLevelUpBtn';
-                        btn.className = 'level-up-share-btn';
-                        btn.style.marginTop = '14px';
-                        btn.innerHTML =
-                            '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
-                            'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' +
-                            '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/>' +
-                            '<circle cx="18" cy="19" r="3"/>' +
-                            '<line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>' +
-                            '<line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>' +
-                            '<span>Share progress</span>';
-                        btn.onclick = () => shareLevelUpCard(newLevel);
-                        card.appendChild(btn);
+                        card.appendChild(buildShareLevelUpBtn(newLevel, { marginTop: '14px' }));
                     }, 100);
                 }, 600);
             } else {
@@ -5693,22 +5670,7 @@
                 headline.textContent = 'Level ' + newLevel;
 
                 // Share button — canonical primary CTA, not a purple pill.
-                const shareBtn = document.createElement('button');
-                shareBtn.id = 'shareLevelUpBtn';
-                shareBtn.type = 'button';
-                shareBtn.className = 'level-up-share-btn';
-                shareBtn.innerHTML =
-                    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
-                    'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' +
-                    '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/>' +
-                    '<circle cx="18" cy="19" r="3"/>' +
-                    '<line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>' +
-                    '<line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>' +
-                    '<span>Share progress</span>';
-                shareBtn.onclick = function(e) {
-                    e.stopPropagation();
-                    shareLevelUpCard(newLevel);
-                };
+                const shareBtn = buildShareLevelUpBtn(newLevel, { stopPropagation: true });
 
                 card.appendChild(closeBtn);
                 card.appendChild(eyebrow);
@@ -8210,16 +8172,17 @@
         window.switchTab = function(tabName) {
             window.currentTab = tabName;
             
-            // Update tab buttons
+            // Mark the active button on the retired flat bar. That bar is kept
+            // in the DOM at zero size purely so this still has something to
+            // mark; the v5 nav paints its own state. It used to get a pop
+            // animation here too, complete with a forced reflow to restart it —
+            // on every navigation, on an element that is 0x0 and fully
+            // transparent. The class stays, the animation does not.
             document.querySelectorAll('.nav-tab').forEach(tab => {
-                tab.classList.remove('active');
-                if (tab.getAttribute('onclick') === `switchTab('${tabName}')`) {
-                    tab.classList.add('active');
-                    tab.classList.remove('nav-tab-pop');
-                    void tab.offsetWidth; // force reflow to restart animation
-                    tab.classList.add('nav-tab-pop');
-                    tab.addEventListener('animationend', () => tab.classList.remove('nav-tab-pop'), { once: true });
-                }
+                tab.classList.toggle(
+                    'active',
+                    tab.getAttribute('onclick') === `switchTab('${tabName}')`
+                );
             });
             
             // Update tab content
@@ -9864,11 +9827,6 @@
             showToast(`Scaling set to ${newK} — now Level ${level}`, 'olive', null, 'check-circle');
         };
 
-        // Keep old saveSettings stub for any legacy calls
-        window.saveSettings = async function() {
-            showToast('Use the scaling slider above.', 'blue');
-        };
-
         // ── Theme Customizer ──────────────────────────────────────────────
 
         const THEMES = [
@@ -10440,32 +10398,6 @@
             showToast('Theme saved!', 'blue', null, 'palette');
         };
 
-        window.resetCustomTheme = function() {
-            var saved = (window.userData.settings && window.userData.settings.theme) || {};
-            // Restore every CSS variable from saved state (or hardcoded defaults)
-            CUSTOM_COLOR_VARS.forEach(function(v) {
-                var val = saved['custom_' + v.id] || v.default;
-                document.documentElement.style.setProperty(v.variable, val);
-            });
-            if (saved.accent)    document.documentElement.style.setProperty('--color-accent-blue',   saved.accent);
-            if (saved.progress)  document.documentElement.style.setProperty('--color-progress',      saved.progress);
-            if (saved.bg)        document.documentElement.style.setProperty('--color-bg-primary',    saved.bg);
-            if (saved.card)      document.documentElement.style.setProperty('--color-bg-card',       saved.card);
-            if (saved.secondary) document.documentElement.style.setProperty('--color-bg-secondary',  saved.secondary);
-            // Restore glows — don't call applyBgGlow here, that would overwrite custom glow data
-            var hasCustomGlows = !!(saved.glowA || saved.glowM || saved.glowB);
-            if (hasCustomGlows) {
-                _applyGlowsFromSaved(saved);
-            } else {
-                applyBgGlow(saved.accent || '#4472a0', saved.progress || '#537db8');
-            }
-            window._pendingTheme = JSON.parse(JSON.stringify(saved));
-            buildColorGrid();
-            buildGradientPresets();
-            _restoreGlowSliders(saved);
-            showToast('Reverted to saved theme', 'blue', null, 'arrow-counter-clockwise');
-        };
-
         // Apply radial glow to body (preset mode only — does NOT overwrite custom glows)
         function applyBgGlow(accentHex, progressHex) {
             try {
@@ -10893,27 +10825,6 @@
             return null;
         }
 
-        // ── wasCompletedInWindow ───────────────────────────────────
-        // Returns true if there is at least one positive-XP user-initiated completion
-        // anywhere in [windowStart, windowEnd). Penalties (isPenalty:true) are excluded.
-        function wasCompletedInWindow(activity, windowStart, windowEnd) {
-            const s = windowStart.getTime();
-            const e = windowEnd.getTime();
-            if (activity.completionHistory && activity.completionHistory.length > 0) {
-                return activity.completionHistory.some(entry => {
-                    if (entry.isPenalty || (entry.xp || 0) <= 0) return false;
-                    const t = new Date(entry.date).getTime();
-                    return t >= s && t < e;
-                });
-            }
-            // Legacy fallback: only lastCompleted available
-            if (activity.lastCompleted) {
-                const t = new Date(activity.lastCompleted).getTime();
-                return t >= s && t < e;
-            }
-            return false;
-        }
-
         // ── processSkipPenalty ────────────────────────────────────────────
         // Self-contained owner of the skip-negative XP penalty system.
         //   - Walks closed windows after skipPenaltyWindow up to today.
@@ -11013,11 +10924,6 @@
             activity.lastPenaltyDays = missedCharged;
             return true;
         }
-
-        // ── Auto-Backup ────────────────────────────────────────────────────
-        // Daily backup is now folded into saveUserData() above (zero extra writes).
-        // saveAutoBackup() kept as a no-op stub so any stale call sites don't throw.
-        async function saveAutoBackup() { /* no-op: logic moved to saveUserData */ }
 
         async function updateRestoreBackupBtn(knownDate) {
             const btn = document.getElementById('restoreBackupBtn');
@@ -12775,7 +12681,6 @@
                     if (reminders[i].timezone === tz) continue;
                     await updateDoc(reminderDocRef(reminders[i].id), { timezone: tz, updatedAt: new Date() });
                 }
-                if (reminders.length) console.log('Timezone changed to ' + tz + ' — reminders rescheduled');
             } catch (e) {
                 console.warn('Could not propagate timezone to reminders:', e);
             }
@@ -20489,14 +20394,6 @@
             };
         }
 
-        // Sum of every requirement's target — the score a side needs to win
-        // outright, and the denominator for their bar.
-        function vsTargetTotal(ch) {
-            return (ch.requirements || []).reduce(function (s, r) {
-                return s + (r.targetCount || 0);
-            }, 0);
-        }
-
         function vsProgressOf(ch, uid) {
             return (ch.progress && ch.progress[uid]) || {};
         }
@@ -26777,7 +26674,7 @@
             }
             var m = modesState();
             if (kind === 'habit' && m && m.suspendedHabit) { habitOpenResume(); return; }
-            _modeSetup = { kind: kind, step: 0, picks: [], detailIndex: 0, query: '', ddOpen: false };
+            _modeSetup = { kind: kind, step: 0, picks: [], detailIndex: 0, query: '' };
             if (kind === 'habit')     { _modeSetup.targetDays = HABIT_DEFAULT_DAYS; habitRenderSetup(); }
             if (kind === 'berserk')   { _modeSetup.hours = 2; berserkRenderSetup(); }
             if (kind === 'recovery')  { recoveryRenderSetup(); }
@@ -26833,11 +26730,6 @@
                    '</div>';
         }
 
-        var MODE_DD_CHEVRON =
-            '<svg class="md-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
-            'stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-            '<polyline points="6 9 12 15 18 9"/></svg>';
-
         // ── The activity picker ───────────────────────────────────────────
         // A real control rather than a native <select>: a trigger that names
         // what is chosen, a chevron that says it opens, and a search field, so
@@ -26864,7 +26756,7 @@
             if (!_modeSetup) return;
             _modeSetup.query = value;
             var host = document.getElementById('mdActList');
-            if (host) host.innerHTML = _modeSetup.ddSingle ? modeDDListHtml() : modePickListHtml();
+            if (host) host.innerHTML = modePickListHtml();
         };
 
         // Multi-select: up to `max` activities, each a row that toggles.
@@ -26899,7 +26791,6 @@
             var s = _modeSetup;
             s.pickOpts = { max: max, streakOnly: !!opts.streakOnly, showPeak: !!opts.showPeak,
                            needPeak: !!opts.needPeak };
-            s.ddSingle = false;
             var all = modeEligibleActivities({ streakOnly: !!opts.streakOnly });
             if (!all.length) {
                 return '<p class="md-empty">No activities can carry this mode yet. Create one on the Activities tab first.</p>';
@@ -26914,68 +26805,6 @@
                    '</div>';
         }
 
-        // Single-select: the trigger names the choice; the list opens under it.
-        function modeDDListHtml() {
-            var s = _modeSetup;
-            var all = modeEligibleActivities();
-            var acts = modeFilterActs(all, s.query);
-            if (!acts.length) {
-                return '<div class="md-dd-none">' +
-                       (s.query ? 'Nothing matches “' + modeEsc(s.query) + '”.' : 'No activities yet.') +
-                       '</div>';
-            }
-            return acts.map(function (a) {
-                var on = s.activityId === a.id;
-                return '<button type="button" class="md-pick' + (on ? ' is-on' : '') + '" ' +
-                         'onclick="modeDDPick(\'' + modeEsc(a.id) + '\')">' +
-                         '<span class="md-pick-name">' + modeEsc(a.name) + '</span>' +
-                         '<span class="md-pick-meta">' + modeEsc(a.dimName || '') + '</span>' +
-                       '</button>';
-            }).join('');
-        }
-
-        function modeDropdownHtml(placeholder) {
-            var s = _modeSetup;
-            s.ddSingle = true;
-            var all = modeEligibleActivities();
-            if (!all.length) {
-                return '<p class="md-empty">No activities can carry this mode yet. Create one on the Activities tab first.</p>';
-            }
-            var chosen = all.filter(function (a) { return a.id === s.activityId; })[0];
-            var open = !!s.ddOpen;
-            return '<div class="md-dd' + (open ? ' is-open' : '') + '">' +
-                     '<button type="button" class="md-dd-trigger' + (chosen ? ' has-value' : '') + '" ' +
-                       'aria-expanded="' + (open ? 'true' : 'false') + '" onclick="modeDDToggle()">' +
-                       '<span class="md-dd-label">' + modeEsc(chosen ? chosen.name : (placeholder || 'Choose an activity')) + '</span>' +
-                       MODE_DD_CHEVRON +
-                     '</button>' +
-                     (open
-                       ? '<div class="md-dd-panel">' +
-                           modeSearchHtml(all.length) +
-                           '<div class="md-dd-list" id="mdActList">' + modeDDListHtml() + '</div>' +
-                         '</div>'
-                       : '') +
-                   '</div>';
-        }
-
-        window.modeDDToggle = function () {
-            if (!_modeSetup) return;
-            _modeSetup.ddOpen = !_modeSetup.ddOpen;
-            _modeSetup.query = '';
-            modeRerenderSetup();
-            if (_modeSetup.ddOpen) {
-                var el = document.querySelector('#modeSheet .md-dd-search');
-                if (el) setTimeout(function () { el.focus(); }, 40);
-            }
-        };
-
-        window.modeDDPick = function (id) {
-            if (!_modeSetup) return;
-            _modeSetup.activityId = id;
-            _modeSetup.ddOpen = false;
-            _modeSetup.query = '';
-            modeRerenderSetup();
-        };
 
         window.modeTogglePick = function (id, max) {
             if (!_modeSetup) return;
@@ -27709,8 +27538,7 @@
             var p = pactGet(id);
             if (!p) { await pactFetch(true); p = pactGet(id); }
             if (!p) { showToast('That Pact is no longer available.', 'red'); return; }
-            _modeSetup = { kind: 'pactAccept', pactId: id, picks: [], targets: {},
-                           query: '', ddOpen: false };
+            _modeSetup = { kind: 'pactAccept', pactId: id, picks: [], targets: {}, query: '' };
             pactRenderAccept();
         };
 
