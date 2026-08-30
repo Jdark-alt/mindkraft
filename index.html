@@ -2944,8 +2944,8 @@
         function isMobile() { return window.matchMedia('(max-width: 768px)').matches; }
 
         /* ── Content activation: reuse the app's own switchTab/switchSubTab
-           for legacy pages so gating + real renders stay intact; only the
-           four brand-new empty pages are toggled by hand. ── */
+           for legacy pages so their real renders run; only the four brand-new
+           empty pages are toggled by hand. ── */
         function activateEmpty(elId) {
             var nodes = document.querySelectorAll('.tab-content');
             for (var i = 0; i < nodes.length; i++) nodes[i].classList.remove('active');
@@ -2961,11 +2961,17 @@
             return el;
         }
 
+        /* The two null returns below used to mean "the app refused this tab
+           because the user's level is too low, and it has already said so in a
+           toast". Level gating is gone and switchTab never refuses, so what
+           they catch now is only a tab id with no panel behind it — a
+           genuinely broken entry in NAV, which should not then be animated as
+           if it had opened. Kept as that guard; the reason changed. */
         function activateEntry(entry) {
             if (entry.kind === 'legacy') {
                 if (typeof window.switchTab === 'function') window.switchTab(entry.tab);
                 var el = $(entry.tab + 'Tab');
-                if (!el || !el.classList.contains('active')) return null; // gated — the app's own toast already fired
+                if (!el || !el.classList.contains('active')) return null;
                 return el;
             }
             if (entry.kind === 'legacySub') {
@@ -3229,7 +3235,7 @@
         function commit(t, s, dir) {
             var entry = NAV[t].subs[s];
             var el = activateEntry(entry);
-            if (!el) return false; // gated or missing — no-op; the app's own feedback (toast) already fired
+            if (!el) return false; // no panel behind this entry — leave the nav where it is
             if (t !== state.t) state.spin -= ringDelta(state.t, t, 4) * STEP;
             if (s !== state.s) state.subSpin -= ringDelta(state.s, s, 3) * SUB_STEP;
             state.t = t; state.s = s; state.mem[t] = s;
