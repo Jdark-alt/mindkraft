@@ -144,92 +144,132 @@
 
         <div class="kicker">Legal</div>
         <h1>Privacy Policy</h1>
-        <p class="meta">Effective date: July 9, 2026</p>
+        <p class="meta">Effective date: 30 August 2026</p>
 
         <div class="card">
             <h2>1. Who we are</h2>
-            <p>Mindkraft ("we", "us") is a life-gamification app available at <a href="https://mindkraft.life">mindkraft.life</a>. It lets you track habits and activities, earn XP, build streaks, take on challenges, and share progress with friends. This policy explains what information Mindkraft collects, how it is used, and the controls you have over it.</p>
-            <p>The short version: we collect only what the app needs to work, we don't run ads or third-party trackers, and we never sell your data.</p>
+            <p>Mindkraft ("we", "us") is a life-gamification app available at <a href="https://mindkraft.life">mindkraft.life</a>. It lets you track habits and activities, earn XP, build streaks, make commitments you stake a virtual currency on, take on friends head-to-head, and share progress with people you add. This policy explains what information Mindkraft collects, how it is used, who can see it, and the controls you have over it.</p>
+            <p>The short version: we collect what the app needs to work, we don't run ads, we don't sell your data, and we don't share it with anyone except the service providers listed in section 7 and the people you choose to connect with. We do run basic product analytics — see section 2.</p>
         </div>
 
         <div class="card">
             <h2>2. Information we collect</h2>
+
             <h3>Account information</h3>
-            <p>Mindkraft uses <strong>Sign in with Google</strong> (via Firebase Authentication). When you sign in we receive your Google account's name, email address, profile photo, and a unique account identifier. You can optionally set a separate username inside the app.</p>
-            <h3>Content you create</h3>
-            <p>Everything you build in the app is stored against your account: dimensions, paths, activities, completions, XP and levels, streaks, challenges, planner items, rewards, notes, chart configuration, and settings (including your theme). Daily cloud backups and any JSON exports you trigger contain the same data.</p>
-            <h3>Social features</h3>
-            <p>If you use the Friends features, your friend code, display name, profile photo, level, XP, streaks, and spider chart become visible to friends you add and to members of leaderboards and group challenges you join.</p>
-            <h3>Push notification data</h3>
-            <p>If you enable the daily reminder, we store your chosen reminder time and your browser's push subscription (an endpoint URL and encryption keys) so we can deliver the notification. Disabling the reminder deletes the subscription.</p>
-            <h3>Automatically collected information</h3>
-            <p>Mindkraft has <strong>no ads, no analytics SDKs, and no tracking pixels</strong>. Our infrastructure providers (GitHub Pages for hosting, Google Firebase for authentication and database) may log standard request metadata such as IP address and browser type as part of operating their services.</p>
+            <p>Mindkraft uses <strong>Sign in with Google</strong> (via Firebase Authentication). When you sign in we receive your Google account's name, email address, profile photo, and a unique account identifier. You can set a different display name inside the app, which is what other users see.</p>
+
+            <h3>What you create</h3>
+            <p>Your account document holds the whole of your app state: dimensions, paths and activities; every completion you log, with its timestamp and XP; levels, streaks and streak shields; quests and their structure; planner entries; rewards you define; your map (the "Web") including the goals you type into it; chart and display settings; your timezone; and your balance of Grit, the app's in-app currency, along with a ledger of how it was earned and spent. Once a day a snapshot of all of it is saved alongside it as a restore point.</p>
+
+            <h3>Social data</h3>
+            <p>If you use the social features, we also store: your friend code; your friends list; friend requests you send or receive; Pacts and Versus Challenges you take part in, including each side's chosen activities, targets, progress counters and the Grit staked; gifts sent and received; and, if you opt into leaderboards, a published board naming the people you are scored against. Section 6 sets out exactly what other people can see.</p>
+
+            <h3>Push notifications</h3>
+            <p>If you turn on notifications, your browser creates a push subscription — an endpoint URL at your browser vendor's push service, plus a pair of encryption keys — and we store it on your account so we can deliver notifications to that device. It is used for reminders you set, mode nudges, gifts, Pacts (including progress nudges), friend requests, and Versus Challenges.</p>
+            <p>To be accurate about one thing: turning reminders off in the app does <strong>not</strong> by itself remove the stored subscription. The subscription is deleted when your browser's push service reports it as no longer valid — for example after you revoke notification permission, clear site data, or uninstall the app. If you want it removed sooner, revoke notification permission in your browser, or email us (section 12).</p>
+
+            <h3>Analytics and automatically collected information</h3>
+            <p>Mindkraft has no ads and no advertising trackers. It does include <strong>Google Analytics for Firebase</strong>, which records a small number of named product events — opening a category explainer, jumping to a search result, creating an activity reminder, composing a quest, and starting or ending a mode — together with the standard information the Google Analytics SDK collects, such as an app-instance identifier, device and browser type, approximate location derived from IP address, and session activity.</p>
+            <p>Separately, the providers that run our infrastructure may log ordinary request metadata such as IP address and browser type. That includes our host, Google Firebase, and the two content delivery networks the app loads its typeface and icon set from (Google Fonts and unpkg) — loading a page from them necessarily reveals your IP address to them.</p>
         </div>
 
         <div class="card">
             <h2>3. How we use your information</h2>
             <ul>
-                <li><strong>To run the app</strong> — storing and syncing your activities, XP, streaks, and settings across devices.</li>
-                <li><strong>To power social features</strong> — showing your profile to friends you've added and populating shared leaderboards.</li>
-                <li><strong>To send reminders</strong> — delivering the daily push notification you configured.</li>
-                <li><strong>To generate your Tech Tree</strong> — see section 4.</li>
-                <li><strong>To keep your data safe</strong> — creating daily cloud backups you can restore.</li>
+                <li><strong>To run the app</strong> — storing and syncing your activities, XP, streaks, quests, modes and settings across your devices.</li>
+                <li><strong>To power the social features</strong> — showing your profile to other Mindkraft users, delivering friend requests, and running the Pact, Versus Challenge, gifting and leaderboard mechanics.</li>
+                <li><strong>To send notifications</strong> — the reminders you configure, and the social and mode events listed in section 2.</li>
+                <li><strong>To generate your map and compose quests</strong> — see section 4.</li>
+                <li><strong>To keep your data recoverable</strong> — the daily restore point, and any export you trigger.</li>
+                <li><strong>To understand how the app is used</strong> — the product analytics described in section 2.</li>
             </ul>
-            <p>We do not use your data for advertising, profiling, or any purpose unrelated to the features described above.</p>
+            <p>We do not use your data for advertising or profiling, and we do not sell it.</p>
         </div>
 
         <div class="card">
-            <h2>4. AI features (Tech Tree)</h2>
-            <p>When you request a Tech Tree, the names and structure of your dimensions, paths, activities, and related progress numbers are sent to <strong>Groq, Inc.</strong>, an AI inference provider, to generate the tree. Your name, email, and account identifier are <strong>not</strong> included in these requests. Tech Tree generation only happens when you explicitly request it.</p>
-        </div>
-
-        <div class="card">
-            <h2>5. Where your data lives &amp; who we share it with</h2>
-            <p>We share data only with the service providers required to operate Mindkraft:</p>
+            <h2>4. AI features</h2>
+            <p>Two features use a third-party AI model, both of them the <strong>Claude Haiku</strong> model from <strong>Anthropic</strong>, called through Anthropic's API from our servers:</p>
             <ul>
-                <li><strong>Google Firebase</strong> (authentication and Cloud Firestore database) — stores your account and app data. See <a href="https://firebase.google.com/support/privacy">Firebase's privacy documentation</a>.</li>
-                <li><strong>GitHub Pages</strong> — hosts the app's static files. See <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub's privacy statement</a>.</li>
-                <li><strong>Groq, Inc.</strong> — processes Tech Tree generation requests. See <a href="https://groq.com/privacy-policy">Groq's privacy policy</a>.</li>
+                <li><strong>Weaving your map</strong> — generating the tech-tree of suggested practices that grows out of the activities you already track.</li>
+                <li><strong>Composing a quest</strong> — turning something you describe into a structured quest built mostly out of your existing activities.</li>
             </ul>
-            <p>Beyond these providers, your data is shared only with people you choose to connect with in the app (friends, leaderboards, group challenges). We never sell your personal information, and we disclose it otherwise only if required by law.</p>
-            <p>A copy of your app data is also cached locally on your device so Mindkraft can load quickly and work offline.</p>
+            <p>What is sent: the text of the request you typed, the names and descriptions of your activities, your dimension and path names, the goals you have written on your map, and related numbers — completion counts, streak lengths, typical XP values, and which suggestions you have previously rejected.</p>
+            <p>What is not sent: your name, your email address, your account identifier, your friend code, your friends list, and your social data. The request carries the content described above and nothing that identifies you.</p>
+            <p>Both features run only when you explicitly ask for them. Anthropic processes the request under <a href="https://www.anthropic.com/legal/privacy" target="_blank" rel="noopener">its own privacy policy</a>.</p>
         </div>
 
         <div class="card">
-            <h2>6. Your controls</h2>
+            <h2>5. Where your data lives</h2>
+            <p>Your account data is stored in Google Cloud Firestore in the <strong>asia-south1</strong> region (Mumbai, India), and the server-side code that reads it runs in the same region. Requests to Anthropic's API and to the two content delivery networks named in section 2 are served from those providers' own infrastructure, which is outside that region.</p>
+            <p>A copy of your app data is also kept in your browser's local storage on each device you use, so Mindkraft can start quickly and keep working offline.</p>
+        </div>
+
+        <div class="card">
+            <h2>6. What other Mindkraft users can see</h2>
+            <p>This section is deliberately specific, because "visible to friends" would understate it in one place.</p>
             <ul>
-                <li><strong>Export</strong> — download a full JSON copy of your data anytime from Settings → Data.</li>
-                <li><strong>Reset</strong> — permanently erase all your app data from Settings → Data → Reset All Data.</li>
-                <li><strong>Notifications</strong> — enable or disable the daily reminder in Settings; disabling removes your push subscription.</li>
-                <li><strong>Social</strong> — you choose whether to add friends or join leaderboards; skipping these keeps your progress private to your account.</li>
-                <li><strong>Account deletion</strong> — contact us (section 10) and we will delete your account and associated data.</li>
+                <li><strong>Your public profile is readable by any signed-in Mindkraft user</strong>, not only by your friends. It holds your display name, profile photo, friend code, level, total and weekly XP, your XP-per-hour figure, your category XP breakdown (the spider chart), your character title, your best streak, your number of active days, and your XP today. It has to be readable this way for friend codes to work at all — that is how someone who types your code finds you.</li>
+                <li><strong>Friends</strong> see the above through your profile card, and appear alongside you on leaderboards you have both opted into.</li>
+                <li><strong>Leaderboards</strong> publish a board naming the people you are scored against, readable by those people.</li>
+                <li><strong>A Pact partner</strong> sees the display name you had when the Pact was made, the activities and targets you committed to, and your progress against each of them.</li>
+                <li><strong>A Versus opponent</strong> sees the same kind of thing: the challenge's agreed requirements, your progress counter against each one, and your running total.</li>
+                <li><strong>Gifts</strong> carry your display name to the person you send them to.</li>
+            </ul>
+            <p>Nobody else is ever given read access to your account document, your activity list, your completion history, your Grit balance or your friends list. Everything a partner or opponent sees about you is copied onto the shared Pact or Challenge record by your own device, and it is limited to counters and agreed names.</p>
+            <p>You choose whether to add friends, join leaderboards, or make a Pact or a Challenge. If you skip all of it, nothing about your progress reaches another user except the public profile described above, which exists from your first sign-in.</p>
+        </div>
+
+        <div class="card">
+            <h2>7. Who we share it with</h2>
+            <p>We share data only with the service providers needed to run Mindkraft:</p>
+            <ul>
+                <li><strong>Google Firebase</strong> — authentication, the Firestore database, server-side functions, and product analytics. See <a href="https://firebase.google.com/support/privacy" target="_blank" rel="noopener">Firebase's privacy documentation</a>.</li>
+                <li><strong>GitHub Pages</strong> — serves the app's static files. See <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement" target="_blank" rel="noopener">GitHub's privacy statement</a>.</li>
+                <li><strong>Anthropic</strong> — processes the two AI features described in section 4.</li>
+                <li><strong>Google Fonts and unpkg</strong> — deliver the typeface and icon set. They receive your IP address as part of serving those files.</li>
+                <li><strong>Your browser vendor's push service</strong> — Google, Mozilla or Apple, depending on your browser, delivers notifications to your device.</li>
+            </ul>
+            <p>Beyond these, your data is shared only with people you choose to connect with in the app. We never sell your personal information, and we disclose it otherwise only if required by law.</p>
+        </div>
+
+        <div class="card">
+            <h2>8. Your controls</h2>
+            <ul>
+                <li><strong>Export</strong> — download a full JSON copy of your data at any time from Settings → Data.</li>
+                <li><strong>Import</strong> — replace your data with a previously exported file.</li>
+                <li><strong>Restore</strong> — roll back to the most recent daily snapshot.</li>
+                <li><strong>Reset All Data</strong> — clears your account document: activities, XP, levels, streaks, quests, planner, rewards, map and settings. Be aware of what it does not clear, because the button's own wording is broader than its effect: your reminders, your Grit ledger, gifts you have sent or received, your public profile (which is republished at level 1), any leaderboard board, and any Pact or Versus Challenge you have taken part in all survive it, as does your sign-in.</li>
+                <li><strong>Notifications</strong> — turn reminders on or off in Settings. See section 2 for what happens to the stored subscription.</li>
+                <li><strong>Social</strong> — you decide whether to add friends, opt into leaderboards, or enter a Pact or Challenge.</li>
+                <li><strong>Account deletion</strong> — there is no in-app delete button. Email us (section 12) and we will delete your account and the associated records.</li>
             </ul>
         </div>
 
         <div class="card">
-            <h2>7. Data retention &amp; security</h2>
-            <p>Your data is kept for as long as your account exists. Cloud backups keep only the latest daily snapshot. When you reset your data or ask us to delete your account, the corresponding records are removed from our database.</p>
-            <p>All traffic between your device and our services is encrypted with HTTPS, and database access is restricted by per-user security rules. No online service can guarantee absolute security, but we design Mindkraft to hold the minimum data it needs.</p>
+            <h2>9. Retention &amp; security</h2>
+            <p>Your data is kept for as long as your account exists. The automatic restore point keeps only the most recent daily snapshot; each day's overwrites the last.</p>
+            <p>Pact and Versus Challenge records are never deleted by the app, by design — they hold the record of Grit that was staked, and deleting one could strand it. They remain after the Pact or Challenge has ended, and after a Reset.</p>
+            <p>All traffic between your device and our services is encrypted in transit with HTTPS, and database access is restricted by per-user security rules enforced by Firestore. No online service can guarantee absolute security, but Mindkraft is built to hold the minimum it needs and to keep one user's data out of another's reach.</p>
         </div>
 
         <div class="card">
-            <h2>8. Children</h2>
+            <h2>10. Children</h2>
             <p>Mindkraft is not directed at children under 13 (or the minimum age required in your country), and we do not knowingly collect personal information from them. If you believe a child has created an account, contact us and we will delete it.</p>
         </div>
 
         <div class="card">
-            <h2>9. Changes to this policy</h2>
+            <h2>11. Changes to this policy</h2>
             <p>If we change this policy, we will update the effective date at the top of this page. Material changes will be highlighted in the app. Continuing to use Mindkraft after a change means you accept the updated policy.</p>
         </div>
 
         <div class="card">
-            <h2>10. Contact</h2>
+            <h2>12. Contact</h2>
             <p>Questions, data requests, or concerns? Email us at <a href="mailto:jdarktrialid@gmail.com">jdarktrialid@gmail.com</a>.</p>
         </div>
 
         <div class="footer">
             <span>© 2026 Mindkraft</span>
-            <a href="terms.html">Terms of Service</a>
+            <a href="terms.html">Terms of Use</a>
             <a href="./">Back to app</a>
         </div>
     </div>
