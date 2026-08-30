@@ -11,14 +11,18 @@ name: Deploy Reminder Functions
 # the Firebase Console and this repo has no copy of them; deploying would wipe
 # the rules protecting profiles, friends and groups. Only indexes are pushed.
 
+# Manual only. Production moved to the mindkraft-life repo, which now carries
+# its own copy of this workflow and its own secrets, and deploys these same
+# functions to the same Firebase project (life-gamification-app-b7674).
+#
+# Leaving the push trigger on would mean two repos racing to deploy the same
+# eleven functions whenever this one changed anything under functions/ — last
+# writer wins, with no way to tell from either repo which one is live.
+#
+# Kept rather than deleted so this repo can still deploy on demand (Actions →
+# Deploy Reminder Functions → Run workflow) if production's pipeline is ever
+# broken and something needs shipping.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'functions/**'
-      - 'firebase.json'
-      - 'firestore.indexes.json'
-      - '.github/workflows/deploy-reminders.yml'
   workflow_dispatch:
 
 concurrency:
