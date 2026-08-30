@@ -1050,7 +1050,7 @@
             row.style.cssText = 'display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;justify-content:center;';
 
             // ── Share button — canonical primary CTA pill ─────────────
-            // Same recipe as .level-up-share-btn / spotlight-cta:
+            // Same recipe as .level-up-share-btn:
             // solid var(--color-progress) bg with inset highlight + glow
             // halo. Inline styled because this overlay is built ad-hoc
             // and not part of the regular CSS surface.
@@ -1300,19 +1300,12 @@
                         showOnboardingOverlay();
                     } else {
                         // Resume incomplete tutorial (persistent until done).
-                        // tutorialStep === 99 is the new "done" sentinel; older
-                        // values 1–3 from the legacy 4-step flow are also treated
-                        // as done since those tab intros are now level-gated.
+                        // tutorialStep === 99 is the "done" sentinel; older values
+                        // 1–3 from the legacy 4-step flow are treated as done too,
+                        // since the tab intros those steps drove no longer exist.
                         const ts = window.userData.tutorialStep ?? -1;
                         if (ts === 0) {
                             setTimeout(() => showCurrentTutorialStep(), 800);
-                        } else {
-                            // Tutorial complete — check for pending tab unlocks
-                            // (popup + spotlight for tabs whose threshold was
-                            // crossed since the last app open).
-                            setTimeout(() => checkPendingTabUnlocks(), 800);
-                            // Categorization nudge disabled — progressive
-                            // notifications will be designed later.
                         }
                     }
                 } else {
@@ -1622,10 +1615,6 @@
 
         function updateDashboard() {
             const data = window.userData;
-            // Refresh tab lock styling — runs every render so level-up immediately
-            // reflects in the nav (lock icons disappear once threshold is met).
-            if (typeof applyTabLockStyling === 'function') applyTabLockStyling();
-
             const level = Math.min(data.level || 1, 100); // enforce cap
             data.level = level;
             const currentXP = data.currentXP || 0;
@@ -4610,10 +4599,8 @@
                 if (window._ttAcceptContext && typeof ttResolveAcceptedNode === 'function') {
                     ttResolveAcceptedNode(newActivity);
                 }
-                // Advance tutorial: first activity ever created marks the
-                // create-first-activity step done. Subsequent tab intros are
-                // level-gated and fire as unlock spotlights, not as part of
-                // this sequence anymore.
+                // Advance tutorial: the first activity ever created marks the
+                // create-first-activity step done, which is the whole sequence.
                 if ((window.userData.tutorialStep ?? -1) === 0) {
                     window.userData.tutorialStep = 99;
                 }
@@ -8215,16 +8202,12 @@
         }
 
         // Tab switching
+        // Every tab is open at every level. Analytics, Challenges and Friends
+        // used to sit behind level thresholds with a spotlight tour pointing at
+        // them on unlock; both are gone. An artificial wall costs more in people
+        // who leave than it earns in structured progression, and the tour that
+        // justified it pointed at navigation that no longer exists.
         window.switchTab = function(tabName) {
-            // Block access to tabs locked behind level thresholds. Surface the
-            // unlock requirement as a toast and don't change tabs.
-            if (typeof isTabUnlocked === 'function' && !isTabUnlocked(tabName)) {
-                const meta = (typeof tabUnlockMeta === 'function') ? tabUnlockMeta(tabName) : null;
-                if (meta) {
-                    showToast(`${meta.label} unlocks at Level ${meta.level}`, 'olive', null, 'lock');
-                }
-                return;
-            }
             window.currentTab = tabName;
             
             // Update tab buttons
@@ -12112,19 +12095,9 @@
             await saveUserData().catch(() => {});
             obCloseOverlay();
             if (window.switchTab) switchTab('activities');
-            // Build-My-Own users have no activities yet, so we skip the
-            // activity-card step and only show the XP bar + the + button.
-            // When the tour finishes, fire the polished tutorial card.
-            setTimeout(() => {
-                if (typeof window.runOnboardingTour === 'function') {
-                    window.runOnboardingTour({
-                        stepIds: ['xp', 'add'],
-                        onComplete: () => initTutorial()
-                    });
-                } else {
-                    initTutorial();
-                }
-            }, 500);
+            // Build-My-Own users have no activities yet, so the tutorial card —
+            // "make your first one" — is the whole of the welcome.
+            setTimeout(() => initTutorial(), 500);
         };
 
         function obCloseOverlay() {
@@ -12436,25 +12409,11 @@
                 obCloseOverlay();
                 showToast('Your space is ready!', 'blue', null, 'confetti');
                 if (window.switchTab) switchTab('activities');
-                // Mark the create-first-activity tutorial step as complete since the
-                // user already has activities. Tab unlock spotlights will fire later.
+                // Mark the create-first-activity tutorial step as complete since
+                // the user already has activities.
                 window.userData.tutorialStep = 99; // done
                 saveUserData().catch(() => {});
                 updateDashboard();
-                // Walk the user through the live Activities tab. The
-                // 'add' step (highlighting the + button and inviting more
-                // activities) is dropped when the user already filled
-                // every available slot — pushing them to add a 5th when
-                // the cap is 4 just trains learned helplessness. Next
-                // login, after a level-up, the seat will be open and the
-                // toast in updateDashboard reminds them.
-                const canAddMore = typeof canAddActivity === 'function' ? canAddActivity() : true;
-                const tourSteps = canAddMore ? ['xp', 'card', 'add'] : ['xp', 'card'];
-                setTimeout(() => {
-                    if (typeof window.runOnboardingTour === 'function') {
-                        window.runOnboardingTour({ stepIds: tourSteps });
-                    }
-                }, 600);
             } catch (e) {
                 console.error('Picker finish error:', e);
                 obCloseOverlay();
@@ -12470,9 +12429,9 @@
         //    0  = waiting for user to create first activity (centered modal)
         //    99 = first-activity step complete (set by picker finish or after add)
         //
-        // Tab-specific intros (Friends / Challenges / Analytics) are NOT part of
-        // this sequence anymore. They fire as level-unlock spotlights when the
-        // user crosses the unlock threshold and opens the app on the next session.
+        // There are no tab-specific intros. Friends, Challenges and Analytics
+        // used to be introduced by a spotlight tour when a level threshold
+        // unlocked them; the thresholds are gone, and so is the tour.
 
         const TUTORIAL_STEPS = [
             {
@@ -12490,417 +12449,6 @@
                 tab: null
             }
         ];
-
-        // ── Level locks & unlock metadata ─────────────────────────────────────
-        // Tabs are visible at all levels but disabled until the user reaches
-        // the threshold. Tapping a locked tab shows a toast explaining when it
-        // unlocks. On the next app load after crossing the threshold, an unlock
-        // popup + spotlight intro fires for that tab.
-        const TAB_UNLOCKS = {
-            analytics:  { level: 3, label: 'Analytics',  icon: 'chart-bar',
-                          body: 'Track XP over time, see which habits are building streaks, and measure progress across every area of your life.' },
-            challenges: { level: 5, label: 'Challenges', icon: 'sword',
-                          body: 'Challenge a friend head-to-head. Both of you stake Grit, first to finish takes the pot — plus bonus XP and bragging rights.' },
-            friends:    { level: 7, label: 'Friends',    icon: 'users',
-                          body: 'Add friends, compare XP on the leaderboard, and keep each other accountable. Share your friend code to get started.' },
-        };
-
-        // Friends and Leaderboards were one tab until the split, and they
-        // share one unlock — aliasing here (rather than adding a second
-        // TAB_UNLOCKS entry) keeps the level-7 unlock popup firing once.
-        const TAB_UNLOCK_ALIASES = { people: 'friends' };
-        function tabUnlockMeta(tabName) {
-            return TAB_UNLOCKS[TAB_UNLOCK_ALIASES[tabName] || tabName];
-        }
-        window.tabUnlockMeta = tabUnlockMeta;
-
-        function isTabUnlocked(tabName) {
-            const meta = tabUnlockMeta(tabName);
-            if (!meta) return true; // tabs not in the map (activities, settings) are always unlocked
-            const lvl = (window.userData && window.userData.level) || 1;
-            return lvl >= meta.level;
-        }
-        window.isTabUnlocked = isTabUnlocked;
-
-        // Apply locked styling/aria to nav tabs. Called from updateDashboard.
-        function applyTabLockStyling() {
-            document.querySelectorAll('.nav-tab').forEach(tab => {
-                const onclick = tab.getAttribute('onclick') || '';
-                const m = onclick.match(/switchTab\('(\w+)'\)/);
-                if (!m) return;
-                const tabName = m[1];
-                const meta = tabUnlockMeta(tabName);
-                if (!meta) return; // not a lockable tab
-                const locked = !isTabUnlocked(tabName);
-                tab.classList.toggle('nav-tab-locked', locked);
-                if (locked) {
-                    tab.setAttribute('aria-disabled', 'true');
-                    tab.setAttribute('data-unlock-level', meta.level);
-                } else {
-                    tab.removeAttribute('aria-disabled');
-                    tab.removeAttribute('data-unlock-level');
-                }
-            });
-        }
-        window.applyTabLockStyling = applyTabLockStyling;
-
-        // ── Spotlight overlay ─────────────────────────────────────────────────
-        // Cuts a transparent rounded rect over the target nav tab using the
-        // box-shadow trick, then renders an explanation card on the opposite
-        // side. The spotlight is fired by showTabUnlockSpotlight(tabName).
-        function showTabUnlockSpotlight(tabName) {
-            const meta = TAB_UNLOCKS[tabName];
-            if (!meta) return;
-            // Make sure the target tab is currently visible (it always is in the
-            // bottom nav, but switchTab to its content first so the user sees
-            // what the spotlight is teaching).
-            // We do NOT switchTab() here because we want the spotlight to point
-            // at the nav button, and switching tabs auto-runs the tab's render
-            // which may be heavy. Instead we let the user tap.
-            const tabBtn = document.querySelector(`.nav-tab[onclick="switchTab('${tabName}')"]`);
-            const overlay = document.getElementById('spotlightOverlay');
-            const cutout  = document.getElementById('spotlightCutout');
-            const card    = document.getElementById('spotlightCard');
-            if (!tabBtn || !overlay || !cutout || !card) return;
-
-            const rect = tabBtn.getBoundingClientRect();
-            const pad = 6; // padding around the highlighted button
-            cutout.style.left   = (rect.left - pad) + 'px';
-            cutout.style.top    = (rect.top  - pad) + 'px';
-            cutout.style.width  = (rect.width  + pad * 2) + 'px';
-            cutout.style.height = (rect.height + pad * 2) + 'px';
-
-            // Position card above the nav (nav lives at the bottom on mobile).
-            // On desktop, nav is at the top of the main column, so put card below.
-            const isBottom = rect.top > window.innerHeight / 2;
-            card.style.left = '50%';
-            card.style.transform = 'translateX(-50%)';
-            if (isBottom) {
-                card.style.bottom = (window.innerHeight - rect.top + 18) + 'px';
-                card.style.top = '';
-            } else {
-                card.style.top = (rect.bottom + 18) + 'px';
-                card.style.bottom = '';
-            }
-
-            card.innerHTML = `
-                <div class="spotlight-eyebrow">NEW TAB UNLOCKED</div>
-                <div class="spotlight-emoji">${phIcon(meta.icon, { block: true })}</div>
-                <h3 class="spotlight-title">${escapeHtml(meta.label)} is live</h3>
-                <p class="spotlight-body">${escapeHtml(meta.body)}</p>
-                <div class="spotlight-card-actions">
-                    <button class="spotlight-cta" onclick="dismissTabUnlockSpotlight()">Got it</button>
-                </div>
-            `;
-            overlay.style.display = 'block';
-            document.body.style.overflow = 'hidden';
-        }
-        window.showTabUnlockSpotlight = showTabUnlockSpotlight;
-
-        window.dismissTabUnlockSpotlight = function() {
-            const overlay = document.getElementById('spotlightOverlay');
-            if (overlay) overlay.style.display = 'none';
-            document.body.style.overflow = '';
-            // Continue the queue if more unlocks are pending.
-            setTimeout(processNextPendingUnlock, 250);
-        };
-
-        // ══════════════════════════════════════════════════════════════════
-        // POST-PICKER ONBOARDING TOUR
-        // ─────────────────────────────────────────────────────────────────
-        // After the user finishes the picker (or chooses Build-My-Own), we
-        // walk them through the live Activities tab — pointing out the XP
-        // bar/level, an activity card (if any exist), and the + button. The
-        // tour uses the same spotlight DOM (#spotlightOverlay/#spotlightCutout
-        // /#spotlightCard) as the tab-unlock spotlights, but driven by a
-        // step config array instead of the TAB_UNLOCKS map. Each step:
-        //
-        //   selector     CSS selector(s) to find the target element. The
-        //                first match found is highlighted. Multiple
-        //                selectors (comma-separated) lets us bundle related
-        //                elements (e.g. the level badge + XP bar together).
-        //   bundle       If true, the bounding rect spans ALL matched
-        //                elements (used for the XP+Level pairing).
-        //   skipIfMissing If true, skip the step when no element matches
-        //                (used for the activity-card step in Build-My-Own,
-        //                where the user has no activities yet).
-        //   eyebrow/emoji/title/body/cta  Content for the spotlight card.
-        // ══════════════════════════════════════════════════════════════════
-
-        const OB_TOUR_STEPS = [
-            {
-                id: 'xp',
-                selector: '.level-badge, .progress-section',
-                bundle: true,
-                pad: 8,
-                radius: 12,
-                eyebrow: 'YOUR PROGRESS',
-                icon: 'lightning',
-                title: 'This is your XP',
-                body: 'Every habit you complete adds XP here. Fill the bar to level up — that\'s the whole game.',
-                cta: 'Got it',
-            },
-            {
-                id: 'card',
-                selector: '.activity-item',
-                pad: 6,
-                radius: 14,
-                skipIfMissing: true,
-                eyebrow: 'LOG A HABIT',
-                icon: 'hand-pointing',
-                title: 'Tap to log it',
-                body: 'One tap marks a habit done and lands the XP. Long-press or swipe for more options later.',
-                cta: 'Next',
-            },
-            {
-                id: 'add',
-                selector: '.act-tb-add-main',
-                pad: 8,
-                radius: 100,
-                eyebrow: 'BUILD YOUR LIST',
-                icon: 'sparkle',
-                title: 'Add more anytime',
-                body: 'Hit this any time you think of a new habit. Group them into Paths and Dimensions later — when it makes sense.',
-                cta: 'Start tracking',
-            },
-        ];
-
-        // Tour runtime state — module-scoped (not on window) so external
-        // code can\'t accidentally fast-forward.
-        let _obTourQueue = [];
-        let _obTourIdx = 0;
-        let _obTourOnComplete = null;
-
-        function _obTourFindTarget(step) {
-            // Filter out elements that aren\'t laid out (display:none, in a
-            // hidden sub-tab, etc.). offsetParent is null when an ancestor
-            // has display:none — exactly the case we need to skip when
-            // multiple sub-tabs share the same class (.act-tb-add-main
-            // exists in the activities and dimensions sub-tabs, and in the
-            // Challenges tab's toolbar).
-            const els = Array.from(document.querySelectorAll(step.selector))
-                .filter(el => el.offsetParent !== null || el.getClientRects().length > 0);
-            return els.length ? els : null;
-        }
-
-        function _obTourComputeRect(els, bundle) {
-            if (!bundle || els.length === 1) {
-                return els[0].getBoundingClientRect();
-            }
-            // Bundle multiple targets into one bounding rect
-            let minL = Infinity, minT = Infinity, maxR = -Infinity, maxB = -Infinity;
-            els.forEach(el => {
-                const r = el.getBoundingClientRect();
-                minL = Math.min(minL, r.left);
-                minT = Math.min(minT, r.top);
-                maxR = Math.max(maxR, r.right);
-                maxB = Math.max(maxB, r.bottom);
-            });
-            return { left: minL, top: minT, right: maxR, bottom: maxB,
-                     width: maxR - minL, height: maxB - minT };
-        }
-
-        function _obTourRender() {
-            // Skip steps whose targets aren\'t found (if skipIfMissing) or
-            // bail entirely if we\'ve run out of steps.
-            while (_obTourIdx < _obTourQueue.length) {
-                const step = _obTourQueue[_obTourIdx];
-                const els = _obTourFindTarget(step);
-                if (!els) {
-                    if (step.skipIfMissing) { _obTourIdx++; continue; }
-                    // Required step missing — abort tour gracefully.
-                    return _obTourFinish();
-                }
-                _obTourPaint(step, els);
-                return;
-            }
-            _obTourFinish();
-        }
-
-        function _obTourPaint(step, els) {
-            const overlay = document.getElementById('spotlightOverlay');
-            const cutout  = document.getElementById('spotlightCutout');
-            const card    = document.getElementById('spotlightCard');
-            if (!overlay || !cutout || !card) return _obTourFinish();
-
-            const rect = _obTourComputeRect(els, step.bundle);
-            const pad = step.pad || 6;
-            const radius = step.radius || 14;
-            cutout.style.left   = (rect.left - pad) + 'px';
-            cutout.style.top    = (rect.top  - pad) + 'px';
-            cutout.style.width  = (rect.width  + pad * 2) + 'px';
-            cutout.style.height = (rect.height + pad * 2) + 'px';
-            cutout.style.borderRadius = (radius > 50 ? '999px' : radius + 'px');
-
-            // Position the card on the opposite side of the screen from
-            // the target — keeps the highlighted element fully visible.
-            const isTopHalf = (rect.top + rect.height / 2) < window.innerHeight / 2;
-            card.style.left = '50%';
-            card.style.transform = 'translateX(-50%)';
-            if (isTopHalf) {
-                // Target is in the upper half → card goes below
-                card.style.top = (rect.bottom + pad + 18) + 'px';
-                card.style.bottom = '';
-            } else {
-                // Target is in the lower half → card goes above
-                card.style.bottom = (window.innerHeight - rect.top + pad + 18) + 'px';
-                card.style.top = '';
-            }
-
-            // Step indicator dots — visible only when tour has 2+ steps
-            const visibleSteps = _obTourQueue.filter(s =>
-                !s.skipIfMissing || _obTourFindTarget(s)).length;
-            let dotsHtml = '';
-            if (visibleSteps > 1) {
-                // Map the absolute index to the visible-step index
-                let visibleIdx = 0;
-                for (let i = 0; i <= _obTourIdx; i++) {
-                    const s = _obTourQueue[i];
-                    if (!s.skipIfMissing || _obTourFindTarget(s)) {
-                        if (i < _obTourIdx) visibleIdx++;
-                    }
-                }
-                const dots = Array.from({ length: visibleSteps }, (_, i) =>
-                    `<span class="spotlight-step-dot${i === visibleIdx ? ' spotlight-step-dot-active' : ''}"></span>`
-                ).join('');
-                dotsHtml = `<span class="spotlight-step-dots">${dots}</span>`;
-            }
-
-            const isLast = _obTourIdx === _obTourQueue.length - 1;
-            card.innerHTML = `
-                <div class="spotlight-eyebrow">
-                    <span>${escapeHtml(step.eyebrow || '')}</span>
-                    ${dotsHtml}
-                </div>
-                <div class="spotlight-emoji">${step.icon ? phIcon(step.icon, { block: true }) : ''}</div>
-                <h3 class="spotlight-title">${escapeHtml(step.title || '')}</h3>
-                <p class="spotlight-body">${escapeHtml(step.body || '')}</p>
-                <div class="spotlight-card-actions">
-                    ${!isLast ? '<button class="spotlight-skip" onclick="_obTourSkip()">Skip tour</button>' : ''}
-                    <button class="spotlight-cta" onclick="_obTourAdvance()">${escapeHtml(step.cta || 'Next')}</button>
-                </div>
-            `;
-            overlay.style.display = 'block';
-            document.body.style.overflow = 'hidden';
-        }
-
-        function _obTourFinish() {
-            const overlay = document.getElementById('spotlightOverlay');
-            if (overlay) overlay.style.display = 'none';
-            document.body.style.overflow = '';
-            const cb = _obTourOnComplete;
-            _obTourQueue = [];
-            _obTourIdx = 0;
-            _obTourOnComplete = null;
-            if (typeof cb === 'function') setTimeout(cb, 280);
-        }
-
-        // Public surface (window._obTour…) — used by inline onclick handlers
-        // inside the spotlight card HTML.
-        window._obTourAdvance = function() {
-            _obTourIdx++;
-            _obTourRender();
-        };
-        window._obTourSkip = function() {
-            _obTourFinish();
-        };
-
-        // Kick off the post-picker tour. `opts.stepIds` filters which steps
-        // run; `opts.onComplete` fires when the user finishes or skips.
-        window.runOnboardingTour = function(opts = {}) {
-            const ids = opts.stepIds || OB_TOUR_STEPS.map(s => s.id);
-            _obTourQueue = OB_TOUR_STEPS.filter(s => ids.includes(s.id));
-            _obTourIdx = 0;
-            _obTourOnComplete = opts.onComplete || null;
-            // Wait for layout to settle (the picker overlay just closed,
-            // and switchTab('activities') needs a paint to render cards).
-            setTimeout(_obTourRender, 320);
-        };
-
-        // Reposition on viewport changes — keeps the cutout & card pinned
-        // to the live target if the user rotates or the page reflows.
-        ['resize', 'orientationchange'].forEach(ev => {
-            window.addEventListener(ev, () => {
-                if (_obTourQueue.length && _obTourIdx < _obTourQueue.length) {
-                    const step = _obTourQueue[_obTourIdx];
-                    const els = _obTourFindTarget(step);
-                    if (els) _obTourPaint(step, els);
-                }
-            });
-        });
-
-        // ── Unlock popup queue ────────────────────────────────────────────────
-        // unlocksAcknowledged: array of tab names whose unlock popup has been
-        // shown. On every app session, we scan TAB_UNLOCKS, find any whose
-        // threshold the user has crossed but isn't yet acknowledged, and queue
-        // a popup + spotlight for each in level order.
-        function findPendingUnlocks() {
-            const ud = window.userData;
-            if (!ud || !ud.onboardingComplete) return [];
-            const ack = ud.unlocksAcknowledged || [];
-            const lvl = ud.level || 1;
-            return Object.entries(TAB_UNLOCKS)
-                .filter(([name, meta]) => lvl >= meta.level && !ack.includes(name))
-                .sort((a, b) => a[1].level - b[1].level)
-                .map(([name]) => name);
-        }
-
-        let _pendingUnlockQueue = [];
-        function processNextPendingUnlock() {
-            if (_pendingUnlockQueue.length === 0) return;
-            const next = _pendingUnlockQueue.shift();
-            showTabUnlockPopup(next);
-        }
-
-        // First popup is a celebration card; dismissing it fires the spotlight.
-        function showTabUnlockPopup(tabName) {
-            const meta = TAB_UNLOCKS[tabName];
-            if (!meta) return;
-            const overlay = document.getElementById('unlockPopupOverlay');
-            const card    = document.getElementById('unlockPopupCard');
-            if (!overlay || !card) return;
-            card.innerHTML = `
-                <div class="unlock-popup-eyebrow">YOU UNLOCKED</div>
-                <div class="unlock-popup-emoji">${phIcon(meta.icon, { block: true })}</div>
-                <h2 class="unlock-popup-title">${meta.label} Tab</h2>
-                <p class="unlock-popup-body">Reached Level ${meta.level}. A new piece of the app is open to you.</p>
-                <button class="unlock-popup-cta" onclick="acknowledgeTabUnlock('${tabName}')">Show me</button>
-            `;
-            overlay.style.display = 'flex';
-            document.body.style.overflow = 'hidden';
-        }
-        window.showTabUnlockPopup = showTabUnlockPopup;
-
-        window.acknowledgeTabUnlock = async function(tabName) {
-            // Stamp acknowledgement first so a crash here doesn't loop the popup.
-            const ud = window.userData;
-            if (!ud) return;
-            ud.unlocksAcknowledged = ud.unlocksAcknowledged || [];
-            if (!ud.unlocksAcknowledged.includes(tabName)) ud.unlocksAcknowledged.push(tabName);
-            applyTabLockStyling(); // refresh styling immediately
-            saveUserData().catch(() => {});
-            // Hide popup, then show spotlight.
-            const overlay = document.getElementById('unlockPopupOverlay');
-            if (overlay) overlay.style.display = 'none';
-            setTimeout(() => showTabUnlockSpotlight(tabName), 200);
-        };
-
-        // Called from main app init after userData is loaded.
-        window.checkPendingTabUnlocks = function() {
-            // Don't show during onboarding or while the first-activity tutorial
-            // is still visible.
-            const ud = window.userData;
-            if (!ud || !ud.onboardingComplete) return;
-            const ts = ud.tutorialStep ?? -1;
-            if (ts >= 0 && ts < 99 && ts < TUTORIAL_STEPS.length) return;
-            // Don't fire if a modal/overlay is already visible.
-            const onboarding = document.getElementById('onboardingOverlay');
-            if (onboarding && onboarding.style.display !== 'none' && onboarding.style.display !== '') return;
-            _pendingUnlockQueue = findPendingUnlocks();
-            if (_pendingUnlockQueue.length > 0) {
-                setTimeout(processNextPendingUnlock, 800);
-            }
-        };
 
         window.initTutorial = function() {
             // Only start if not already started and onboarding is complete
@@ -20881,9 +20429,9 @@
         const VS_ARCHIVE_DAYS    = 3;      // §8.7 resolved cards linger, then hide
 
         // §3.1 concurrency cap. There is no free/Pro tier in this codebase —
-        // the only gating pattern that exists is level-based (TAB_UNLOCKS,
-        // getActivityLimit). Rather than invent a paid tier, this is a single
-        // tunable constant, counted over pending + active combined.
+        // the only limit-shaped pattern left in the app is getActivityLimit's
+        // level-based activity cap. Rather than invent a paid tier, this is a
+        // single tunable constant, counted over pending + active combined.
         const VS_MAX_CONCURRENT  = 3;
 
         const VS_TERMINAL = ['resolved', 'expired', 'declined', 'cancelled'];

@@ -304,6 +304,47 @@ const out = await page.evaluate(async () => {
     ok('requests moved to the Friends page',
         document.getElementById('peopleTab').contains(document.getElementById('friendsRequests')));
 
+    // ── Every tab is open at every level ──────────────────────────────────
+    //
+    // Analytics, Challenges and Friends used to sit behind level 3, 5 and 7:
+    // switchTab() refused, the nav button was greyed with a padlock, and an
+    // unlock popup plus a spotlight tour fired on the session after you crossed
+    // the line. All of it is gone. The rest of this suite boots at level 12,
+    // well past every old threshold, so it would not have noticed either way —
+    // hence a fresh level-1 account here.
+    boot(1000);
+    window.userData.level = 1;
+
+    // Read the nav rather than hard-coding a list, so a tab added later is
+    // covered here without anyone remembering to add it.
+    const TABS = Array.from(document.querySelectorAll('.nav-tab'))
+        .map(function (el) {
+            const m = (el.getAttribute('onclick') || '').match(/switchTab\('(\w+)'\)/);
+            return m ? m[1] : null;
+        })
+        .filter(function (n, i, all) { return n && all.indexOf(n) === i; });
+    ok('the nav has every tab in it', TABS.length >= 6, TABS);
+    TABS.forEach(function (name) {
+        const host = document.getElementById(name + 'Tab');
+        window.switchTab(name);
+        ok('a level-1 account can open the ' + name + ' tab',
+            window.currentTab === name && !!host && host.classList.contains('active'));
+    });
+
+    ok('no nav button is painted as locked',
+        document.querySelectorAll('.nav-tab-locked').length === 0);
+    ok('the tour and unlock overlays are gone from the DOM',
+        !document.getElementById('spotlightOverlay') &&
+        !document.getElementById('unlockPopupOverlay'));
+    ok('nothing is left exposing a gating check',
+        typeof window.isTabUnlocked === 'undefined' &&
+        typeof window.tabUnlockMeta === 'undefined' &&
+        typeof window.applyTabLockStyling === 'undefined' &&
+        typeof window.checkPendingTabUnlocks === 'undefined' &&
+        typeof window.runOnboardingTour === 'undefined' &&
+        typeof window.showTabUnlockPopup === 'undefined' &&
+        typeof window.acknowledgeTabUnlock === 'undefined');
+
     return log;
 });
 
