@@ -36,6 +36,7 @@ const { modeReminderCopy } = require('./lib/modes');
 const questComposer = require('./lib/quest-composer');
 const webWeaver = require('./lib/web-weaver');
 const { callModel, parseModelJson } = require('./lib/model');
+const versus = require('./lib/versus');
 
 const {
     configureWebPush,
@@ -296,24 +297,31 @@ async function processUser(uid, snaps, now) {
 // Every name in these payloads is denormalized on the gift document at write
 // time, so neither function reads another user's profile.
 
-/** Push to one uid, if they have a usable subscription. Never throws. */
+/**
+ * Push to one uid, if they have a usable subscription. Never throws.
+ *
+ * Shared by every cross-account notification in this file — gifts, pacts,
+ * friend requests and versus challenges all send through here, so there is
+ * exactly one place that knows how to read a subscription, retire a dead one,
+ * and swallow a failure that must never take a trigger down with it.
+ */
 async function pushToUser(uid, payload) {
     try {
         const snap = await db.collection('users').doc(uid).get();
         const subscription = snap.exists ? snap.data().pushSubscription : null;
         if (!isUsableSubscription(subscription)) {
-            logger.info('No usable push subscription — skipping gift push', { uid });
+            logger.info('No usable push subscription — skipping push', { uid });
             return;
         }
         const result = await sendPush(subscription, payload);
         if (result.ok) return;
-        logger.error('Gift push failed', { uid, statusCode: result.statusCode, message: result.message });
+        logger.error('Push failed', { uid, statusCode: result.statusCode, message: result.message });
         if (result.dead) {
             await db.collection('users').doc(uid).update({ pushSubscription: FieldValue.delete() });
             logger.info('Cleared dead push subscription', { uid });
         }
     } catch (err) {
-        logger.error('Gift push threw', { uid, error: String(err) });
+        logger.error('Push threw', { uid, error: String(err) });
     }
 }
 
@@ -374,6 +382,72 @@ exports.onGiftConsumed = onDocumentWritten(
             tag: 'mindkraft-gift-used-' + String(event.params.giftId),
             data: { type: 'gift', activityId: null },
         });
+    }
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// FRIEND REQUEST NOTIFICATIONS
+// ══════════════════════════════════════════════════════════════════════════
+//
+// A `friendRequests` document is not a request in the classic sense: adding
+// by code is unilateral, so the sender is already following the recipient by
+// the time this document exists. What the document actually carries is "you
+// have been added, do you want to add back" — and the copy below says that
+// rather than the handshake wording, because the handshake is not what
+// happens.
+//
+// Two beats, mirroring onPactWrite's shape:
+//
+//   created                → tell the RECIPIENT someone added them
+//   status → 'accepted'    → tell the ORIGINAL SENDER they added back
+//
+// A dismissal is silent, deliberately, and that is why acceptance is a
+// marker write followed by the delete rather than the delete alone: a delete
+// fires for both outcomes and cannot tell them apart. The client writes
+// `status: 'accepted'` first, then deletes; the delete lands here with no
+// `after` and returns immediately.
+//
+// Both names are denormalized onto the document by whoever wrote it, so
+// neither branch reads another user's profile.
+
+exports.onFriendRequestWrite = onDocumentWritten(
+    {
+        document: 'friendRequests/{requestId}',
+        region: REGION,
+        memory: '256MiB',
+    },
+    async (event) => {
+        const afterSnap = event.data && event.data.after;
+        if (!afterSnap || !afterSnap.exists) return;   // accepted or dismissed — cleaned up
+        const after = afterSnap.data();
+        const beforeSnap = event.data && event.data.before;
+        const before = beforeSnap && beforeSnap.exists ? beforeSnap.data() : null;
+        const tag = 'mindkraft-friend-' + String(event.params.requestId);
+
+        // Created — the recipient learns they were added.
+        if (!before) {
+            if (!after.toUID) return;
+            const from = after.fromName || 'Someone';
+            await pushToUser(after.toUID, {
+                title: 'Mindkraft',
+                body: from + ' added you on Mindkraft. Add them back to see each other’s progress.',
+                tag,
+                data: { type: 'friend', activityId: null },
+            });
+            return;
+        }
+
+        // Accepted — the original sender learns it went both ways.
+        if (before.status !== 'accepted' && after.status === 'accepted') {
+            if (!after.fromUID) return;
+            const who = after.toName || 'Someone';
+            await pushToUser(after.fromUID, {
+                title: 'Mindkraft',
+                body: who + ' added you back. You’re friends on Mindkraft.',
+                tag,
+                data: { type: 'friend', activityId: null },
+            });
+        }
     }
 );
 
@@ -481,6 +555,196 @@ exports.onPactWrite = onDocumentWritten(
                 });
             }));
         }
+    }
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// VERSUS CHALLENGE NOTIFICATIONS
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Versus Challenges had no server side at all before this: every state
+// transition, including resolution and forfeit, was evaluated lazily on
+// whichever client next opened the app. Two things follow from that, and both
+// are fixed here.
+//
+//   1. onVersusWrite turns each transition into a push, the same way
+//      onPactWrite does. Every name in these payloads is denormalized onto the
+//      challenge document at write time, so this never reads another user's
+//      profile.
+//
+//   2. resolveDueVersusChallenges is the piece that did not exist. Without a
+//      scheduler, a challenge that ran out of time while both people were away
+//      stayed `active` — so the push saying you won or lost fired whenever
+//      someone happened to open the app, which could be days later or never.
+//      It now resolves at the deadline, and because the resolving write lands
+//      on this same document, the push falls out of onVersusWrite below rather
+//      than being sent a second way.
+//
+// Which transitions are worth a push, and no others:
+//
+//   created            → tell the invited party
+//   pending → active   → tell the challenger it was accepted
+//   pending → declined → tell the challenger it was not
+//   → resolved         → tell BOTH how it ended (including a forfeit)
+//
+// Expiry and withdrawal are silent. Both are refunds to the challenger, who
+// caused one of them and let the other lapse; neither is news, and the refund
+// is claimed on next open either way.
+
+// Cap on challenges resolved in a single scheduler pass. Same reasoning as
+// MAX_DUE_PER_RUN: a runaway backlog should degrade gracefully rather than
+// blow the function's timeout, and the next run picks up the remainder.
+const MAX_VERSUS_PER_RUN = 200;
+
+exports.onVersusWrite = onDocumentWritten(
+    {
+        document: 'versusChallenges/{challengeId}',
+        region: REGION,
+        memory: '256MiB',
+    },
+    async (event) => {
+        const afterSnap = event.data && event.data.after;
+        if (!afterSnap || !afterSnap.exists) return;
+        const after = afterSnap.data();
+        const beforeSnap = event.data && event.data.before;
+        const before = beforeSnap && beforeSnap.exists ? beforeSnap.data() : null;
+        const challengeId = event.params.challengeId;
+        const tag = 'mindkraft-versus-' + String(challengeId);
+        const name = after.name || 'a challenge';
+
+        // Created — the invite lands on the opponent.
+        if (!before) {
+            if (after.status !== 'pending' || !after.opponent) return;
+            const from = versus.displayName(after, after.createdBy);
+            await pushToUser(after.opponent, {
+                title: 'Mindkraft',
+                body: from + ' challenged you to “' + name + '”. Their stake is already down.',
+                tag,
+                data: { type: 'versus', activityId: null },
+            });
+            return;
+        }
+
+        if (before.status === after.status) return;
+
+        if (before.status === 'pending' && after.status === 'active') {
+            const oppName = versus.displayName(after, after.opponent);
+            await pushToUser(after.createdBy, {
+                title: 'Mindkraft',
+                body: oppName + ' accepted “' + name + '”. It is live — the clock is running.',
+                tag,
+                data: { type: 'versus', activityId: null },
+            });
+            return;
+        }
+
+        if (before.status === 'pending' && after.status === 'declined') {
+            const oppName = versus.displayName(after, after.opponent);
+            await pushToUser(after.createdBy, {
+                title: 'Mindkraft',
+                body: oppName + ' declined “' + name + '”. Your stake is on its way back.',
+                tag,
+                data: { type: 'versus', activityId: null },
+            });
+            return;
+        }
+
+        // Resolved — both sides, each told from their own side. Covers the
+        // forfeit case too: forfeiting writes exactly this transition.
+        if (after.status === 'resolved') {
+            const participants = after.participants || [];
+            await Promise.all(participants.map((uid) => pushToUser(uid, {
+                title: 'Mindkraft',
+                body: versus.resolutionBody(after, uid),
+                tag,
+                data: { type: 'versus', activityId: null },
+            })));
+        }
+    }
+);
+
+// ══════════════════════════════════════════════════════════════════════════
+// resolveDueVersusChallenges — the scheduled resolver
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Five minutes, not one. A Versus deadline is `startedAt + durationDays` — day
+// granularity — so a minute-by-minute sweep would buy nothing a client could
+// notice while costing 1,440 queries a day against two indexes. sendDueReminders
+// runs every minute because a reminder set for 07:00 has to arrive at 07:00.
+//
+// Deliberately does NOT move Grit. It writes the terminal status and the
+// payout owed, exactly as a client's resolving transaction would; each side's
+// own client credits its own balance on next open. Nothing in this codebase
+// writes another user's balance, and this is not the place to start.
+//
+// Every patch is applied inside a transaction guarded on the status it
+// expected, so a client that resolves the same challenge in the same moment
+// wins the race and this run is a no-op — the two cannot double-pay.
+
+exports.resolveDueVersusChallenges = onSchedule(
+    {
+        schedule: 'every 5 minutes',
+        timeZone: 'Etc/UTC',
+        region: REGION,
+        memory: '256MiB',
+        timeoutSeconds: 120,
+        retryCount: 0,
+    },
+    async () => {
+        const now = Date.now();
+
+        const [overdue, lapsed] = await Promise.all([
+            db.collection('versusChallenges')
+                .where('status', '==', 'active')
+                .where('endsAt', '<=', now)
+                .limit(MAX_VERSUS_PER_RUN)
+                .get(),
+            db.collection('versusChallenges')
+                .where('status', '==', 'pending')
+                .where('expiresAt', '<=', now)
+                .limit(MAX_VERSUS_PER_RUN)
+                .get(),
+        ]);
+
+        if (overdue.empty && lapsed.empty) return;
+
+        const jobs = []
+            .concat(overdue.docs.map((snap) => ({ snap, kind: 'active' })))
+            .concat(lapsed.docs.map((snap) => ({ snap, kind: 'pending' })));
+
+        const outcomes = await Promise.allSettled(jobs.map(({ snap, kind }) =>
+            db.runTransaction(async (tx) => {
+                const live = await tx.get(snap.ref);
+                if (!live.exists) return false;
+                const challenge = live.data();
+                const patch = kind === 'active'
+                    ? versus.resolveDeadlinePatch(challenge, now)
+                    : versus.expirePendingPatch(challenge, now);
+                if (!patch) return false;      // a client got here first
+                tx.update(snap.ref, patch);
+                return true;
+            })
+        ));
+
+        let resolved = 0;
+        let raced = 0;
+        for (const outcome of outcomes) {
+            if (outcome.status === 'rejected') {
+                logger.error('Versus resolution failed', { error: String(outcome.reason) });
+            } else if (outcome.value) {
+                resolved += 1;
+            } else {
+                raced += 1;
+            }
+        }
+
+        logger.info('resolveDueVersusChallenges complete', {
+            due: jobs.length,
+            overdue: overdue.size,
+            lapsed: lapsed.size,
+            resolved,
+            raced,
+        });
     }
 );
 

@@ -204,6 +204,20 @@ service cloud.firestore {
                     && request.resource.data.fromUID == request.auth.uid;
       allow read, delete: if request.auth != null
                           && resource.data.toUID == request.auth.uid;
+
+      // Accepting stamps the document and then deletes it. The stamp exists
+      // only so onFriendRequestWrite can tell an accept from a dismissal —
+      // the delete looks identical either way, and a dismissal is silent by
+      // design. Recipient only, three keys only, and only into 'accepted', so
+      // this grants no way to write anything the sender's client will read
+      // beyond the name the recipient is already showing them.
+      allow update: if request.auth != null
+                    && resource.data.toUID == request.auth.uid
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['status', 'toName', 'acceptedAt'])
+                    && request.resource.data.status == 'accepted'
+                    && request.resource.data.toName is string
+                    && request.resource.data.toName.size() <= 60;
     }
 
     // ══════════════════════════════════════════════════════════════════

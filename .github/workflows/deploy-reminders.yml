@@ -97,7 +97,7 @@ jobs:
           # ADD NEW FUNCTIONS TO THIS LIST, with the codebase prefix — one
           # left out is one never deployed.
           npx --yes firebase-tools@13 deploy \
-            --only functions:reminders:sendDueReminders,functions:reminders:onGiftReceived,functions:reminders:onGiftConsumed,functions:reminders:onPactWrite,functions:reminders:onReminderWrite,functions:reminders:createActivityReminder,functions:reminders:composeQuest,functions:reminders:weaveWeb,firestore:indexes \
+            --only functions:reminders:sendDueReminders,functions:reminders:onGiftReceived,functions:reminders:onGiftConsumed,functions:reminders:onFriendRequestWrite,functions:reminders:onPactWrite,functions:reminders:onVersusWrite,functions:reminders:resolveDueVersusChallenges,functions:reminders:onReminderWrite,functions:reminders:createActivityReminder,functions:reminders:composeQuest,functions:reminders:weaveWeb,firestore:indexes \
             --project "$FIREBASE_PROJECT" \
             --non-interactive \
             --force

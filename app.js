@@ -14329,6 +14329,25 @@
                 frJoinBoard(fromUID);
                 await saveUserData();
             }
+            // Stamp the acceptance BEFORE the delete below. onFriendRequestWrite
+            // pushes the original sender off this marker, not off the delete:
+            // dismissing deletes the same document and a decline is deliberately
+            // silent, so the delete alone cannot tell the two apart. My own name
+            // rides along because the sender's client is never granted read
+            // access to my profile — the same denormalisation every other
+            // cross-account push in this app relies on.
+            //
+            // Best-effort on purpose. If this write is refused the accept still
+            // completes; the only thing lost is the notification.
+            try {
+                const myName = (window.userData.profile && window.userData.profile.username)
+                    || (window.currentUser && window.currentUser.displayName) || 'Someone';
+                await updateDoc(doc(db, 'friendRequests', docId), {
+                    status:     'accepted',
+                    toName:     myName,
+                    acceptedAt: new Date().toISOString()
+                });
+            } catch(e) { console.warn('Friend accept marker failed (non-critical):', e); }
             try {
                 const { deleteDoc } = await import('https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js');
                 await deleteDoc(doc(db, 'friendRequests', docId));
@@ -21528,10 +21547,14 @@
         }
 
         // ── Lazy maintenance (§3.4, §6.3, §6.4) ───────────────────────────
-        // There is no scheduler in this build. Expiry, deadline resolution and
-        // payout claims are all evaluated whenever a client loads the list.
-        // A scheduled Cloud Function that resolves overdue challenges is a
-        // worthwhile hardening pass and is deliberately NOT a dependency here.
+        // Expiry and deadline resolution are ALSO done server-side now, by the
+        // resolveDueVersusChallenges scheduler — that is what makes the win/loss
+        // push arrive at the deadline instead of whenever someone next opens the
+        // app. This pass stays anyway, and stays first: it is what settles a
+        // challenge in the seconds before the scheduler's next sweep, and payout
+        // claims can only ever happen here, because nothing server-side writes a
+        // user's balance. Both paths guard on the status they expect, so
+        // whichever gets there first wins and the other is a no-op.
         let _vsMaintaining = false;
 
         async function vsRunMaintenance() {
