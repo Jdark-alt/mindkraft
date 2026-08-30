@@ -54,7 +54,25 @@ both wagered modes actually ending when ended early; Habit's
 completions-vs-days-elapsed pair, its pause/resume rule and the seven-day
 expiry; the one-mode-at-a-time guard; and the rate card itself.
 
+## Pact Mode's two document shapes
+
+Both sides of a Pact may name several activities, each with its own target.
+Pacts made before that finish out under the shape they were agreed under — read
+tolerance, not migration — so `pactItems`, `pactCount` and `pactStats` have to
+give the same answer for `terms[uid] = {activityId, target}` with a bare number
+counter as they do for `{items: [...]}` with a per-activity map. Getting that
+wrong would silently zero a running pact, and none of it is visible from the
+UI, so the seam is reached directly through the hooks.
+
+Also covered: the per-activity cap (an over-logged item cannot carry an
+under-logged one), "out of reach" judged per activity rather than on the totals
+— several activities can be logged the same day, so a combined shortfall is not
+an unreachable one — and the setup sheet driven for real from picking a partner
+through to the document it writes, because that sheet borrows Stake Mode's
+multi-select picker and had never been pointed at a Pact before.
+
 Three things this cannot cover, because they are server-side: the Firestore
 rules (see `test/rules`), the mode-reminder copy decision (see
-`functions/test/modes.test.js`) and the pact push trigger in
-`functions/index.js`.
+`functions/test/modes.test.js`) and the pact push triggers — status changes and
+the two progress nudges — in `functions/index.js` and `functions/lib/pact.js`
+(see `functions/test/pact.test.js`).

@@ -522,6 +522,71 @@ const out = await page.evaluate(async () => {
         return window.__mm.modePactHas(a, 'a2') && !window.__mm.modePactHas(a, 'zz');
     })());
 
+    // ══ PACT: THE SETUP SHEET ═════════════════════════════════════════════
+    //
+    // Driven for real rather than asserted on, because the sheet is what turns
+    // picks into the document shape everything above reads — and it borrows
+    // Stake Mode's multi-select picker, which had never been pointed at a Pact.
+    boot(1000, [act('a1', 'Run'), act('a2', 'Read'), act('a3', 'Stretch')]);
+    window._friendProfileCache = { [FRIEND]: { displayName: 'Pal', level: 9 } };
+
+    ok('the pact sheet opens', window.__mm.openSetup('pact'));
+    const sheet = () => document.getElementById('modeSheet');
+    const sheetText = () => sheet().textContent;
+    ok('it asks who first', /Who with\?/.test(sheetText()));
+
+    await window.pactPickPartner(FRIEND);
+    ok('it asks for activities, plural', /Your activities/.test(sheetText()));
+    ok('the multi-select picker is on screen', !!sheet().querySelector('.md-dd-list'));
+    ok('the send button starts dead, and says why',
+        !!sheet().querySelector('.md-sheet-foot .md-btn-primary[disabled]') &&
+        /Pick at least one activity/.test(sheetText()));
+
+    window.modeTogglePick('a1', 3);
+    ok('picking one activity adds one target row',
+        sheet().querySelectorAll('.md-target-row').length === 1);
+    ok('a single completion is under the floor, and the sheet says so',
+        !!sheet().querySelector('.md-sheet-foot .md-btn-primary[disabled]') &&
+        /3\+ completions in total/.test(sheetText()));
+    window.pactBump('a1', 2);
+    ok('three completions clears the floor',
+        !sheet().querySelector('.md-sheet-foot .md-btn-primary[disabled]'));
+
+    window.modeTogglePick('a2', 3);
+    window.modeTogglePick('a3', 3);
+    ok('three activities give three target rows',
+        sheet().querySelectorAll('.md-target-row').length === 3);
+    window.modeTogglePick('a3', 3);
+    ok('unpicking one takes its row with it',
+        sheet().querySelectorAll('.md-target-row').length === 2);
+    window.modeTogglePick('a3', 3);
+
+    window.pactBump('a2', 4);    // 5
+    window.pactBump('a3', 9);    // 10
+    await window.pactSend();
+
+    const pactDocs = Array.from(window.__store).filter(p => String(p[0]).startsWith('pacts/'));
+    ok('sending writes exactly one pact', pactDocs.length === 1, pactDocs.length);
+    const sent = pactDocs.length ? pactDocs[0][1] : null;
+    ok('the term is a list, not a single activity',
+        !!sent && Array.isArray((sent.terms[ME] || {}).items) &&
+        sent.terms[ME].items.length === 3, sent && sent.terms[ME]);
+    ok('every pick kept its own target', !!sent && JSON.stringify(
+        sent.terms[ME].items.map(i => [i.activityName, i.target])
+            .sort((x, y) => x[0].localeCompare(y[0]))) ===
+        JSON.stringify([['Read', 5], ['Run', 3], ['Stretch', 10]]),
+        sent && sent.terms[ME].items.map(i => [i.activityName, i.target]));
+    ok('progress starts as a per-activity map, not a number',
+        !!sent && typeof sent.progress[ME] === 'object' && sent.progress[ME] !== null,
+        sent && sent.progress);
+    ok('the totals add up across the whole side',
+        !!sent && window.__mm.pactStats(sent, ME).total === 18,
+        sent && window.__mm.pactStats(sent, ME));
+    ok('the partner is invited with a full summary of it',
+        !!sent && window.__mm.pactSummary(sent, ME) === 'Run × 3, Read × 5, Stretch × 10',
+        sent && window.__mm.pactSummary(sent, ME));
+    window.__mm.closeSetup();
+
     return log;
 });
 
