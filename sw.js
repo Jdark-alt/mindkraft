@@ -1,4 +1,4 @@
-// ── LevelUp Service Worker ────────────────────────────────────────────────
+// ── Mindkraft Service Worker ──────────────────────────────────────────────
 // Strategy:
 //   - App shell (HTML/CSS/JS) → Cache First, fallback to network
 //   - Firebase & external URLs → Network only (never cache auth/db calls)

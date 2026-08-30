@@ -25,7 +25,7 @@ function configureWebPush({ publicKey, privateKey, contactEmail }) {
         throw new Error('configureWebPush: VAPID public and private keys are required');
     }
     webpush.setVapidDetails(
-        'mailto:' + (contactEmail || 'hello@mindkraft.app'),
+        'mailto:' + (contactEmail || 'admin@mindkraft.life'),
         publicKey,
         privateKey
     );

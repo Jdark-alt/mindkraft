@@ -4,6 +4,26 @@
         import { getAnalytics, logEvent } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-analytics.js';
         import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-functions.js';
 
+        // ── App identity ──────────────────────────────────────────────────
+        // Single source of truth for the app's public origin. Every
+        // outward-facing string built from it — friend share links, the
+        // domain printed on the level-up card — moves with one edit here
+        // rather than a grep across the repo.
+        //
+        // Deliberately absolute rather than window.location.origin: a link
+        // shared out of a local or preview build has to point at the real
+        // site, not at the machine that generated it.
+        //
+        // No trailing slash — paths are appended as '/…'.
+        const APP_BASE_URL  = 'https://mindkraft.life';
+        // Bare host, for the places that print the domain as text.
+        const APP_BASE_HOST = APP_BASE_URL.replace(/^https?:\/\//, '');
+
+        // app.js is a module, so index.html's inline scripts can't see the
+        // consts above. Exposed here so nothing has to re-declare the domain.
+        window.APP_BASE_URL  = APP_BASE_URL;
+        window.APP_BASE_HOST = APP_BASE_HOST;
+
         // Firebase Configuration
         const firebaseConfig = {
             apiKey: "AIzaSyCLVITDz6EkpSNS1XMuIvRaKEmDNN_h_Eg",
@@ -975,7 +995,7 @@
             ctx.textAlign='center';
             ctx.fillText('I reached Level '+newLevel+' on Mindkraft!', W/2, footerY+18);
             ctx.font=sf(400,11); ctx.fillStyle='rgba(255,255,255,0.22)';
-            ctx.fillText('Gamify your life at mindkraft.life', W/2, footerY+36);
+            ctx.fillText('Gamify your life at ' + APP_BASE_HOST, W/2, footerY+36);
 
             return new Promise((resolve,reject)=>{
                 try {
@@ -1078,7 +1098,7 @@
                 const isIos = /iP(hone|ad|od)/.test(navigator.userAgent);
                 if (navigator.share) {
                     const shareData = { title: 'I reached Level ' + level + ' on Mindkraft!',
-                                        text: 'Gamify your life at mindkraft.life' };
+                                        text: 'Gamify your life at ' + APP_BASE_HOST };
                     // Try with file first, then fall back to text-only — all synchronous setup
                     const fileObj = new File([blob], 'mindkraft-level-' + level + '.png', { type: 'image/png' });
                     let canFile = false;
@@ -13965,7 +13985,7 @@
         window.shareFriendCode = async function() {
             const code = window.userData && window.userData.friendCode;
             if (!code) return;
-            const url  = `${window.location.origin}${window.location.pathname}?add=${code}`;
+            const url  = `${APP_BASE_URL}/?add=${code}`;
             const text = `Add me on Mindkraft! Use code ${code} or tap the link:`;
             if (navigator.share) {
                 try { await navigator.share({ title: 'Add me on Mindkraft', text, url }); return; }
