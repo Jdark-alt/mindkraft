@@ -37,6 +37,7 @@ const questComposer = require('./lib/quest-composer');
 const webWeaver = require('./lib/web-weaver');
 const { callModel, parseModelJson } = require('./lib/model');
 const versus = require('./lib/versus');
+const pact = require('./lib/pact');
 
 const {
     configureWebPush,
@@ -464,6 +465,13 @@ exports.onFriendRequestWrite = onDocumentWritten(
 //   pending → declined → tell the initiator it was not
 //   active  → resolved → tell BOTH how it ended
 //
+// Plus two beats that are not transitions at all — the halfway mark and the
+// gap between partners — which ride the SAME trigger rather than a second
+// listener on the same document. Progress writes do not move `status`, so they
+// are handled before the status branches below and cannot fall through them.
+// The rules for when they fire, and the arm/disarm that stops the gap nudge
+// firing on every completion, live in lib/pact.js.
+//
 // Every name in these payloads is denormalized onto the pact document when it
 // is written, so this function never reads another user's profile.
 //
@@ -471,13 +479,45 @@ exports.onFriendRequestWrite = onDocumentWritten(
 // both partners already know who is who, and hiding it would undercut the
 // honesty the mode is built on.
 
-function pactOtherUid(pact, uid) {
-    const ps = pact.participants || [];
+function pactOtherUid(pactDoc, uid) {
+    const ps = pactDoc.participants || [];
     return ps[0] === uid ? ps[1] : ps[0];
 }
 
-function pactDisplayName(pact, uid) {
-    return (pact.names && pact.names[uid]) || 'Your partner';
+function pactDisplayName(pactDoc, uid) {
+    return (pactDoc.names && pactDoc.names[uid]) || 'Your partner';
+}
+
+/**
+ * Fire whatever progress nudges this write earned, and stamp the document so
+ * they cannot fire again for the same reason.
+ *
+ * The stamp lands FIRST, deliberately. That write re-enters this trigger, which
+ * then reads the flags it just set and decides there is nothing to send — one
+ * extra invocation, and it terminates. Pushing first and stamping after would
+ * be the other way round: a crash in between, or a retry, would re-send a nudge
+ * the user already has. A lost nudge is a shrug; a duplicate one is the thing
+ * the whole arm/disarm mechanism exists to prevent.
+ */
+async function sendPactProgressNudges(ref, pactDoc, tag) {
+    const { patch, pushes } = pact.progressNudges(pactDoc);
+    if (!Object.keys(patch).length) return;
+
+    try {
+        await ref.update(patch);
+    } catch (err) {
+        // Could not record it, so do not send it — the alternative is a nudge
+        // that re-fires on every subsequent write.
+        logger.error('Pact nudge bookkeeping failed', { error: String(err) });
+        return;
+    }
+
+    await Promise.all(pushes.map(({ uid, body, tagSuffix }) => pushToUser(uid, {
+        title: 'Mindkraft',
+        body,
+        tag: tag + '-' + tagSuffix,
+        data: { type: 'pact', activityId: null },
+    })));
 }
 
 exports.onPactWrite = onDocumentWritten(
@@ -494,6 +534,12 @@ exports.onPactWrite = onDocumentWritten(
         const before = beforeSnap && beforeSnap.exists ? beforeSnap.data() : null;
         const pactId = event.params.pactId;
         const tag = 'mindkraft-pact-' + String(pactId);
+
+        // Progress nudges. Before the status branches, because the writes that
+        // earn them change no status at all and would never reach this far.
+        if (after.status === 'active') {
+            await sendPactProgressNudges(afterSnap.ref, after, tag);
+        }
 
         // Created.
         if (!before) {

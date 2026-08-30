@@ -59,6 +59,19 @@ window.__mm = {
     windowTest: function (s, e, now, padB, padA) {
         return modeInWindow(modeMins(s), modeMins(e), modeMins(now), padB || 0, padA || 0);
     },
+    // Pact Mode reads TWO document shapes: the original one activity a side,
+    // and the multi-activity one it takes now. Both live in the wild, so the
+    // seam between them is reached directly rather than through a UI that
+    // would only ever exercise whichever shape it happens to write.
+    pactItems: function (p, uid) { return JSON.parse(JSON.stringify(pactItems(p, uid))); },
+    pactCount: function (p, uid, activityId) { return pactCount(p, uid, activityId); },
+    pactStats: function (p, uid) { return pactStats(p, uid); },
+    pactSummary: function (p, uid) { return pactTermSummary(p, uid); },
+    pactImpossible: function (p, uid) { return pactImpossible(p, uid); },
+    pactResolution: function (p) { return pactBuildResolution(p); },
+    modePactItems: function (a) { return JSON.parse(JSON.stringify(modePactItems(a))); },
+    modePactHas: function (a, activityId) { return modePactHasActivity(a, activityId); },
+
     openSetup: function (kind) {
         window.modesOpenSetup(kind);
         return !!document.getElementById('modeSheet');

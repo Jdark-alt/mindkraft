@@ -413,6 +413,115 @@ const out = await page.evaluate(async () => {
     ok('a habit left off for more than a week stops being resumable',
         window.__mm.state().suspendedHabit === null);
 
+    // ══ PACT: THE TWO DOCUMENT SHAPES ═════════════════════════════════════
+    //
+    // Both sides of a Pact may now name several activities, each with its own
+    // target. Pacts written before that finish out under the shape they were
+    // agreed under — read tolerance, not migration — so every reader has to
+    // give the same answer for both. Nothing about that is visible from the
+    // UI, and getting it wrong would silently zero a running pact's progress.
+    const OLD_PACT = {
+        id: 'pc-old', status: 'active', participants: [ME, FRIEND],
+        createdBy: ME, partner: FRIEND, stake: 40, pot: 80,
+        names: { [ME]: 'Me', [FRIEND]: 'Pal' },
+        endsAt: Date.now() + 20 * DAY,
+        terms: { [ME]:     { activityId: 'a1', activityName: 'Run', target: 10 },
+                 [FRIEND]: { activityId: 'b1', activityName: 'Swim', target: 10 } },
+        progress: { [ME]: 5, [FRIEND]: 1 }
+    };
+    const NEW_PACT = {
+        id: 'pc-new', status: 'active', participants: [ME, FRIEND],
+        createdBy: ME, partner: FRIEND, stake: 40, pot: 80,
+        names: { [ME]: 'Me', [FRIEND]: 'Pal' },
+        endsAt: Date.now() + 20 * DAY,
+        terms: { [ME]: { items: [{ activityId: 'a1', activityName: 'Run', target: 5 },
+                                 { activityId: 'a2', activityName: 'Read', target: 5 }] },
+                 [FRIEND]: { items: [{ activityId: 'b1', activityName: 'Swim', target: 10 }] } },
+        progress: { [ME]: { a1: 5 }, [FRIEND]: { b1: 1 } }
+    };
+
+    ok('the original shape reads as one activity',
+        window.__mm.pactItems(OLD_PACT, ME).length === 1);
+    ok('the new shape reads as many',
+        window.__mm.pactItems(NEW_PACT, ME).length === 2);
+    ok('a bare number counter still reads',
+        window.__mm.pactCount(OLD_PACT, ME, 'a1') === 5);
+    ok('a per-activity counter reads',
+        window.__mm.pactCount(NEW_PACT, ME, 'a1') === 5 &&
+        window.__mm.pactCount(NEW_PACT, ME, 'a2') === 0);
+
+    const oldStats = window.__mm.pactStats(OLD_PACT, ME);
+    const newStats = window.__mm.pactStats(NEW_PACT, ME);
+    ok('both shapes agree on the percentage',
+        oldStats.pct === 50 && newStats.pct === 50, [oldStats, newStats]);
+    ok('neither side is complete at half', !oldStats.hit && !newStats.hit);
+
+    ok('an over-logged activity cannot carry an under-logged one', (function () {
+        const p = JSON.parse(JSON.stringify(NEW_PACT));
+        p.progress[ME] = { a1: 500 };
+        const st = window.__mm.pactStats(p, ME);
+        return st.done === 5 && st.pct === 50 && !st.hit;
+    })());
+
+    ok('a side is complete only when every activity is', (function () {
+        const p = JSON.parse(JSON.stringify(NEW_PACT));
+        p.progress[ME] = { a1: 5, a2: 5 };
+        return window.__mm.pactStats(p, ME).hit === true;
+    })());
+
+    ok('a partner who has not accepted reads as empty, not as done',
+        window.__mm.pactStats({ status: 'active', participants: [ME, FRIEND],
+                                terms: {}, progress: {} }, FRIEND).hit === false);
+
+    ok('the term summary names every activity',
+        window.__mm.pactSummary(NEW_PACT, ME) === 'Run × 5, Read × 5',
+        window.__mm.pactSummary(NEW_PACT, ME));
+
+    // Out of reach is judged per activity, not on the totals — several
+    // activities can be logged on the same day, so a combined shortfall is
+    // not the same thing as an unreachable one.
+    ok('a combined shortfall that is still reachable does not break the pact', (function () {
+        const p = JSON.parse(JSON.stringify(NEW_PACT));
+        p.endsAt = Date.now() + 5 * DAY;
+        p.progress[ME] = { a1: 0, a2: 0 };          // 10 short across two items
+        return window.__mm.pactImpossible(p, ME) === false;
+    })());
+    ok('a single activity that cannot be finished does break it', (function () {
+        const p = JSON.parse(JSON.stringify(NEW_PACT));
+        p.endsAt = Date.now() + 2 * DAY;
+        p.progress[ME] = { a1: 0, a2: 5 };          // 5 short on one, 2 days left
+        return window.__mm.pactImpossible(p, ME) === true;
+    })());
+
+    ok('resolution reads both shapes the same way', (function () {
+        const oldP = JSON.parse(JSON.stringify(OLD_PACT));
+        oldP.progress = { [ME]: 10, [FRIEND]: 10 };
+        const newP = JSON.parse(JSON.stringify(NEW_PACT));
+        newP.progress = { [ME]: { a1: 5, a2: 5 }, [FRIEND]: { b1: 10 } };
+        return window.__mm.pactResolution(oldP).outcome === 'kept' &&
+               window.__mm.pactResolution(newP).outcome === 'kept';
+    })());
+    ok('resolution names the side that fell short', (function () {
+        const p = JSON.parse(JSON.stringify(NEW_PACT));
+        p.progress = { [ME]: { a1: 5, a2: 5 }, [FRIEND]: { b1: 1 } };
+        const res = window.__mm.pactResolution(p);
+        return res.outcome === 'broken' && res.failedBy === FRIEND;
+    })());
+
+    // The local mode object carries the same two shapes, for the same reason.
+    ok('the local mode object reads the original shape',
+        window.__mm.modePactItems({ kind: 'pact', activityId: 'a1',
+                                    activityName: 'Run', target: 10 }).length === 1);
+    ok('the local mode object reads the new shape',
+        window.__mm.modePactItems({ kind: 'pact', items: [
+            { activityId: 'a1', activityName: 'Run', target: 5 },
+            { activityId: 'a2', activityName: 'Read', target: 5 }] }).length === 2);
+    ok('the completion hook matches any of the mode\'s activities', (function () {
+        const a = { kind: 'pact', items: [{ activityId: 'a1', activityName: 'Run', target: 5 },
+                                          { activityId: 'a2', activityName: 'Read', target: 5 }] };
+        return window.__mm.modePactHas(a, 'a2') && !window.__mm.modePactHas(a, 'zz');
+    })());
+
     return log;
 });
 

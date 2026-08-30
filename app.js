@@ -24403,7 +24403,15 @@
         const FOCUS_MAX_DAYS      = 90;
 
         const PACT_MIN_DAYS       = 5;
+        // A floor on the COMBINED completions one side commits to, not on each
+        // activity — the same shape as STAKE_MIN_TOTAL. Each individual target
+        // still cannot go below 1; what this stops is a pact whose whole
+        // commitment is one tap.
         const PACT_MIN_TARGET     = 3;
+        // Both sides may name several activities. Three matches Stake Mode's
+        // ceiling and the picker it borrows: past that the two-column panel
+        // stops being a comparison and starts being a list.
+        const PACT_MAX_ACTS       = 3;
         const PACT_INVITE_DAYS    = 7;
 
         // Hand-written, never generated (spec §0). Shown at habit milestones.
@@ -25548,8 +25556,8 @@
             }
 
             // ── Pact: mirrored into the shared document ───────────────────
-            if (a.kind === 'pact' && a.pactId && String(a.activityId) === id) {
-                pactCommitProgress(a.pactId, 1).catch(function () {});
+            if (a.kind === 'pact' && a.pactId && modePactHasActivity(a, id)) {
+                pactCommitProgress(a.pactId, id, 1).catch(function () {});
             }
 
             if (dirty) {
@@ -25590,8 +25598,8 @@
                     activity.streak = Math.max(0, (activity.streak || 0) - 1);
                 }
             }
-            if (a.kind === 'pact' && a.pactId && String(a.activityId) === id) {
-                pactCommitProgress(a.pactId, -1).catch(function () {});
+            if (a.kind === 'pact' && a.pactId && modePactHasActivity(a, id)) {
+                pactCommitProgress(a.pactId, id, -1).catch(function () {});
             }
             try { debouncedSaveUserData(); } catch (e) {}
             try { modesRenderPage(); } catch (e) {}
@@ -25755,25 +25763,104 @@
         }
         function pactName(p, uid) { return (p.names && p.names[uid]) || 'Your partner'; }
         function pactTerm(p, uid) { return (p.terms && p.terms[uid]) || null; }
-        function pactProgress(p, uid) { return (p.progress && p.progress[uid]) || 0; }
 
-        function pactHit(p, uid) {
+        // ── The two shapes, and the seam between them ─────────────────────
+        //
+        // A pact used to hold ONE activity per side:
+        //
+        //     terms[uid]    = { activityId, activityName, target }
+        //     progress[uid] = <number>
+        //
+        // It now holds as many as each side wants, each with its own target:
+        //
+        //     terms[uid]    = { items: [{ activityId, activityName, target }] }
+        //     progress[uid] = { <activityId>: <count> }
+        //
+        // Read tolerance, not migration — the same call the Quest simplification
+        // made. A pact that is already running finishes out under the old shape
+        // rather than being rewritten underneath two people who agreed to it;
+        // everything below reads either shape and nothing ever writes the old
+        // one back. Every read of a term or a counter goes through pactItems()
+        // and pactCount() for exactly that reason — nothing else touches
+        // terms[uid] or progress[uid] directly.
+        //
+        // The item shape is Stake Mode's, deliberately: {activityId,
+        // activityName, target} is already what a multi-activity commitment
+        // looks like in this app, and its picker and stepper rows are reused
+        // wholesale by the Pact setup sheet below.
+        //
+        // Keeping the per-activity counters INSIDE progress[uid] rather than in
+        // a new top-level field is what lets the security rules stand unchanged:
+        // the progress branch allows `changed().hasOnly(['progress'])` and pins
+        // the other participant's value by equality, which holds whether that
+        // value is a number or a map.
+        function pactItems(p, uid) {
             var t = pactTerm(p, uid);
-            return !!t && pactProgress(p, uid) >= t.target;
+            if (!t) return [];
+            if (Array.isArray(t.items)) {
+                return t.items.filter(function (it) { return it && it.activityId; });
+            }
+            if (t.activityId) return [t];          // the single-activity shape
+            return [];
         }
+
+        function pactCount(p, uid, activityId) {
+            var pr = (p.progress && p.progress[uid]);
+            if (typeof pr === 'number') return pr;  // the single-activity shape
+            return (pr && pr[String(activityId)]) || 0;
+        }
+
+        // One party's side of the pact, capped per activity so an over-logged
+        // item can never carry an under-logged one. This is the single
+        // computation resolution, the panel, the percentage and the server's
+        // nudges all read — nothing recomputes it a second way.
+        function pactStats(p, uid) {
+            var items = pactItems(p, uid);
+            var done = 0, total = 0, hit = items.length > 0;
+            items.forEach(function (it) {
+                var target = Math.max(1, it.target || 1);
+                var count = Math.min(pactCount(p, uid, it.activityId), target);
+                done += count;
+                total += target;
+                if (count < target) hit = false;
+            });
+            return { done: done, total: total, hit: hit,
+                     pct: total > 0 ? Math.round((done / total) * 100) : 0 };
+        }
+
+        // "Read × 20", or "Read × 20, Walk × 12" — the whole of one side's
+        // commitment in one line, for the invite card and the accept sheet.
+        // Both surfaces have to render the OTHER person's term, so neither can
+        // assume how many activities it holds.
+        function pactTermSummary(p, uid) {
+            var items = pactItems(p, uid);
+            if (!items.length) return 'an activity';
+            return items.map(function (it) {
+                return (it.activityName || 'an activity') + ' × ' + Math.max(1, it.target || 1);
+            }).join(', ');
+        }
+
+        function pactHit(p, uid) { return pactStats(p, uid).hit; }
 
         // Mathematically out of reach: the days remaining cannot carry the
         // shortfall even at one completion a day. The spec asks for this
         // explicitly — a pact that cannot be saved should break now, not sit
         // there pretending (spec §6).
+        //
+        // Judged PER ACTIVITY, not on the totals. Several activities can be
+        // logged on the same day, so a combined shortfall of ten across five
+        // items is not out of reach with two days left — but a single item
+        // needing three more with two days left is. Anything coarser would
+        // break pacts that are still winnable.
         function pactImpossible(p, uid) {
             if (p.status !== 'active') return false;
-            var t = pactTerm(p, uid);
-            if (!t) return false;
-            var short = t.target - pactProgress(p, uid);
-            if (short <= 0) return false;
+            var items = pactItems(p, uid);
+            if (!items.length) return false;
             var daysLeft = Math.ceil((p.endsAt - modesNow()) / 86400000);
-            return daysLeft < short;
+            return items.some(function (it) {
+                var short = Math.max(1, it.target || 1) - pactCount(p, uid, it.activityId);
+                return short > 0 && daysLeft < short;
+            });
         }
 
         async function pactFetch(force) {
@@ -25870,8 +25957,10 @@
             payload.names[uid] = pactMyName();
             payload.names[partnerUid] = partnerName || 'A friend';
             payload.terms[uid] = term;
-            payload.progress[uid] = 0;
-            payload.progress[partnerUid] = 0;
+            // Per-activity counters from the start. The partner's map stays
+            // empty until they accept and name their own activities.
+            payload.progress[uid] = {};
+            payload.progress[partnerUid] = {};
             payload.payout[uid] = 0;
             payload.payout[partnerUid] = 0;
 
@@ -25937,6 +26026,9 @@
                 };
                 patch['terms.' + uid] = term;
                 patch['names.' + uid] = pactMyName();
+                // Not seeding progress here on purpose: the accept rule's
+                // hasOnly() list does not include it, and the first completion's
+                // dotted write creates the map anyway.
                 tx.update(ref, patch);
             });
 
@@ -25949,6 +26041,28 @@
             return { startedAt: started, endsAt: ends, partnerName: partnerName };
         }
 
+        // The local mode object's own read-tolerance seam, mirroring the shared
+        // document's. A pact adopted before multi-activity shipped stored
+        // activityId/activityName/target directly on m.active; one adopted
+        // since stores `items`. Nothing outside these two functions looks.
+        function modePactItems(a) {
+            if (!a) return [];
+            if (Array.isArray(a.items)) {
+                return a.items.filter(function (it) { return it && it.activityId; });
+            }
+            if (a.activityId) {
+                return [{ activityId: String(a.activityId),
+                          activityName: a.activityName,
+                          target: Math.max(1, a.target || 1) }];
+            }
+            return [];
+        }
+
+        function modePactHasActivity(a, activityId) {
+            var key = String(activityId);
+            return modePactItems(a).some(function (it) { return String(it.activityId) === key; });
+        }
+
         // The local half of a pact. The mode object is what the Modes page
         // draws and what the completion hook counts against; the shared
         // document is the record both accounts agree on.
@@ -25956,6 +26070,11 @@
             var m = modesState();
             if (!m) return;
             var uid = modesUid();
+            // `items` mirrors the shared document's term so the panel and the
+            // completion hook never have to reach for the pact to know which
+            // activities count. A pact adopted before multi-activity shipped
+            // carries the single-activity fields instead, which is why every
+            // read of them goes through modePactItems().
             m.active = {
                 kind: 'pact',
                 id: modesNewId('md'),
@@ -25963,9 +26082,11 @@
                 startedAt: new Date().toISOString(),
                 startedDay: modesToday(),
                 cost: PACT_WAGER,
-                activityId: String(term.activityId),
-                activityName: term.activityName,
-                target: term.target,
+                items: (term.items || [term]).map(function (it) {
+                    return { activityId: String(it.activityId),
+                             activityName: it.activityName,
+                             target: Math.max(1, it.target || 1) };
+                }),
                 partnerUid: pactOther(p, uid),
                 partnerName: pactName(p, pactOther(p, uid)),
                 endsAt: p.endsAt,
@@ -25977,38 +26098,62 @@
         }
 
         // ── Progress ──────────────────────────────────────────────────────
-        // One completion, mirrored. Guarded on status and on the window, so a
-        // completion logged before the pact starts or after it ends counts for
-        // nothing — which is what "within the shared window" means.
-        async function pactCommitProgress(id, delta) {
+        // One completion of ONE of my activities, mirrored. Guarded on status
+        // and on the window, so a completion logged before the pact starts or
+        // after it ends counts for nothing — which is what "within the shared
+        // window" means.
+        //
+        // The write shape follows the document's shape, and that is not
+        // cosmetic: a pact created under the single-activity schema stores
+        // progress[uid] as a NUMBER, and writing progress.<uid>.<activityId>
+        // into it would replace that number with a map and silently zero
+        // everything the user had already done. So an old pact keeps being
+        // written the old way — it has exactly one activity, so there is
+        // nothing the new shape would buy it.
+        async function pactCommitProgress(id, activityId, delta) {
             var uid = modesUid();
             if (!uid) return null;
+            var key = String(activityId);
             var ref = doc(db, PACT_COL, id);
             var result = null;
             try {
                 await runTransaction(db, async function (tx) {
                     var snap = await tx.get(ref);
                     if (!snap.exists()) return;
-                    var p = snap.data();
+                    var p = Object.assign({ id: id }, snap.data());
                     if (p.status !== 'active') return;
                     var now = modesNow();
                     if (now < p.startedAt || now > p.endsAt) return;
-                    var t = (p.terms || {})[uid];
-                    if (!t) return;
 
-                    var before = (p.progress || {})[uid] || 0;
-                    var after = Math.max(0, Math.min(t.target, before + delta));
+                    var item = pactItems(p, uid).filter(function (it) {
+                        return String(it.activityId) === key;
+                    })[0];
+                    if (!item) return;
+                    var target = Math.max(1, item.target || 1);
+
+                    var before = pactCount(p, uid, key);
+                    var after = Math.max(0, Math.min(target, before + delta));
                     if (after === before) return;
 
+                    var legacy = typeof (p.progress || {})[uid] === 'number';
                     var patch = {};
-                    patch['progress.' + uid] = after;
+                    patch[legacy ? 'progress.' + uid : 'progress.' + uid + '.' + key] = after;
                     tx.update(ref, patch);
-                    result = { mine: after, target: t.target };
+                    result = { activityId: key, mine: after, target: target, legacy: legacy };
                 });
             } catch (e) { console.warn('Pact progress failed:', e && e.message); }
             if (result) {
                 var cached = pactGet(id);
-                if (cached) { cached.progress = cached.progress || {}; cached.progress[uid] = result.mine; }
+                if (cached) {
+                    cached.progress = cached.progress || {};
+                    if (result.legacy) cached.progress[uid] = result.mine;
+                    else {
+                        if (typeof cached.progress[uid] !== 'object' || cached.progress[uid] === null) {
+                            cached.progress[uid] = {};
+                        }
+                        cached.progress[uid][result.activityId] = result.mine;
+                    }
+                }
                 await pactMaybeResolve(id);
             }
             return result;
@@ -26070,18 +26215,22 @@
             var uid = modesUid();
             var m = modesState();
             if (!m) return;
-            var mine = pactTerm(p, uid);
-            var theirs = pactTerm(p, pactOther(p, uid));
-            var themName = pactName(p, pactOther(p, uid));
+            var them = pactOther(p, uid);
+            var themName = pactName(p, them);
             var kept = p.outcome === 'kept';
             var iFailed = p.failedBy === uid || p.failedBy === 'both';
-            var theyFailed = p.failedBy === pactOther(p, uid) || p.failedBy === 'both';
+            var theyFailed = p.failedBy === them || p.failedBy === 'both';
 
-            var lines = [];
-            if (mine) lines.push('You — ' + mine.activityName + ' ' +
-                                 Math.min(pactProgress(p, uid), mine.target) + '/' + mine.target);
-            if (theirs) lines.push(themName + ' — ' + theirs.activityName + ' ' +
-                                 Math.min(pactProgress(p, pactOther(p, uid)), theirs.target) + '/' + theirs.target);
+            // One line per activity per side, so a broken pact shows exactly
+            // which commitment fell short rather than a total that hides it.
+            function sideLines(who, label) {
+                return pactItems(p, who).map(function (it) {
+                    var target = Math.max(1, it.target || 1);
+                    return label + ' — ' + (it.activityName || 'Activity') + ' ' +
+                           Math.min(pactCount(p, who, it.activityId), target) + '/' + target;
+                });
+            }
+            var lines = sideLines(uid, 'You').concat(sideLines(them, themName));
 
             var note;
             if (kept) {
@@ -26094,7 +26243,7 @@
                        ' lost their stake too. They already know.';
             } else {
                 note = themName + ' fell short, so the pact broke for both of you. ' +
-                       'You hit your own target — that part still happened.';
+                       'You hit everything you set yourself — that part still happened.';
             }
 
             var res = {
@@ -26642,34 +26791,60 @@
                    '<p class="md-note">Anything logged inside the window earns it — not tied to one activity.</p>';
         }
 
+        // The two-column head stays the headline — one bar a side, so the
+        // comparison the mode is built on survives however many activities
+        // each person picked. The breakdown rows below it are Stake Mode's,
+        // reused rather than re-invented, and they carry the mark buttons:
+        // with several activities in play, one button at the bottom would have
+        // no way to say which one it marks.
         function pactPanelHtml(a) {
             var p = pactGet(a.pactId);
             var uid = modesUid();
-            var mineDone = p ? pactProgress(p, uid) : 0;
-            var theirs = p ? pactTerm(p, a.partnerUid) : null;
-            var theirsDone = p ? pactProgress(p, a.partnerUid) : 0;
+            var mine = p ? pactStats(p, uid) : { done: 0, total: 1, pct: 0 };
+            var theirs = p ? pactStats(p, a.partnerUid) : { done: 0, total: 1, pct: 0 };
+            var myItems = p ? pactItems(p, uid) : modePactItems(a);
+            var theirItems = p ? pactItems(p, a.partnerUid) : [];
             var notStarted = a.windowStartsAt && modesNow() < a.windowStartsAt;
             var left = a.endsAt ? Math.max(0, Math.ceil((a.endsAt - modesNow()) / 86400000)) : 0;
+
+            function sideLabel(items) {
+                if (!items.length) return '—';
+                if (items.length === 1) return items[0].activityName || 'Activity';
+                return items.length + ' activities';
+            }
 
             return '<div class="md-pact">' +
                      '<div class="md-pact-side">' +
                        '<div class="md-pact-who">You</div>' +
-                       '<div class="md-pact-act">' + modeEsc(a.activityName) + '</div>' +
-                       '<div class="md-pact-n">' + Math.min(mineDone, a.target) + ' / ' + a.target + '</div>' +
-                       modeBarHtml(mineDone, a.target, 'md-bar-blue') +
+                       '<div class="md-pact-act">' + modeEsc(sideLabel(myItems)) + '</div>' +
+                       '<div class="md-pact-n">' + mine.done + ' / ' + mine.total + '</div>' +
+                       modeBarHtml(mine.done, mine.total, 'md-bar-blue') +
                      '</div>' +
                      '<div class="md-pact-link" aria-hidden="true"></div>' +
                      '<div class="md-pact-side">' +
                        '<div class="md-pact-who">' + modeEsc(a.partnerName) + '</div>' +
-                       '<div class="md-pact-act">' + modeEsc(theirs ? theirs.activityName : '—') + '</div>' +
-                       '<div class="md-pact-n">' + (theirs ? Math.min(theirsDone, theirs.target) + ' / ' + theirs.target : '—') + '</div>' +
-                       modeBarHtml(theirsDone, theirs ? theirs.target : 1, 'md-bar-green') +
+                       '<div class="md-pact-act">' + modeEsc(sideLabel(theirItems)) + '</div>' +
+                       '<div class="md-pact-n">' + (theirItems.length ? theirs.done + ' / ' + theirs.total : '—') + '</div>' +
+                       modeBarHtml(theirs.done, theirs.total || 1, 'md-bar-green') +
                      '</div>' +
                    '</div>' +
+                   myItems.map(function (it) {
+                       var target = Math.max(1, it.target || 1);
+                       var count = p ? Math.min(pactCount(p, uid, it.activityId), target) : 0;
+                       var done = count >= target;
+                       return '<div class="md-hrow' + (done ? ' is-done' : '') + '">' +
+                                '<div class="md-hrow-top">' +
+                                  '<span class="md-hrow-name">' + modeEsc(it.activityName || 'Activity') + '</span>' +
+                                  '<span class="md-hrow-count">' + count + ' / ' + target + '</span>' +
+                                '</div>' +
+                                modeBarHtml(count, target, done ? 'md-bar-green' : 'md-bar-blue') +
+                                (done || notStarted ? '' : '<div class="md-hrow-meta">' +
+                                   modeMarkBtnHtml(it.activityId, !modeCanMark(it.activityId)) + '</div>') +
+                              '</div>';
+                   }).join('') +
                    '<div class="md-hrow-meta">' +
                      '<span class="md-chip">' + (notStarted ? 'Starts tomorrow' : left + ' day' + (left === 1 ? '' : 's') + ' left') + '</span>' +
                      '<span class="md-chip">' + phIcon('diamond', { weight: 'fill', lead: true }) + PACT_WAGER + ' each</span>' +
-                     (notStarted ? '' : modeMarkBtnHtml(a.activityId, !modeCanMark(a.activityId))) +
                    '</div>' +
                    '<p class="md-note">If either of you falls short, it breaks for both.</p>';
         }
@@ -26687,12 +26862,11 @@
             var html = '';
             invites.forEach(function (p) {
                 var from = pactName(p, p.createdBy);
-                var t = pactTerm(p, p.createdBy) || {};
                 html += '<div class="md-invite">' +
                           '<div class="md-invite-top"><strong>' + modeEsc(from) + '</strong> wants a Pact with you</div>' +
                           '<div class="md-invite-body">' +
-                            'They are committing to <strong>' + modeEsc(t.activityName || 'an activity') + ' × ' +
-                            (t.target || 0) + '</strong> over ' + p.durationDays + ' days. ' +
+                            'They are committing to <strong>' + modeEsc(pactTermSummary(p, p.createdBy)) +
+                            '</strong> over ' + p.durationDays + ' days. ' +
                             'Pick your own, and stake ' + phIcon('diamond', { weight: 'fill', lead: true }) + p.stake + '. One short and both stakes go.' +
                           '</div>' +
                           '<div class="md-invite-btns">' +
@@ -26862,8 +27036,10 @@
             }
             if (a.kind === 'pact') {
                 var p = pactGet(a.pactId);
-                var mine = p ? pactProgress(p, modesUid()) : 0;
-                return 'With ' + a.partnerName + ' · ' + Math.min(mine, a.target) + ' of ' + a.target;
+                var mine = p ? pactStats(p, modesUid())
+                             : { done: 0, total: modePactItems(a).reduce(function (n, it) {
+                                   return n + Math.max(1, it.target || 1); }, 0) };
+                return 'With ' + a.partnerName + ' · ' + mine.done + ' of ' + mine.total;
             }
             return '';
         }
@@ -27061,7 +27237,7 @@
             if (kind === 'stake')     { _modeSetup.days = STAKE_MIN_DAYS; _modeSetup.wager = MODE_WAGER_MIN; stakeRenderSetup(); }
             if (kind === 'focus')     { _modeSetup.windowStart = '18:00'; _modeSetup.windowEnd = '20:00';
                                         _modeSetup.days = 14; focusRenderSetup(); }
-            if (kind === 'pact')      { _modeSetup.days = 7; _modeSetup.target = 5; pactRenderSetup(); }
+            if (kind === 'pact')      { _modeSetup.days = 7; _modeSetup.targets = {}; pactRenderSetup(); }
         };
 
         // ── Shared controls ───────────────────────────────────────────────
@@ -27365,12 +27541,24 @@
                 return !s.picks.length || s.days < STAKE_MIN_DAYS || total < STAKE_MIN_TOTAL ||
                        !modeAffordable(s.wager);
             }
-            if (s.kind === 'pact') return !s.activityId || !modeAffordable(PACT_WAGER);
+            if (s.kind === 'pact') {
+                return !s.partnerUid || !s.picks.length ||
+                       pactTotalTarget() < PACT_MIN_TARGET || !modeAffordable(PACT_WAGER);
+            }
+            if (s.kind === 'pactAccept') {
+                var p = pactGet(s.pactId);
+                return !s.picks.length || pactTotalTarget() < PACT_MIN_TARGET ||
+                       !modeAffordable(p ? p.stake : PACT_WAGER);
+            }
             return false;
         }
 
         function modeWarnHtml() {
             var s = _modeSetup;
+            // Both Pact sheets carry their own warning, and modeSyncLive rewrites
+            // this region on every slider drag — so they have to be routed here
+            // or a drag would blank the reason the button is dead.
+            if (s && (s.kind === 'pact' || s.kind === 'pactAccept')) return pactWarnHtml();
             if (!s || s.kind !== 'stake') return '';
             var total = s.picks.reduce(function (n, id) { return n + ((s.targets || {})[id] || 1); }, 0);
             if (s.days >= STAKE_MIN_DAYS && total >= STAKE_MIN_TOTAL) return '';
@@ -27442,7 +27630,6 @@
                           modeSliderHtml('targetDays', HABIT_MIN_DAYS, HABIT_MAX_DAYS, s.targetDays, {
                               unit: 'days', side: 'habitEnds', label: 'Days',
                               loLabel: HABIT_MIN_DAYS + ' days', hiLabel: HABIT_MAX_DAYS + ' days' }) +
-                          '<p class="md-hint">33 is the default: long enough to stick, short enough to finish.</p>' +
                           '<div class="md-summary">' +
                             s.picks.map(function (id, i) {
                                 var a = modeEligibleActivities().filter(function (x) { return x.id === id; })[0] || {};
@@ -27862,24 +28049,15 @@
                           }).join('') + '</div>' +
                         '</div>';
             } else {
-                var chosen = modeEligibleActivities().filter(function (a) { return a.id === s.activityId; })[0];
                 html += '<div class="modal-body md-body">' +
                           '<div class="md-step">With</div>' +
                           '<div class="md-step-name">' + modeEsc(giftFriendName(s.partnerUid)) + '</div>' +
 
-                          '<label class="md-label">Your activity</label>' +
-                          modeDropdownHtml('Choose an activity') +
-                          '<p class="md-hint">They pick their own — it does not have to match.</p>' +
-
-                          '<label class="md-label">Your target</label>' +
-                          '<div class="md-target-row md-target-solo">' +
-                            '<span class="md-target-name">' + modeEsc(chosen ? chosen.name : 'completions') + '</span>' +
-                            modeStepperHtml('modeSetNum(\'target\',' + (s.target - 1) + ',' + PACT_MIN_TARGET + ',200)',
-                                            s.target,
-                                            'modeSetNum(\'target\',' + (s.target + 1) + ',' + PACT_MIN_TARGET + ',200)',
-                                            { atMin: s.target <= PACT_MIN_TARGET, atMax: s.target >= 200 }) +
-                          '</div>' +
-                          '<p class="md-hint">Total completions inside the window — not one a day.</p>' +
+                          '<label class="md-label">Your activities</label>' +
+                          modePickerHtml(PACT_MAX_ACTS, {}) +
+                          pactTargetRowsHtml('pactBump') +
+                          '<p class="md-hint">They pick their own — it does not have to match, ' +
+                            'and it does not have to be the same number of things.</p>' +
 
                           '<label class="md-label">Window</label>' +
                           modeSliderHtml('days', PACT_MIN_DAYS, 60, s.days, {
@@ -27888,11 +28066,74 @@
                           '<p class="md-hint">Starts the day after they accept, so you get the same window.</p>' +
                         '</div>' +
                         modeSheetFoot('Send the request', 'pactSend()',
-                                      !s.activityId || !modeAffordable(PACT_WAGER),
-                                      modeCostLine(PACT_WAGER));
+                                      modeStartBlocked(), modeCostLine(PACT_WAGER),
+                                      pactWarnHtml());
             }
             modeSheet(html);
             modeSyncLive();
+        }
+
+        // The picked activities with a target stepper each — Stake Mode's rows,
+        // used verbatim, because both sheets are asking the same question and
+        // there is no reason for a Pact to answer it in a different shape.
+        function pactTargetRowsHtml(bumpFn) {
+            var s = _modeSetup;
+            if (!s.picks || !s.picks.length) return '';
+            if (!s.targets) s.targets = {};
+            var acts = modeEligibleActivities();
+            return '<div class="md-targets">' + s.picks.map(function (id) {
+                var a = acts.filter(function (x) { return x.id === id; })[0] || {};
+                var v = s.targets[id] || 1;
+                return '<div class="md-target-row">' +
+                         '<span class="md-target-name">' + modeEsc(a.name || '') + '</span>' +
+                         modeStepperHtml(bumpFn + '(\'' + modeEsc(id) + '\',-1)', v,
+                                         bumpFn + '(\'' + modeEsc(id) + '\',1)',
+                                         { atMin: v <= 1, atMax: v >= 200 }) +
+                       '</div>';
+            }).join('') + '</div>' +
+            '<p class="md-hint">Total completions inside the window — not one a day.</p>';
+        }
+
+        function pactTotalTarget() {
+            var s = _modeSetup;
+            if (!s || !s.picks) return 0;
+            return s.picks.reduce(function (n, id) { return n + ((s.targets || {})[id] || 1); }, 0);
+        }
+
+        // Why the send button is dead, on the footer where the button is —
+        // a disabled control whose reason is three screens up is a dead end.
+        function pactWarnHtml() {
+            var s = _modeSetup;
+            if (!s) return '';
+            if (!s.picks || !s.picks.length) return '<p class="md-warn">Pick at least one activity.</p>';
+            var total = pactTotalTarget();
+            if (total >= PACT_MIN_TARGET) return '';
+            return '<p class="md-warn">A Pact needs ' + PACT_MIN_TARGET +
+                   '+ completions in total. You have ' + total + '.</p>';
+        }
+
+        window.pactBump = function (id, delta) {
+            if (!_modeSetup) return;
+            if (!_modeSetup.targets) _modeSetup.targets = {};
+            var v = (_modeSetup.targets[id] || 1) + delta;
+            _modeSetup.targets[id] = Math.max(1, Math.min(200, v));
+            pactRenderSetup();
+        };
+
+        // Builds the term both sheets send, from whatever is picked right now.
+        // An activity deleted between picking and sending is dropped rather
+        // than written as a dangling id nobody can ever complete.
+        function pactBuildTerm() {
+            var s = _modeSetup;
+            var items = [];
+            (s.picks || []).forEach(function (id) {
+                var act = gritFindActivity(id);
+                if (!act) return;
+                items.push({ activityId: String(id),
+                             activityName: act.name || 'Activity',
+                             target: Math.max(1, (s.targets || {})[id] || 1) });
+            });
+            return items.length ? { items: items } : null;
         }
 
         window.pactPickPartner = async function (uid) {
@@ -27904,10 +28145,9 @@
 
         window.pactSend = async function () {
             var s = _modeSetup;
-            if (!s || !s.partnerUid || !s.activityId) return;
-            var act = gritFindActivity(s.activityId);
-            if (!act) { showToast('That activity no longer exists.', 'red'); return; }
-            var term = { activityId: String(s.activityId), activityName: act.name || 'Activity', target: s.target };
+            if (!s || !s.partnerUid) return;
+            var term = pactBuildTerm();
+            if (!term) { showToast('Those activities no longer exist.', 'red'); return; }
             try {
                 await pactCreate(s.partnerUid, giftFriendName(s.partnerUid), term, s.days);
                 modeCloseSheet();
@@ -27921,8 +28161,8 @@
             var p = pactGet(id);
             if (!p) { await pactFetch(true); p = pactGet(id); }
             if (!p) { showToast('That Pact is no longer available.', 'red'); return; }
-            _modeSetup = { kind: 'pactAccept', pactId: id, target: PACT_MIN_TARGET,
-                           activityId: null, query: '', ddOpen: false, picks: [] };
+            _modeSetup = { kind: 'pactAccept', pactId: id, picks: [], targets: {},
+                           query: '', ddOpen: false };
             pactRenderAccept();
         };
 
@@ -27931,49 +28171,40 @@
             var p = pactGet(s.pactId);
             if (!p) { modeCloseSheet(); return; }
             var from = pactName(p, p.createdBy);
-            var theirs = pactTerm(p, p.createdBy) || {};
-            var chosen = modeEligibleActivities().filter(function (a) { return a.id === s.activityId; })[0];
 
             var html = modeSheetHead('Pact with ' + from, 'Accept');
             html += '<div class="modal-body md-body">' +
                       '<div class="md-summary">' +
                         '<div class="md-summary-row"><strong>' + modeEsc(from) + '</strong> — ' +
-                          modeEsc(theirs.activityName || 'an activity') + ' × ' + (theirs.target || 0) +
+                          modeEsc(pactTermSummary(p, p.createdBy)) +
                           ' over ' + p.durationDays + ' days.</div>' +
                       '</div>' +
-                      '<p class="md-lede">Pick your own activity and target. Same window, separate goals.</p>' +
+                      '<p class="md-lede">Pick your own activities and targets. Same window, separate goals.</p>' +
 
-                      '<label class="md-label">Your activity</label>' +
-                      modeDropdownHtml('Choose an activity') +
-
-                      '<label class="md-label">Your target</label>' +
-                      '<div class="md-target-row md-target-solo">' +
-                        '<span class="md-target-name">' + modeEsc(chosen ? chosen.name : 'completions') + '</span>' +
-                        modeStepperHtml('pactAcceptSet(\'target\',' + Math.max(PACT_MIN_TARGET, s.target - 1) + ')',
-                                        s.target,
-                                        'pactAcceptSet(\'target\',' + Math.min(200, s.target + 1) + ')',
-                                        { atMin: s.target <= PACT_MIN_TARGET, atMax: s.target >= 200 }) +
-                      '</div>' +
+                      '<label class="md-label">Your activities</label>' +
+                      modePickerHtml(PACT_MAX_ACTS, {}) +
+                      pactTargetRowsHtml('pactAcceptBump') +
                       '<p class="md-hint">Starts tomorrow and runs ' + p.durationDays + ' days for both of you.</p>' +
                     '</div>' +
                     modeSheetFoot('Accept and stake ' + p.stake + ' Grit', 'pactDoAccept()',
-                                  !s.activityId || !modeAffordable(p.stake), modeCostLine(p.stake));
+                                  modeStartBlocked(), modeCostLine(p.stake), pactWarnHtml());
             modeSheet(html);
             modeSyncLive();
         }
 
-        window.pactAcceptSet = function (field, value) {
+        window.pactAcceptBump = function (id, delta) {
             if (!_modeSetup) return;
-            _modeSetup[field] = value;
+            if (!_modeSetup.targets) _modeSetup.targets = {};
+            var v = (_modeSetup.targets[id] || 1) + delta;
+            _modeSetup.targets[id] = Math.max(1, Math.min(200, v));
             pactRenderAccept();
         };
 
         window.pactDoAccept = async function () {
             var s = _modeSetup;
-            if (!s || !s.activityId) return;
-            var act = gritFindActivity(s.activityId);
-            if (!act) { showToast('That activity no longer exists.', 'red'); return; }
-            var term = { activityId: String(s.activityId), activityName: act.name || 'Activity', target: s.target };
+            if (!s) return;
+            var term = pactBuildTerm();
+            if (!term) { showToast('Those activities no longer exist.', 'red'); return; }
             try {
                 var out = await pactAccept(s.pactId, term);
                 modeCloseSheet();

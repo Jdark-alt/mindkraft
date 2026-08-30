@@ -45,50 +45,50 @@ await env.withSecurityRulesDisabled(async ctx => {
   await setDoc(doc(d, 'users', C), { friends: [],  grit: { balance: 200 } });
 });
 const seed = (id, o) => env.withSecurityRulesDisabled(async ctx =>
-  setDoc(doc(ctx.firestore(), 'challenges', id), payload(o)));
+  setDoc(doc(ctx.firestore(), 'versusChallenges', id), payload(o)));
 
 console.log('── CREATE ──');
-await t('challenger creates a valid invite', () => assertSucceeds(setDoc(doc(dbA,'challenges','c1'), payload())));
+await t('challenger creates a valid invite', () => assertSucceeds(setDoc(doc(dbA,'versusChallenges','c1'), payload())));
 await t('non-friend is refused (C has no friends)', () =>
-  assertFails(setDoc(doc(dbC,'challenges','x1'), payload({ createdBy: C, opponent: B, participants: [C,B],
+  assertFails(setDoc(doc(dbC,'versusChallenges','x1'), payload({ createdBy: C, opponent: B, participants: [C,B],
     mapping:{[C]:{r1:{activityId:'a',activityName:'a'}},[B]:{}}, progress:{[C]:{},[B]:{}},
     totals:{[C]:0,[B]:0}, payout:{[C]:0,[B]:0}, payoutClaimed:{[C]:false,[B]:false},
     seen:{[C]:NOW,[B]:0}, names:{[C]:'Cal',[B]:'Ben'} }))));
 await t('cannot create on someone else\'s behalf', () =>
-  assertFails(setDoc(doc(dbB,'challenges','x2'), payload())));
-await t('stake below 25 refused', () => assertFails(setDoc(doc(dbA,'challenges','x3'), payload({stake:10,pot:10}))));
-await t('stake above 100 refused', () => assertFails(setDoc(doc(dbA,'challenges','x4'), payload({stake:500,pot:500}))));
-await t('pot must equal stake at invite', () => assertFails(setDoc(doc(dbA,'challenges','x5'), payload({pot:5000}))));
-await t('cannot self-start as active', () => assertFails(setDoc(doc(dbA,'challenges','x6'), payload({status:'active'}))));
-await t('cannot pre-credit a payout', () => assertFails(setDoc(doc(dbA,'challenges','x7'), payload({payout:{[A]:9999,[B]:0}}))));
-await t('cannot pre-fill own progress', () => assertFails(setDoc(doc(dbA,'challenges','x8'), payload({progress:{[A]:{r1:3},[B]:{}}}))));
+  assertFails(setDoc(doc(dbB,'versusChallenges','x2'), payload())));
+await t('stake below 25 refused', () => assertFails(setDoc(doc(dbA,'versusChallenges','x3'), payload({stake:10,pot:10}))));
+await t('stake above 100 refused', () => assertFails(setDoc(doc(dbA,'versusChallenges','x4'), payload({stake:500,pot:500}))));
+await t('pot must equal stake at invite', () => assertFails(setDoc(doc(dbA,'versusChallenges','x5'), payload({pot:5000}))));
+await t('cannot self-start as active', () => assertFails(setDoc(doc(dbA,'versusChallenges','x6'), payload({status:'active'}))));
+await t('cannot pre-credit a payout', () => assertFails(setDoc(doc(dbA,'versusChallenges','x7'), payload({payout:{[A]:9999,[B]:0}}))));
+await t('cannot pre-fill own progress', () => assertFails(setDoc(doc(dbA,'versusChallenges','x8'), payload({progress:{[A]:{r1:3},[B]:{}}}))));
 
 console.log('── READ ──');
-await t('participant reads', () => assertSucceeds(getDoc(doc(dbA,'challenges','c1'))));
-await t('other participant reads', () => assertSucceeds(getDoc(doc(dbB,'challenges','c1'))));
-await t('stranger cannot read', () => assertFails(getDoc(doc(dbC,'challenges','c1'))));
+await t('participant reads', () => assertSucceeds(getDoc(doc(dbA,'versusChallenges','c1'))));
+await t('other participant reads', () => assertSucceeds(getDoc(doc(dbB,'versusChallenges','c1'))));
+await t('stranger cannot read', () => assertFails(getDoc(doc(dbC,'versusChallenges','c1'))));
 await t('the app\'s own list query is allowed', () => assertSucceeds(getDocs(query(
-  collection(dbA,'challenges'), where('participants','array-contains',A),
+  collection(dbA,'versusChallenges'), where('participants','array-contains',A),
   where('status','in',['pending','active','resolved','expired','declined','cancelled'])))));
 await t('a query that would leak other people\'s wagers is refused', () =>
-  assertFails(getDocs(query(collection(dbC,'challenges'), where('status','==','active')))));
+  assertFails(getDocs(query(collection(dbC,'versusChallenges'), where('status','==','active')))));
 
 console.log('── DELETE ──');
-await t('nobody may delete a challenge', () => assertFails(deleteDoc(doc(dbA,'challenges','c1'))));
+await t('nobody may delete a challenge', () => assertFails(deleteDoc(doc(dbA,'versusChallenges','c1'))));
 
 console.log('── ACCEPT ──');
 await seed('c2');
 const acceptPatch = { status:'active', pot:100, startedAt:NOW, endsAt:NOW + 10*86400000,
   ['mapping.'+B]: { r1:{activityId:'b1',activityName:'Jog'}, r2:{activityId:'b2',activityName:'Bike'} },
   ['seen.'+B]: NOW };
-await t('opponent accepts', () => assertSucceeds(updateDoc(doc(dbB,'challenges','c2'), acceptPatch)));
+await t('opponent accepts', () => assertSucceeds(updateDoc(doc(dbB,'versusChallenges','c2'), acceptPatch)));
 await seed('c3');
-await t('challenger cannot accept their own invite', () => assertFails(updateDoc(doc(dbA,'challenges','c3'), acceptPatch)));
-await t('cannot accept with a short pot', () => assertFails(updateDoc(doc(dbB,'challenges','c3'),
+await t('challenger cannot accept their own invite', () => assertFails(updateDoc(doc(dbA,'versusChallenges','c3'), acceptPatch)));
+await t('cannot accept with a short pot', () => assertFails(updateDoc(doc(dbB,'versusChallenges','c3'),
   Object.assign({}, acceptPatch, { pot: 50 }))));
-await t('cannot accept leaving a requirement unmapped', () => assertFails(updateDoc(doc(dbB,'challenges','c3'),
+await t('cannot accept leaving a requirement unmapped', () => assertFails(updateDoc(doc(dbB,'versusChallenges','c3'),
   Object.assign({}, acceptPatch, { ['mapping.'+B]: { r1:{activityId:'b1',activityName:'Jog'} } }))));
-await t('cannot stretch the deadline past durationDays', () => assertFails(updateDoc(doc(dbB,'challenges','c3'),
+await t('cannot stretch the deadline past durationDays', () => assertFails(updateDoc(doc(dbB,'versusChallenges','c3'),
   Object.assign({}, acceptPatch, { endsAt: NOW + 900*86400000 }))));
 
 console.log('── PLAY ──');
@@ -96,78 +96,78 @@ const active = { status:'active', pot:100, startedAt:NOW-86400000, endsAt:NOW+9*
   mapping:{ [A]:{r1:{activityId:'a1',activityName:'Run'},r2:{activityId:'a2',activityName:'Read'}},
             [B]:{r1:{activityId:'b1',activityName:'Jog'},r2:{activityId:'b2',activityName:'Bike'}} } };
 await seed('c4', Object.assign({}, active, { progress:{[A]:{},[B]:{r1:2}}, totals:{[A]:0,[B]:2} }));
-await t('own progress increments', () => assertSucceeds(updateDoc(doc(dbA,'challenges','c4'),
+await t('own progress increments', () => assertSucceeds(updateDoc(doc(dbA,'versusChallenges','c4'),
   { ['progress.'+A+'.r1']: 1, ['totals.'+A]: 1 })));
-await t('cannot write the opponent\'s progress', () => assertFails(updateDoc(doc(dbA,'challenges','c4'),
+await t('cannot write the opponent\'s progress', () => assertFails(updateDoc(doc(dbA,'versusChallenges','c4'),
   { ['progress.'+B+'.r1']: 3, ['totals.'+B]: 3 })));
-await t('cannot sabotage the opponent\'s total', () => assertFails(updateDoc(doc(dbA,'challenges','c4'),
+await t('cannot sabotage the opponent\'s total', () => assertFails(updateDoc(doc(dbA,'versusChallenges','c4'),
   { ['totals.'+B]: 0 })));
-await t('cannot rewrite the opponent\'s mapping', () => assertFails(updateDoc(doc(dbA,'challenges','c4'),
+await t('cannot rewrite the opponent\'s mapping', () => assertFails(updateDoc(doc(dbA,'versusChallenges','c4'),
   { ['mapping.'+B]: {} })));
-await t('cannot rewrite the agreed requirements mid-run', () => assertFails(updateDoc(doc(dbA,'challenges','c4'),
+await t('cannot rewrite the agreed requirements mid-run', () => assertFails(updateDoc(doc(dbA,'versusChallenges','c4'),
   { requirements: [{ reqId:'r1', name:'Run', targetCount:1 }] })));
-await t('cannot lower the stake mid-run', () => assertFails(updateDoc(doc(dbA,'challenges','c4'), { stake: 1 })));
-await t('cannot inflate the pot out of thin air', () => assertFails(updateDoc(doc(dbA,'challenges','c4'), { pot: 100000 })));
-await t('cannot move the deadline once set', () => assertFails(updateDoc(doc(dbA,'challenges','c4'),
+await t('cannot lower the stake mid-run', () => assertFails(updateDoc(doc(dbA,'versusChallenges','c4'), { stake: 1 })));
+await t('cannot inflate the pot out of thin air', () => assertFails(updateDoc(doc(dbA,'versusChallenges','c4'), { pot: 100000 })));
+await t('cannot move the deadline once set', () => assertFails(updateDoc(doc(dbA,'versusChallenges','c4'),
   { endsAt: NOW + 900*86400000 })));
-await t('own seen stamp is fine', () => assertSucceeds(updateDoc(doc(dbA,'challenges','c4'), { ['seen.'+A]: NOW })));
-await t('cannot stamp seen for the opponent', () => assertFails(updateDoc(doc(dbA,'challenges','c4'), { ['seen.'+B]: NOW })));
+await t('own seen stamp is fine', () => assertSucceeds(updateDoc(doc(dbA,'versusChallenges','c4'), { ['seen.'+A]: NOW })));
+await t('cannot stamp seen for the opponent', () => assertFails(updateDoc(doc(dbA,'versusChallenges','c4'), { ['seen.'+B]: NOW })));
 
 console.log('── RESOLVE ──');
 const ahead = Object.assign({}, active, { progress:{[A]:{r1:3,r2:2},[B]:{r1:1}}, totals:{[A]:5,[B]:1} });
 await seed('c5', ahead);
-await t('the side that is ahead may take the pot', () => assertSucceeds(updateDoc(doc(dbA,'challenges','c5'),
+await t('the side that is ahead may take the pot', () => assertSucceeds(updateDoc(doc(dbA,'versusChallenges','c5'),
   { status:'resolved', winner:A, outcome:'completed_first', resolvedAt:NOW, pot:0, payout:{[A]:100,[B]:0} })));
 await seed('c6', ahead);
-await t('the side that is BEHIND cannot declare itself winner', () => assertFails(updateDoc(doc(dbB,'challenges','c6'),
+await t('the side that is BEHIND cannot declare itself winner', () => assertFails(updateDoc(doc(dbB,'versusChallenges','c6'),
   { status:'resolved', winner:B, outcome:'deadline_lead', resolvedAt:NOW, pot:0, payout:{[B]:100,[A]:0} })));
-await t('cannot pay out more than the pot', () => assertFails(updateDoc(doc(dbA,'challenges','c6'),
+await t('cannot pay out more than the pot', () => assertFails(updateDoc(doc(dbA,'versusChallenges','c6'),
   { status:'resolved', winner:A, outcome:'deadline_lead', resolvedAt:NOW, pot:0, payout:{[A]:100000,[B]:0} })));
-await t('cannot resolve while keeping the pot', () => assertFails(updateDoc(doc(dbA,'challenges','c6'),
+await t('cannot resolve while keeping the pot', () => assertFails(updateDoc(doc(dbA,'versusChallenges','c6'),
   { status:'resolved', winner:A, outcome:'deadline_lead', resolvedAt:NOW, pot:100, payout:{[A]:100,[B]:0} })));
 await seed('c7', ahead);
-await t('forfeit hands the pot to the OTHER side', () => assertSucceeds(updateDoc(doc(dbA,'challenges','c7'),
+await t('forfeit hands the pot to the OTHER side', () => assertSucceeds(updateDoc(doc(dbA,'versusChallenges','c7'),
   { status:'resolved', winner:B, outcome:'forfeit', resolvedAt:NOW, pot:0, payout:{[B]:100,[A]:0} })));
 await seed('c8', ahead);
-await t('cannot "forfeit" yourself into a win', () => assertFails(updateDoc(doc(dbA,'challenges','c8'),
+await t('cannot "forfeit" yourself into a win', () => assertFails(updateDoc(doc(dbA,'versusChallenges','c8'),
   { status:'resolved', winner:A, outcome:'forfeit', resolvedAt:NOW, pot:0, payout:{[A]:100,[B]:0} })));
-await t('an already-resolved challenge cannot be re-resolved', () => assertFails(updateDoc(doc(dbB,'challenges','c7'),
+await t('an already-resolved challenge cannot be re-resolved', () => assertFails(updateDoc(doc(dbB,'versusChallenges','c7'),
   { status:'resolved', winner:B, outcome:'deadline_lead', resolvedAt:NOW, pot:0, payout:{[B]:100,[A]:0} })));
 
 console.log('── EXACT CLIENT WRITES ──');
 // vsCommitProgress crossing the final target: the increment and the
 // resolution land in ONE write.
 await seed('w1', Object.assign({}, active, { progress:{[A]:{r1:3,r2:1},[B]:{r1:1}}, totals:{[A]:4,[B]:1} }));
-await t('winning increment + resolution in a single write', () => assertSucceeds(updateDoc(doc(dbA,'challenges','w1'),
+await t('winning increment + resolution in a single write', () => assertSucceeds(updateDoc(doc(dbA,'versusChallenges','w1'),
   { ['progress.'+A+'.r2']: 2, ['totals.'+A]: 5,
     status:'resolved', winner:A, outcome:'completed_first', resolvedAt:NOW, pot:0, payout:{[A]:100,[B]:0} })));
 // vsForfeit carries two extra diagnostic fields.
 await seed('w2', Object.assign({}, active, { progress:{[A]:{},[B]:{r1:2}}, totals:{[A]:0,[B]:2} }));
-await t('forfeit write with forfeitedBy/forfeitReason', () => assertSucceeds(updateDoc(doc(dbA,'challenges','w2'),
+await t('forfeit write with forfeitedBy/forfeitReason', () => assertSucceeds(updateDoc(doc(dbA,'versusChallenges','w2'),
   { status:'resolved', winner:B, outcome:'forfeit', resolvedAt:NOW, pot:0, payout:{[B]:100,[A]:0},
     forfeitedBy:A, forfeitReason:'activity deleted' })));
 // …but the extra fields must not become a way to smuggle a win.
 await seed('w3', Object.assign({}, active, { progress:{[A]:{},[B]:{r1:2}}, totals:{[A]:0,[B]:2} }));
-await t('extra fields cannot smuggle a win to the forfeiter', () => assertFails(updateDoc(doc(dbA,'challenges','w3'),
+await t('extra fields cannot smuggle a win to the forfeiter', () => assertFails(updateDoc(doc(dbA,'versusChallenges','w3'),
   { status:'resolved', winner:A, outcome:'forfeit', resolvedAt:NOW, pot:0, payout:{[A]:100,[B]:0},
     forfeitedBy:B, forfeitReason:'nope' })));
 
 console.log('── DECLINE / CANCEL / EXPIRE ──');
 await seed('d1');
-await t('opponent declines, challenger is owed the pot', () => assertSucceeds(updateDoc(doc(dbB,'challenges','d1'),
+await t('opponent declines, challenger is owed the pot', () => assertSucceeds(updateDoc(doc(dbB,'versusChallenges','d1'),
   { status:'declined', outcome:'declined_refund', winner:null, resolvedAt:NOW, pot:0, payout:{[A]:50,[B]:0} })));
 await seed('d2');
-await t('decliner cannot redirect the refund to themselves', () => assertFails(updateDoc(doc(dbB,'challenges','d2'),
+await t('decliner cannot redirect the refund to themselves', () => assertFails(updateDoc(doc(dbB,'versusChallenges','d2'),
   { status:'declined', outcome:'declined_refund', winner:null, resolvedAt:NOW, pot:0, payout:{[A]:0,[B]:50} })));
-await t('opponent cannot "cancel" the challenger\'s invite', () => assertFails(updateDoc(doc(dbB,'challenges','d2'),
+await t('opponent cannot "cancel" the challenger\'s invite', () => assertFails(updateDoc(doc(dbB,'versusChallenges','d2'),
   { status:'cancelled', outcome:'cancelled_refund', winner:null, resolvedAt:NOW, pot:0, payout:{[A]:50,[B]:0} })));
-await t('challenger withdraws their own invite', () => assertSucceeds(updateDoc(doc(dbA,'challenges','d2'),
+await t('challenger withdraws their own invite', () => assertSucceeds(updateDoc(doc(dbA,'versusChallenges','d2'),
   { status:'cancelled', outcome:'cancelled_refund', winner:null, resolvedAt:NOW, pot:0, payout:{[A]:50,[B]:0} })));
 await seed('d3');
-await t('cannot expire an invite that is still in date', () => assertFails(updateDoc(doc(dbB,'challenges','d3'),
+await t('cannot expire an invite that is still in date', () => assertFails(updateDoc(doc(dbB,'versusChallenges','d3'),
   { status:'expired', outcome:'expired_refund', winner:null, resolvedAt:NOW, pot:0, payout:{[A]:50,[B]:0} })));
 await seed('d4', { expiresAt: NOW - 1000 });
-await t('an out-of-date invite expires', () => assertSucceeds(updateDoc(doc(dbA,'challenges','d4'),
+await t('an out-of-date invite expires', () => assertSucceeds(updateDoc(doc(dbA,'versusChallenges','d4'),
   { status:'expired', outcome:'expired_refund', winner:null, resolvedAt:NOW, pot:0, payout:{[A]:50,[B]:0} })));
 
 console.log('── CLAIM ──');
@@ -175,16 +175,16 @@ const settled = { status:'resolved', pot:0, winner:A, outcome:'deadline_lead', r
   startedAt:NOW-9*86400000, endsAt:NOW-86400000, payout:{[A]:100,[B]:0},
   progress:{[A]:{r1:3,r2:2},[B]:{r1:1}}, totals:{[A]:5,[B]:1} };
 await seed('p1', settled);
-await t('winner claims their own payout', () => assertSucceeds(updateDoc(doc(dbA,'challenges','p1'),
+await t('winner claims their own payout', () => assertSucceeds(updateDoc(doc(dbA,'versusChallenges','p1'),
   { ['payoutClaimed.'+A]: true })));
-await t('cannot claim a second time by flipping the flag again', () => assertFails(updateDoc(doc(dbA,'challenges','p1'),
+await t('cannot claim a second time by flipping the flag again', () => assertFails(updateDoc(doc(dbA,'versusChallenges','p1'),
   { ['payoutClaimed.'+A]: true, payout: {[A]:100,[B]:0}, pot: 0, ['totals.'+A]: 99 })));
-await t('cannot un-claim to be paid again', () => assertFails(updateDoc(doc(dbA,'challenges','p1'),
+await t('cannot un-claim to be paid again', () => assertFails(updateDoc(doc(dbA,'versusChallenges','p1'),
   { ['payoutClaimed.'+A]: false })));
 await seed('p2', settled);
-await t('cannot flip the opponent\'s claim flag', () => assertFails(updateDoc(doc(dbB,'challenges','p2'),
+await t('cannot flip the opponent\'s claim flag', () => assertFails(updateDoc(doc(dbB,'versusChallenges','p2'),
   { ['payoutClaimed.'+A]: true })));
-await t('cannot rewrite the payout before claiming it', () => assertFails(updateDoc(doc(dbA,'challenges','p2'),
+await t('cannot rewrite the payout before claiming it', () => assertFails(updateDoc(doc(dbA,'versusChallenges','p2'),
   { payout:{[A]:100000,[B]:0}, ['payoutClaimed.'+A]: true })));
 
 console.log('── GRIT LEDGER ──');
@@ -384,6 +384,37 @@ await t('you cannot move your partner\'s progress', () =>
 await t('a stranger cannot move anyone\'s progress', () =>
   assertFails(updateDoc(doc(dbC, 'pacts', 'p6'), { ['progress.' + A]: 9 })));
 
+// Multi-activity pacts keep the per-activity counters INSIDE progress[uid], as
+// a map rather than a number. That shape is the reason these rules did not have
+// to change: the branch pins the OTHER side by equality, which holds for a map
+// exactly as it did for an integer. If that ever stopped being true, a partner
+// could be locked out of their own progress writes — so it is pinned here.
+const ACTIVE_MULTI = { status: 'active', pot: 80, startedAt: NOW, endsAt: NOW + 7 * 86400000,
+  terms: { [A]: { items: [{ activityId: 'a1', activityName: 'Run', target: 5 },
+                          { activityId: 'a2', activityName: 'Read', target: 3 }] },
+           [B]: { items: [{ activityId: 'b1', activityName: 'Swim', target: 4 }] } },
+  progress: { [A]: { a1: 0, a2: 0 }, [B]: { b1: 0 } } };
+await seedPact('pm1', ACTIVE_MULTI);
+await t('you move one of your own activities', () =>
+  assertSucceeds(updateDoc(doc(dbA, 'pacts', 'pm1'), { ['progress.' + A + '.a1']: 1 })));
+await t('you move a second of your own activities', () =>
+  assertSucceeds(updateDoc(doc(dbA, 'pacts', 'pm1'), { ['progress.' + A + '.a2']: 2 })));
+await t('you cannot move an activity on your partner\'s side', () =>
+  assertFails(updateDoc(doc(dbA, 'pacts', 'pm1'), { ['progress.' + B + '.b1']: 4 })));
+await t('you cannot replace your partner\'s whole counter map', () =>
+  assertFails(updateDoc(doc(dbA, 'pacts', 'pm1'), { ['progress.' + B]: { b1: 4 } })));
+await t('a multi-activity pact still refuses a smuggled term change', () =>
+  assertFails(updateDoc(doc(dbA, 'pacts', 'pm1'), {
+    ['progress.' + A + '.a1']: 2,
+    ['terms.' + A]: { items: [{ activityId: 'a1', activityName: 'Run', target: 1 }] } })));
+await t('the partner accepts with several activities of their own', () => {
+  return seedPact('pm2').then(() => assertSucceeds(updateDoc(doc(dbB, 'pacts', 'pm2'), {
+    status: 'active', pot: 80, startedAt: NOW, endsAt: NOW + 7 * 86400000,
+    ['terms.' + B]: { items: [{ activityId: 'b1', activityName: 'Swim', target: 4 },
+                              { activityId: 'b2', activityName: 'Cycle', target: 6 }] },
+    ['names.' + B]: 'Ben' })));
+});
+
 await seedPact('p7', ACTIVE);
 await t('either side may record the resolution', () =>
   assertSucceeds(updateDoc(doc(dbB, 'pacts', 'p7'), {
@@ -420,6 +451,57 @@ await t('a claim cannot raise its own payout on the way through', () => {
 });
 await t('a pact that happened cannot be deleted', () =>
   assertFails(deleteDoc(doc(dbA, 'pacts', 'p10'))));
+
+console.log('── FRIEND REQUESTS ──');
+// Adding by code is unilateral: the sender writes this document to tell the
+// other person it happened. The only write the RECIPIENT makes is the accept
+// marker, which exists solely so onFriendRequestWrite can tell an accept from
+// a dismissal — the delete looks identical either way. It must not be a way for
+// the recipient to put arbitrary text in front of the sender.
+const freq = (o = {}) => Object.assign({
+  toUID: B, fromUID: A, fromName: 'Ana', fromPhotoURL: null, fromCode: 'MK-AAAA',
+  createdAt: new Date(NOW).toISOString()
+}, o);
+const seedReq = (id, o) => env.withSecurityRulesDisabled(async ctx =>
+  setDoc(doc(ctx.firestore(), 'friendRequests', id), freq(o)));
+
+await t('you send a request as yourself', () =>
+  assertSucceeds(setDoc(doc(dbA, 'friendRequests', 'fr1'), freq())));
+await t('you cannot send a request as someone else', () =>
+  assertFails(setDoc(doc(dbC, 'friendRequests', 'fx1'), freq())));
+await t('the recipient reads it', () => assertSucceeds(getDoc(doc(dbB, 'friendRequests', 'fr1'))));
+await t('the sender cannot read it back', () => assertFails(getDoc(doc(dbA, 'friendRequests', 'fr1'))));
+await t('a stranger cannot read it', () => assertFails(getDoc(doc(dbC, 'friendRequests', 'fr1'))));
+
+await seedReq('fr2');
+await t('the recipient stamps the accept marker', () =>
+  assertSucceeds(updateDoc(doc(dbB, 'friendRequests', 'fr2'), {
+    status: 'accepted', toName: 'Ben', acceptedAt: new Date(NOW).toISOString() })));
+await t('the sender cannot stamp it for them', () => {
+  return seedReq('fr3').then(() => assertFails(updateDoc(doc(dbA, 'friendRequests', 'fr3'), {
+    status: 'accepted', toName: 'Ana', acceptedAt: new Date(NOW).toISOString() })));
+});
+await t('a stranger cannot stamp it', () => {
+  return seedReq('fr4').then(() => assertFails(updateDoc(doc(dbC, 'friendRequests', 'fr4'), {
+    status: 'accepted', toName: 'Cal', acceptedAt: new Date(NOW).toISOString() })));
+});
+await t('the marker cannot be any status but accepted', () => {
+  return seedReq('fr5').then(() => assertFails(updateDoc(doc(dbB, 'friendRequests', 'fr5'), {
+    status: 'declined', toName: 'Ben' })));
+});
+await t('the marker cannot rewrite who it came from', () => {
+  return seedReq('fr6').then(() => assertFails(updateDoc(doc(dbB, 'friendRequests', 'fr6'), {
+    status: 'accepted', toName: 'Ben', fromUID: C })));
+});
+await t('the marker cannot carry an essay', () => {
+  return seedReq('fr7').then(() => assertFails(updateDoc(doc(dbB, 'friendRequests', 'fr7'), {
+    status: 'accepted', toName: 'x'.repeat(400) })));
+});
+await t('the recipient dismisses it', () =>
+  assertSucceeds(deleteDoc(doc(dbB, 'friendRequests', 'fr1'))));
+await t('the sender cannot delete it', () => {
+  return seedReq('fr8').then(() => assertFails(deleteDoc(doc(dbA, 'friendRequests', 'fr8'))));
+});
 
 console.log('── MODE REMINDERS ──');
 const modeReminder = (o = {}) => Object.assign({
